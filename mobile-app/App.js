@@ -8758,9 +8758,12 @@ function AppContent() {
                       const first = effAnalyticsSnapshots[0].total_value || 0;
                       const last = effAnalyticsSnapshots[effAnalyticsSnapshots.length - 1].total_value || 0;
                       const pct = first > 0 ? ((last - first) / first * 100) : 0;
+                      const absPct = Math.abs(pct);
+                      const displayPct = absPct < 0.05 ? '0.0%' : `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
+                      const pctColor = absPct < 0.05 ? colors.muted : (pct >= 0 ? '#4CAF50' : '#F44336');
                       return (
-                        <Text style={{ color: pct >= 0 ? '#4CAF50' : '#F44336', fontSize: scaledFonts.small, fontWeight: '600' }}>
-                          {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                        <Text style={{ color: pctColor, fontSize: scaledFonts.small, fontWeight: '600' }}>
+                          {displayPct}
                         </Text>
                       );
                     })()}
