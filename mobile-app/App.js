@@ -1167,12 +1167,10 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   const startPageY = useRef(0);
   const gradientId = `scrubChartFill-${chartId}`;
 
-  // Chart layout
-  const yLabelW = 52;
+  // Chart layout (yLabelW and chartW computed after data bounds for dynamic sizing)
   const xLabelH = 18;
   const topPad = 6;
   const rightPad = 8;
-  const chartW = width - yLabelW - rightPad;
   const chartH = height - xLabelH - topPad;
 
   // Filter out invalid data points and ensure ascending date order
@@ -1231,12 +1229,29 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   const values = data.map(d => d.value);
   const secValues = secondaryData ? secondaryData.filter(d => d.value != null && d.value > 0).map(d => d.value) : [];
   const allValues = [...values, ...secValues];
-  const minVal = Math.min(...allValues);
-  const maxVal = Math.max(...allValues);
+  let minVal = Math.min(...allValues);
+  let maxVal = Math.max(...allValues);
+  // Portfolio chart: enforce 1% minimum Y-axis range so labels are distinct
+  if (chartId === 'portfolio') {
+    const dataRange = maxVal - minVal;
+    const minRange = maxVal * 0.01;
+    if (dataRange < minRange) {
+      const midpoint = (maxVal + minVal) / 2;
+      maxVal = midpoint + minRange / 2;
+      minVal = midpoint - minRange / 2;
+    }
+  }
   const valRange = maxVal - minVal || 1;
   const niceMin = minVal - valRange * 0.02;
   const niceMax = maxVal + valRange * 0.02;
   const niceRange = niceMax - niceMin;
+
+  // Y-axis step — computed here so label width can adapt to data range
+  const yLabelCount = 5;
+  const yStep = (maxVal - minVal) / (yLabelCount - 1);
+  // Full dollar amounts (e.g. "$600,198") need more room than "$600k"
+  const yLabelW = (maxVal >= 100000 && yStep < 1000) ? 72 : 52;
+  const chartW = width - yLabelW - rightPad;
 
   // SVG viewBox dimensions
   const svgW = chartW;
@@ -1266,23 +1281,19 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   }
 
   // Y-axis labels (5 levels)
-  const yLabelCount = 5;
   const yLabels = [];
   for (let i = 0; i < yLabelCount; i++) {
     yLabels.push(maxVal - (i / (yLabelCount - 1)) * (maxVal - minVal));
   }
-  const yStep = (maxVal - minVal) / (yLabelCount - 1);
   const formatY = yFormat || ((v) => {
-    if (v >= 100000) {
-      // Adapt precision so adjacent labels show distinct values
-      // yStep < 50 ($200 range): full dollar "$600,100"
-      // yStep < 500 ($2k range): one-decimal k "$600.1k"
-      // yStep >= 500: integer k "$600k"
-      if (yStep < 50) return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-      if (yStep < 500) return `$${(v / 1000).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
-      return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 0 })}k`;
+    // Format based on step size to ensure adjacent labels are visually distinct
+    if (yStep >= 1000) {
+      return `$${Math.round(v / 1000)}k`;
+    } else if (yStep >= 1) {
+      return `$${Math.round(v).toLocaleString()}`;
+    } else {
+      return `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
     }
-    return `$${Math.round(v).toLocaleString('en-US')}`;
   });
 
   // X-axis labels (5 evenly spaced, deduplicated)
@@ -8624,6 +8635,7 @@ function AppContent() {
           const effPlatinumSpotA = demoData ? demoData.platinumSpot : platinumSpot;
           const effPalladiumSpotA = demoData ? demoData.palladiumSpot : palladiumSpot;
           const effTotalMeltValueA = demoData ? demoData.totalMeltValue : totalMeltValue;
+
           return (
           <>
             {/* Inline upgrade bar for non-Gold */}
@@ -10456,19 +10468,28 @@ function AppContent() {
                                 </View>
                               )
                             ) : null}
-                            {hasPaidAccess && daily.sources && Array.isArray(daily.sources) && daily.sources.length > 0 ? (
+                            {hasPaidAccess && daily.sources && Array.isArray(daily.sources) && daily.sources.length > 0 ? (() => {
+                              const seen = new Set();
+                              const unique = daily.sources.filter(src => {
+                                const key = src.name || src.url;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                              });
+                              return (
                               <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222' }}>
                                 <Text style={{ color: '#666', fontSize: 11, fontWeight: '600', marginBottom: 6 }}>SOURCES</Text>
-                                {daily.sources.slice(0, 5).map((src, idx) => (
+                                {unique.slice(0, 5).map((src, idx) => (
                                   <TouchableOpacity key={idx} onPress={() => Linking.openURL(src.url)} style={{ marginBottom: 4 }}>
                                     <Text style={{ color: '#4A90D9', fontSize: 13 }}>{src.name || src.url}</Text>
                                   </TouchableOpacity>
                                 ))}
-                                {daily.sources.length > 5 && (
-                                  <Text style={{ color: '#666', fontSize: 12, marginTop: 2 }}>and {daily.sources.length - 5} more sources</Text>
+                                {unique.length > 5 && (
+                                  <Text style={{ color: '#666', fontSize: 12, marginTop: 2 }}>and {unique.length - 5} more sources</Text>
                                 )}
                               </View>
-                            ) : null}
+                              );
+                            })() : null}
                           </>
                         ) : (
                           <Text style={{ color: '#666', fontSize: 14, fontStyle: 'italic' }}>Troy's daily synthesis arrives at 6:30 AM</Text>
@@ -10584,16 +10605,28 @@ function AppContent() {
                               </View>
                             ) : null}
 
-                            {hasPaidAccess && item.sources && Array.isArray(item.sources) && item.sources.length > 0 ? (
+                            {hasPaidAccess && item.sources && Array.isArray(item.sources) && item.sources.length > 0 ? (() => {
+                              const seen = new Set();
+                              const unique = item.sources.filter(src => {
+                                const key = src.name || src.url;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                              });
+                              return (
                               <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#222' }}>
                                 <Text style={{ color: '#666', fontSize: 11, fontWeight: '600', marginBottom: 6 }}>SOURCES</Text>
-                                {item.sources.map((src, idx) => (
+                                {unique.slice(0, 5).map((src, idx) => (
                                   <TouchableOpacity key={idx} onPress={() => Linking.openURL(src.url)} style={{ marginBottom: 4 }}>
                                     <Text style={{ color: '#4A90D9', fontSize: 13 }}>{src.name || src.url}</Text>
                                   </TouchableOpacity>
                                 ))}
+                                {unique.length > 5 && (
+                                  <Text style={{ color: '#666', fontSize: 12, marginTop: 2 }}>and {unique.length - 5} more sources</Text>
+                                )}
                               </View>
-                            ) : null}
+                              );
+                            })() : null}
                           </View>
                         )}
                       </View>
