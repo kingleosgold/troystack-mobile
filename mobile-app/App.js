@@ -8,7 +8,7 @@ import React, { useState, useEffect, useRef, Component } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Platform, SafeAreaView, StatusBar, ActivityIndicator,
-  Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Dimensions, AppState, FlatList, Clipboard, Linking,
+  Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Dimensions, AppState, FlatList, Clipboard, Linking, Share,
   useColorScheme, RefreshControl, Switch, Image, Animated, LayoutAnimation, PanResponder,
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1261,7 +1261,12 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
     yLabels.push(maxVal - (i / (yLabelCount - 1)) * (maxVal - minVal));
   }
   const formatY = yFormat || ((v) => {
-    if (v >= 100000) return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 0 })}k`;
+    if (v >= 100000) {
+      const kVal = v / 1000;
+      const kRange = valRange / 1000;
+      if (kRange < 5) return `$${kVal.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
+      return `$${kVal.toLocaleString('en-US', { maximumFractionDigits: 0 })}k`;
+    }
     return `$${Math.round(v).toLocaleString('en-US')}`;
   });
 
@@ -3613,6 +3618,20 @@ function AppContent() {
     }
   };
 
+  const handleShareArticle = async (article) => {
+    try {
+      const commentary = article.troy_commentary || article.troy_one_liner || article.summary || '';
+      const preview = commentary.length > 200 ? commentary.substring(0, 200).replace(/\s+\S*$/, '') + '...' : commentary;
+      const shareMessage = `${article.title}\n\n${preview}\n\nPowered by Troy \u2014 Stack Tracker Gold\nhttps://www.stacktrackergold.com`;
+      await Share.share({
+        message: shareMessage,
+        ...(Platform.OS === 'ios' && { url: 'https://www.stacktrackergold.com' }),
+      });
+    } catch (error) {
+      if (__DEV__) console.log('Share error:', error);
+    }
+  };
+
   const openTroyChat = async () => {
     setShowTroyChat(true);
     setTroyLoading(true);
@@ -4364,7 +4383,9 @@ function AppContent() {
         const histResults = await Promise.all(
           metals.map(async (metal) => {
             try {
-              const res = await fetch(`${API_BASE_URL}/v1/prices/history?range=ALL&metal=${metal}&maxPoints=500`);
+              const yearsBack = (now - startDate) / (365.25 * 24 * 60 * 60 * 1000);
+              const apiRange = yearsBack <= 0.25 ? '3M' : yearsBack <= 0.5 ? '6M' : yearsBack <= 1 ? '1Y' : yearsBack <= 5 ? '5Y' : 'ALL';
+              const res = await fetch(`${API_BASE_URL}/v1/prices/history?range=${apiRange}&metal=${metal}&maxPoints=1000`);
               if (!res.ok) return [];
               const data = await res.json();
               return (data.prices || []).map(p => ({
@@ -4406,7 +4427,7 @@ function AppContent() {
               const dist = Math.abs(new Date(targetDate) - new Date(d));
               if (dist < minDist) { minDist = dist; nearest = d; }
             }
-            if (nearest && minDist < 7 * 24 * 60 * 60 * 1000) { // within 7 days
+            if (nearest && minDist < 35 * 24 * 60 * 60 * 1000) { // within 35 days
               historicalPriceCache.current[targetDate] = dateMap[nearest];
               fetchedCount++;
             }
@@ -5288,7 +5309,7 @@ function AppContent() {
           category: a.category || 'general',
           title: a.title,
           summary: a.summary,
-          source: a.source || '',
+          source: a.source ? [...new Set(a.source.split(/,\s*/).map(s => s.trim()).filter(Boolean))].join(', ') : '',
           source_url: a.source_url || '',
           relevance_score: severityToScore[a.severity] || 5,
           created_at: a.published_at || '',
@@ -10339,6 +10360,19 @@ function AppContent() {
                 <Text style={{ color: '#C9A84C', fontSize: 28, fontWeight: '300' }}>{'\u2039'}</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>The Stack Signal</Text>
+              {stackSignalDaily && stackSignalDaily.title ? (
+                <TouchableOpacity
+                  onPress={() => handleShareArticle(stackSignalDaily)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={{ padding: 4 }}
+                >
+                  <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                    <Path d="M12 2L12 15" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                    <Path d="M8.5 7.5L12 4L15.5 7.5" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <Path d="M20 14V18C20 19.1046 19.1046 20 18 20H6C4.89543 20 4 19.1046 4 18V14" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                  </Svg>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {stackSignalLoading && !stackSignalRefreshing ? (
@@ -10390,7 +10424,7 @@ function AppContent() {
                   return (
                     <View style={{ borderRadius: 12, borderWidth: 1, borderColor: '#C9A84C', backgroundColor: '#111', marginBottom: 20, overflow: 'hidden' }}>
                       {daily && daily.image_url ? (
-                        <Image source={{ uri: daily.image_url }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
+                        <Image source={{ uri: daily.image_url, cache: 'force-cache' }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
                       ) : null}
                       <View style={{ padding: 16 }}>
                         <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 4 }}>THE STACK SIGNAL</Text>
@@ -10520,7 +10554,7 @@ function AppContent() {
                       style={{ backgroundColor: '#111', borderRadius: 12, marginBottom: 12, overflow: 'hidden' }}
                     >
                       {item.image_url ? (
-                        <Image source={{ uri: item.image_url }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
+                        <Image source={{ uri: item.image_url, cache: 'force-cache' }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
                       ) : null}
                       <View style={{ padding: 14 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -10529,7 +10563,19 @@ function AppContent() {
                               <Text style={{ color: catColor, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>{(item.category || '').replace(/_/g, ' ')}</Text>
                             </View>
                           ) : <View />}
-                          <Text style={{ color: '#666', fontSize: 11 }}>{timeAgo}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                            <Text style={{ color: '#666', fontSize: 11 }}>{timeAgo}</Text>
+                            <TouchableOpacity
+                              onPress={() => handleShareArticle(item)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Svg width={15} height={15} viewBox="0 0 24 24" fill="none">
+                                <Path d="M12 2L12 15" stroke="#666" strokeWidth="2" strokeLinecap="round" />
+                                <Path d="M8.5 7.5L12 4L15.5 7.5" stroke="#666" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                <Path d="M20 14V18C20 19.1046 19.1046 20 18 20H6C4.89543 20 4 19.1046 4 18V14" stroke="#666" strokeWidth="2" strokeLinecap="round" />
+                              </Svg>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 4 }}>{item.title}</Text>
                         {item.troy_one_liner ? (
@@ -10595,6 +10641,19 @@ function AppContent() {
                               </View>
                               );
                             })() : null}
+
+                            {/* Share button */}
+                            <TouchableOpacity
+                              onPress={() => handleShareArticle(item)}
+                              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#333', backgroundColor: 'rgba(201,168,76,0.06)' }}
+                            >
+                              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
+                                <Path d="M12 2L12 15" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                                <Path d="M8.5 7.5L12 4L15.5 7.5" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                <Path d="M20 14V18C20 19.1046 19.1046 20 18 20H6C4.89543 20 4 19.1046 4 18V14" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                              </Svg>
+                              <Text style={{ color: '#C9A84C', fontSize: 13, fontWeight: '600' }}>Share Article</Text>
+                            </TouchableOpacity>
                           </View>
                         )}
                       </View>
