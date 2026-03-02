@@ -1231,16 +1231,6 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   const allValues = [...values, ...secValues];
   let minVal = Math.min(...allValues);
   let maxVal = Math.max(...allValues);
-  // Portfolio chart: enforce 1% minimum Y-axis range so labels are distinct
-  if (chartId === 'portfolio') {
-    const dataRange = maxVal - minVal;
-    const minRange = maxVal * 0.01;
-    if (dataRange < minRange) {
-      const midpoint = (maxVal + minVal) / 2;
-      maxVal = midpoint + minRange / 2;
-      minVal = midpoint - minRange / 2;
-    }
-  }
   const valRange = maxVal - minVal || 1;
   const niceMin = minVal - valRange * 0.02;
   const niceMax = maxVal + valRange * 0.02;
