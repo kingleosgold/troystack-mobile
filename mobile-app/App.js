@@ -938,6 +938,14 @@ const SwipeableAlertRow = ({ alert, colors, onDelete, onToggle, spotPrices }) =>
  * never overshoot data points, matching Recharts' type="monotone" on web.
  * Takes an array of {x, y} points and returns an SVG path string.
  */
+/** Downsample an array to maxPoints using evenly-spaced sampling.
+ *  Always preserves first and last elements for accurate start/end values. */
+const downsamplePoints = (data, maxPoints) => {
+  if (data.length <= maxPoints) return data;
+  const step = (data.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, i) => data[Math.round(i * step)]);
+};
+
 const buildMonotonePath = (points) => {
   const n = points.length;
   if (n === 0) return '';
@@ -1014,13 +1022,13 @@ const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradi
   const max = Math.max(...dataPoints);
   const range = max - min || 1;
 
-  // Build points array, then use monotone interpolation for smooth curves
-  const pts = dataPoints.map((v, i) => ({
-    x: (i / (dataPoints.length - 1)) * svgW,
+  // Build points array — downsample large datasets, then always use monotone cubic interpolation
+  const sampledData = downsamplePoints(dataPoints, svgH > 40 ? 60 : 24);
+  const pts = sampledData.map((v, i) => ({
+    x: (i / (sampledData.length - 1)) * svgW,
     y: 4 + (svgH - 8) * (1 - (v - min) / range),
   }));
-  const pathD = dataPoints.length <= 200 ? buildMonotonePath(pts)
-    : pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const pathD = buildMonotonePath(pts);
   const fillD = `${pathD} L${svgW},${svgH} L0,${svgH} Z`;
 
   const getScrubDataIndex = (pageX) => {
@@ -1139,7 +1147,7 @@ const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradi
           </SvgLinearGradient>
         </Defs>
         <Path d={fillD} fill={`url(#${gradientId})`} />
-        <Path d={pathD} stroke={strokeColor} strokeWidth={svgH > 40 ? 2 : 1.5} fill="none" />
+        <Path d={pathD} stroke={strokeColor} strokeWidth={svgH > 40 ? 2 : 1.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
         {/* Crosshair line + dot */}
         {scrubIndex !== null && (
           <>
@@ -1232,13 +1240,13 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   const svgW = chartW;
   const svgH = chartH;
 
-  // Build path — use monotone cubic interpolation when under 200 points for smooth curves
-  const pts = data.map((pt, i) => ({
-    x: (i / (data.length - 1)) * svgW,
+  // Build path — downsample large datasets, always use monotone cubic interpolation
+  const sampledChartData = downsamplePoints(data, 120);
+  const pts = sampledChartData.map((pt, i) => ({
+    x: (i / (sampledChartData.length - 1)) * svgW,
     y: topPad + svgH * (1 - (pt.value - niceMin) / niceRange),
   }));
-  const pathD = data.length <= 200 ? buildMonotonePath(pts)
-    : pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const pathD = buildMonotonePath(pts);
   const fillD = `${pathD} L${svgW},${topPad + svgH} L0,${topPad + svgH} Z`;
 
   // Build secondary path (optional, e.g. eligible line on vault chart)
@@ -1246,12 +1254,12 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
   if (secondaryData && secondaryData.length >= 2) {
     const secFiltered = secondaryData.filter(d => d.value != null && d.value > 0);
     if (secFiltered.length >= 2) {
-      const secPts = secFiltered.map((pt, i) => ({
-        x: (i / (secFiltered.length - 1)) * svgW,
+      const sampledSec = downsamplePoints(secFiltered, 120);
+      const secPts = sampledSec.map((pt, i) => ({
+        x: (i / (sampledSec.length - 1)) * svgW,
         y: topPad + svgH * (1 - (pt.value - niceMin) / niceRange),
       }));
-      secondaryPathD = secFiltered.length <= 200 ? buildMonotonePath(secPts)
-        : secPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+      secondaryPathD = buildMonotonePath(secPts);
     }
   }
 
@@ -1422,10 +1430,10 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
             </SvgLinearGradient>
           </Defs>
           <Path d={fillD} fill={`url(#${gradientId})`} />
-          <Path d={pathD} stroke={color} strokeWidth={2} fill="none" />
+          <Path d={pathD} stroke={color} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
           {/* Secondary line (e.g. eligible inventory) */}
           {secondaryPathD && (
-            <Path d={secondaryPathD} stroke={secondaryColor || 'rgba(255,255,255,0.4)'} strokeWidth={1.5} fill="none" strokeDasharray="4,3" />
+            <Path d={secondaryPathD} stroke={secondaryColor || 'rgba(255,255,255,0.4)'} strokeWidth={1.5} fill="none" strokeDasharray="4,3" strokeLinecap="round" strokeLinejoin="round" />
           )}
           {/* Crosshair */}
           {scrubIndex !== null && (
