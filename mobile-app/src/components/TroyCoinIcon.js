@@ -61,7 +61,7 @@ const TroyCoinIcon = ({ size = 20 }) => {
       {/* 4. Embossed T with shadow */}
       <Text style={{
         position: 'absolute',
-        paddingLeft: size * 0.02,
+        paddingLeft: size * 0.04,
         fontSize,
         fontWeight: '700',
         fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',

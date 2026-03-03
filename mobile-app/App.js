@@ -36,13 +36,14 @@ import GoldPaywall from './src/components/GoldPaywall';
 import Tutorial from './src/components/Tutorial';
 import TroyCoinIcon from './src/components/TroyCoinIcon';
 import GlobeIcon from './src/components/GlobeIcon';
+import StackSignalIcon from './src/components/StackSignalIcon';
 import ViewShot from 'react-native-view-shot';
 import Markdown from 'react-native-markdown-display';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import AuthScreen from './src/screens/AuthScreen';
 import AccountScreen from './src/screens/AccountScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
-import { AppleLogo, GoogleLogo, ProfileIcon, DashboardIcon, HoldingsIcon, AnalyticsIcon, ToolsIcon, SettingsIcon, SortIcon, TodayIcon, BellIcon, TrendingUpIcon, CalculatorIcon, TrophyIcon } from './src/components/icons';
+import { AppleLogo, GoogleLogo, ProfileIcon, DashboardIcon, HoldingsIcon, AnalyticsIcon, SettingsIcon, SortIcon, TodayIcon, BellIcon, TrendingUpIcon, CalculatorIcon, TrophyIcon } from './src/components/icons';
 import {
   fetchHoldings,
   addHolding,
@@ -1504,6 +1505,7 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tab, setTab] = useState('today');
+  const [previousTab, setPreviousTab] = useState('today');
   const [metalTab, setMetalTab] = useState('both'); // Changed from 'silver' to 'both'
 
   // Spot Prices - Updated defaults for Dec 2025
@@ -1559,10 +1561,6 @@ function AppContent() {
   const [advisorQuestionsToday, setAdvisorQuestionsToday] = useState(0);
   const troyFlatListRef = useRef(null);
   const [showTroyChat, setShowTroyChat] = useState(false);
-  const [showTroyFab, setShowTroyFab] = useState(true);
-  const fabScale = useRef(new Animated.Value(1)).current;
-  const fabGlow = useRef(new Animated.Value(0.4)).current;
-  const fabTapped = useRef(false);
 
   // Swipe-back gesture responders for full-screen pages
   const troySwipe = useRef(useSwipeBack(() => { setShowTroyChat(false); setTroySidebarVisible(false); })).current;
@@ -1696,7 +1694,7 @@ function AppContent() {
   const [purchaseStatsIntelExpanded, setPurchaseStatsIntelExpanded] = useState(false);
 
   // Notification Preferences
-  const [notifPrefs, setNotifPrefs] = useState({ daily_brief: true, price_alerts: true, breaking_news: true, comex_alerts: true, comex_gold: true, comex_silver: true, comex_platinum: true, comex_palladium: true });
+  const [notifPrefs, setNotifPrefs] = useState({ daily_brief: true, price_alerts: true, breaking_news: true, comex_alerts: true, comex_gold: true, comex_silver: true, comex_platinum: true, comex_palladium: true, morning_brief: true, market_alerts: true, critical_alerts: true });
 
   // Side Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -1956,7 +1954,6 @@ function AppContent() {
       setLargeText(false);
       setHideWidgetValues(false);
       setSpotChangeDisplayMode('percent');
-      setShowTroyFab(true);
       setDataLoaded(false);
     }
   };
@@ -2419,7 +2416,7 @@ function AppContent() {
 
   const loadData = async () => {
     try {
-      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedMidnightSnapshot, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, hasSeenV20Tutorial, storedAdvisorCount, storedShowTroyFab] = await Promise.all([
+      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedMidnightSnapshot, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, hasSeenV20Tutorial, storedAdvisorCount] = await Promise.all([
         AsyncStorage.getItem('stack_silver'),
         AsyncStorage.getItem('stack_gold'),
         AsyncStorage.getItem('stack_platinum'),
@@ -2442,7 +2439,6 @@ function AppContent() {
         AsyncStorage.getItem('stack_hide_widget_values'),
         AsyncStorage.getItem('has_seen_v2_0_tutorial'),
         AsyncStorage.getItem('stack_advisor_count'),
-        AsyncStorage.getItem('stack_show_troy_fab'),
       ]);
 
       // Safely parse JSON data with fallbacks
@@ -2528,9 +2524,6 @@ function AppContent() {
           }
         } catch (e) { /* ignore */ }
       }
-
-      // Load Troy FAB preference
-      if (storedShowTroyFab === 'false') setShowTroyFab(false);
 
       // Mark data as loaded BEFORE fetching prices - this prevents the save useEffect from overwriting
       setDataLoaded(true);
@@ -3089,6 +3082,9 @@ function AppContent() {
           comex_silver: data.comex_silver !== false,
           comex_platinum: data.comex_platinum !== false,
           comex_palladium: data.comex_palladium !== false,
+          morning_brief: data.morning_brief !== false,
+          market_alerts: data.market_alerts !== false,
+          critical_alerts: data.critical_alerts !== false,
         });
       }
     } catch (err) {
@@ -3584,6 +3580,21 @@ function AppContent() {
       if (__DEV__) console.log('Stack Signal load error:', err.message);
     } finally {
       setStackSignalLoading(false);
+    }
+  };
+
+  const fetchStackSignalData = async () => {
+    try {
+      const [articlesRes, dailyRes] = await Promise.all([
+        stackSignalAPI.fetchArticles(0, 20),
+        stackSignalAPI.fetchDaily(),
+      ]);
+      const articles = articlesRes?.articles || (Array.isArray(articlesRes) ? articlesRes : []);
+      const daily = dailyRes?.signal || (dailyRes?.id ? dailyRes : null);
+      setStackSignalArticles(articles);
+      setStackSignalDaily(daily);
+    } catch (err) {
+      if (__DEV__) console.log('Stack Signal data fetch error:', err.message);
     }
   };
 
@@ -4879,18 +4890,6 @@ function AppContent() {
     if (tab === 'today') fetchSparklineData();
   }, [tab]);
 
-  // Troy FAB pulse animation — subtle glow pulse every 5s until first tap
-  useEffect(() => {
-    if (fabTapped.current) return;
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(fabGlow, { toValue: 0.6, duration: 1500, useNativeDriver: true }),
-        Animated.timing(fabGlow, { toValue: 0.4, duration: 1500, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
 
   // ============================================
   // CLOUD BACKUP
@@ -5426,6 +5425,31 @@ function AppContent() {
     }
   }, [tab]);
 
+  // Fetch Stack Signal data when switching to Signal tab
+  useEffect(() => {
+    if (tab === 'signal') {
+      if (!stackSignalDaily) {
+        stackSignalAPI.fetchDaily().then(res => {
+          const daily = res?.signal || (res?.id ? res : null);
+          if (daily) setStackSignalDaily(daily);
+        }).catch(() => {});
+      }
+      if (stackSignalArticles.length === 0) {
+        fetchStackSignalData();
+      }
+    }
+  }, [tab]);
+
+  // Load Troy Chat conversations when Troy tab opens
+  useEffect(() => {
+    if (tab === 'troy' && supabaseUser) {
+      troyAPI.listConversations().then(result => {
+        const convos = result?.conversations || (Array.isArray(result) ? result : []);
+        setTroyConversations(convos);
+      }).catch(() => {});
+    }
+  }, [tab]);
+
   const onRefreshToday = async () => {
     setIsRefreshing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -5435,6 +5459,13 @@ function AppContent() {
       fetchSpotPrices(true),
       fetchDailyBrief(),
     ]);
+    setIsRefreshing(false);
+  };
+
+  const onRefreshSignal = async () => {
+    setIsRefreshing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await fetchStackSignalData();
     setIsRefreshing(false);
   };
 
@@ -6878,32 +6909,35 @@ function AppContent() {
 
   const drawerSections = [
     { key: 'today', label: 'Today', items: [
-      { key: 'troy', label: 'Troy Chat' },
-      { key: 'morningBrief', label: "Your Daily Brief" },
+      { key: 'morningBrief', label: 'Daily Brief' },
       { key: 'portfolioPulse', label: 'Stack Pulse' },
       { key: 'metalMovers', label: 'Live Spot' },
       { key: 'whatChanged', label: 'Metal Movers' },
       { key: 'vaultWatch', label: 'Vault Watch' },
-      { key: 'intelligenceFeed', label: 'Intelligence Feed' },
-      { key: 'stackSignal', label: 'The Stack Signal' },
+      { key: 'stackSignalTeaser', label: 'Stack Signal' },
     ]},
     { key: 'portfolio', label: 'Stack', items: [
       { key: 'portfolioSummary', label: 'Summary' },
       { key: 'holdings', label: 'Holdings' },
     ]},
     { key: 'analytics', label: 'Analytics', items: [
+      { key: 'portfolioIntelligence', label: 'Portfolio Intelligence' },
       { key: 'portfolioValueChart', label: 'Stack Value Chart' },
       { key: 'spotPriceHistory', label: 'Spot Price History' },
       { key: 'holdingsBreakdown', label: 'Holdings Breakdown' },
       { key: 'purchaseStatistics', label: 'Purchase Statistics' },
       { key: 'breakEvenAnalysis', label: 'Break-Even Analysis' },
-    ]},
-    { key: 'tools', label: 'Tools', items: [
       { key: 'priceAlerts', label: 'Price Alerts' },
       { key: 'speculationTool', label: 'Speculation Tool' },
       { key: 'junkSilver', label: 'Junk Silver Calculator' },
       { key: 'stackMilestones', label: 'Stack Milestones' },
       { key: 'shareMyStack', label: 'Share My Stack' },
+    ]},
+    { key: 'troy', label: 'Troy', items: [
+      { key: 'troy', label: 'Troy Chat' },
+    ]},
+    { key: 'signal', label: 'Signal', items: [
+      { key: 'stackSignal', label: 'The Stack Signal' },
     ]},
     { key: 'settings', label: 'Settings', items: [
       ...(Platform.OS !== 'ios' ? [{ key: 'webApp', label: 'Web App' }] : []),
@@ -6935,16 +6969,16 @@ function AppContent() {
   };
 
   const navigateToSection = (tabKey, sectionKey) => {
-    // Special case: Troy opens chat
+    // Special case: Troy Chat navigates to Troy tab
     if (sectionKey === 'troy') {
       closeDrawer();
-      openTroyChat();
+      setTab('troy');
       return;
     }
-    // Special case: Stack Signal opens full-screen page
+    // Special case: Stack Signal navigates to Signal tab
     if (sectionKey === 'stackSignal') {
       closeDrawer();
-      openStackSignal();
+      setTab('signal');
       return;
     }
     closeDrawer();
@@ -6984,12 +7018,21 @@ function AppContent() {
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.8)', borderBottomColor: colors.border }]}>
+      <View style={[styles.header, { backgroundColor: tab === 'troy' ? '#000' : (isDarkMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.8)'), borderBottomColor: tab === 'troy' ? '#1a1a1a' : colors.border }]}>
         <View style={styles.headerContent}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <TouchableOpacity onPress={openDrawer} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
-            <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>☰</Text>
+          <TouchableOpacity onPress={tab === 'troy' ? () => setTroySidebarVisible(true) : openDrawer} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
+            <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{tab === 'troy' ? '\u2630' : '☰'}</Text>
           </TouchableOpacity>
+          {tab === 'troy' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TroyCoinIcon size={32} />
+              <View style={{ marginLeft: 10 }}>
+                <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>Troy</Text>
+                <Text style={{ color: '#999', fontSize: 12 }}>Your Stack Analyst</Text>
+              </View>
+            </View>
+          ) : (
           <TouchableOpacity onPress={openDrawer} activeOpacity={0.7} style={styles.logo}>
             <Image source={require('./assets/icon.png')} style={{ width: 40, height: 40, borderRadius: 8 }} />
             <Text style={[styles.logoTitle, { color: colors.text }]}>Stack Tracker Gold</Text>
@@ -7008,8 +7051,14 @@ function AppContent() {
               </TouchableOpacity>
             )}
           </TouchableOpacity>
+          )}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {tab === 'troy' && (
+              <TouchableOpacity onPress={startNewConversation} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ color: '#C9A84C', fontSize: 20 }}>{'\u270E'}</Text>
+              </TouchableOpacity>
+            )}
             {supabaseUser ? (
               // Signed in - show profile icon that goes to account
               <TouchableOpacity
@@ -7023,7 +7072,10 @@ function AppContent() {
                   borderWidth: 1,
                   borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)',
                 }}
-                onPress={() => setShowAccountScreen(true)}
+                onPress={() => {
+                  setPreviousTab(tab);
+                  setTab('settings');
+                }}
               >
                 <ProfileIcon size={20} color={colors.gold} />
               </TouchableOpacity>
@@ -7068,19 +7120,21 @@ function AppContent() {
         </TouchableOpacity>
       )}
 
-      {/* Main Content */}
+      {/* Main Content — ScrollView excluded on Troy tab (Troy uses FlatList) */}
+      {tab !== 'troy' && (
       <ScrollView
         ref={scrollRef}
         style={styles.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         refreshControl={
-          (tab === 'portfolio' || tab === 'analytics' || tab === 'today') ? (
+          (tab === 'portfolio' || tab === 'analytics' || tab === 'today' || tab === 'signal') ? (
             <RefreshControl
               refreshing={isRefreshing}
               onRefresh={
                 tab === 'portfolio' ? onRefreshDashboard :
                 tab === 'today' ? onRefreshToday :
+                tab === 'signal' ? onRefreshSignal :
                 onRefreshAnalytics
               }
               tintColor={colors.gold}
@@ -7189,144 +7243,6 @@ function AppContent() {
           return (
             <View style={{ backgroundColor: isDarkMode ? '#0d0d0d' : colors.bg, marginHorizontal: -20, paddingHorizontal: 16, paddingTop: 4, minHeight: Dimensions.get('window').height - 200 }}>
 
-              {/* ===== YOUR DAILY BRIEF ===== */}
-              <View onLayout={(e) => { sectionOffsets.current['morningBrief'] = e.nativeEvent.layout.y; }}>
-              {effHasPaidAccess ? (
-                <View style={{
-                  backgroundColor: todayCardBg,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: todayCardBorder,
-                  borderLeftWidth: 3,
-                  borderLeftColor: '#D4A843',
-                  padding: 16,
-                  marginBottom: 16,
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <TroyCoinIcon size={20} />
-                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>
-                      Your Daily Brief · {dailyBrief && dailyBrief.date && !dailyBrief.is_current
-                        ? new Date(dailyBrief.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-                        : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                    </Text>
-                  </View>
-                  {demoData ? (
-                    <>
-                      <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }} numberOfLines={briefExpanded ? undefined : 2}>Gold surged past $5,000 today, lifting your stack to a new all-time high of $502,847. Silver led the rally with a 2.4% gain, continuing its strong momentum this week. All four metals are trading in the green, with platinum and palladium both posting solid gains above 1%. Your stack gained $8,241 today — a great day for precious metals holders.</Text>
-                      <TouchableOpacity onPress={() => setBriefExpanded(!briefExpanded)} style={{ marginTop: 4, paddingVertical: 12 }}>
-                        <Text style={{ color: '#D4A843', fontSize: scaledFonts.medium, fontWeight: '700' }}>{briefExpanded ? 'See less' : 'See more'}</Text>
-                      </TouchableOpacity>
-                    </>
-                  ) : dailyBriefLoading ? (
-                    <ActivityIndicator size="small" color="#D4A843" style={{ paddingVertical: 8 }} />
-                  ) : dailyBrief && dailyBrief.brief_text ? (
-                    <>
-                      {!dailyBrief.is_current && (
-                        <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontStyle: 'italic', marginBottom: 6 }}>
-                          Today's brief will be available after 6:30 AM EST. Showing the most recent.
-                        </Text>
-                      )}
-                      <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }} numberOfLines={briefExpanded ? undefined : 2}>{dailyBrief.brief_text}</Text>
-                      <TouchableOpacity onPress={() => setBriefExpanded(!briefExpanded)} style={{ marginTop: 4, paddingVertical: 12 }}>
-                        <Text style={{ color: '#D4A843', fontSize: scaledFonts.medium, fontWeight: '700' }}>{briefExpanded ? 'See less' : 'See more'}</Text>
-                      </TouchableOpacity>
-                      {briefExpanded && <Text style={{ color: '#666', fontSize: scaledFonts.tiny, fontStyle: 'italic' }}>AI-generated analysis. Not financial advice.</Text>}
-                    </>
-                  ) : (
-                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontStyle: 'italic' }}>
-                      Your first daily brief will be available after 6:30 AM EST.
-                    </Text>
-                  )}
-                </View>
-              ) : dailyBrief && dailyBrief.brief_text ? (
-                <View style={{
-                  backgroundColor: todayCardBg,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: todayCardBorder,
-                  borderLeftWidth: 3,
-                  borderLeftColor: '#D4A843',
-                  padding: 16,
-                  marginBottom: 16,
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <TroyCoinIcon size={20} />
-                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Your Daily Brief</Text>
-                  </View>
-                  <View style={{ maxHeight: 60, overflow: 'hidden' }}>
-                    <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }}>{dailyBrief.brief_text}</Text>
-                  </View>
-                  {/* Gradient fade overlay */}
-                  <View style={{ height: 40, marginTop: -40 }}>
-                    <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0 }} />
-                    <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.4 }} />
-                    <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.7 }} />
-                    <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.95 }} />
-                  </View>
-                  <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
-                    <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock Your Daily Brief — upgrade now →</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: todayCardBg,
-                    borderRadius: 16,
-                    borderWidth: 1,
-                    borderColor: todayCardBorder,
-                    borderLeftWidth: 3,
-                    borderLeftColor: '#D4A843',
-                    padding: 16,
-                    marginBottom: 16,
-                  }}
-                  onPress={() => setShowPaywallModal(true)}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <TroyCoinIcon size={20} />
-                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Your Daily Brief</Text>
-                  </View>
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
-                    Get your daily brief — upgrade to unlock
-                  </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
-                    <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-              </View>
-
-              {/* ===== THE STACK SIGNAL TEASER ===== */}
-              <TouchableOpacity
-                onPress={() => openStackSignal()}
-                activeOpacity={0.7}
-                style={{
-                  backgroundColor: todayCardBg,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: '#C9A84C',
-                  padding: 16,
-                  marginBottom: 16,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <TroyCoinIcon size={20} />
-                  <Text style={{ color: '#C9A84C', fontSize: scaledFonts.tiny, fontWeight: '700', letterSpacing: 1.5 }}>THE STACK SIGNAL</Text>
-                </View>
-                {stackSignalDaily && stackSignalDaily.title ? (
-                  <>
-                    <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '700', marginBottom: 4 }}>{stackSignalDaily.title}</Text>
-                    {stackSignalDaily.troy_one_liner ? (
-                      <Text style={{ color: '#C9A84C', fontSize: scaledFonts.small, fontStyle: 'italic' }} numberOfLines={2}>{stackSignalDaily.troy_one_liner}</Text>
-                    ) : null}
-                  </>
-                ) : (
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>Tap to open Troy's curated market intelligence</Text>
-                )}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8 }}>
-                  <Text style={{ color: '#C9A84C', fontSize: scaledFonts.small, fontWeight: '600' }}>Read more ›</Text>
-                </View>
-              </TouchableOpacity>
-
               {/* ===== SECTION 1: STACK PULSE ===== */}
               <View onLayout={(e) => { sectionOffsets.current['portfolioPulse'] = e.nativeEvent.layout.y; }} style={{
                 backgroundColor: todayCardBg,
@@ -7391,6 +7307,110 @@ function AppContent() {
                   <TroyCoinIcon size={14} />
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{aiSummary}</Text>
                 </View>
+              </View>
+
+              {/* ===== DAILY BRIEF (Troy's Take) ===== */}
+              <View onLayout={(e) => { sectionOffsets.current['morningBrief'] = e.nativeEvent.layout.y; }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+                  <TroyCoinIcon size={20} />
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase' }}>Troy's Take</Text>
+                  <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.2)' }} />
+                </View>
+
+                {effHasPaidAccess ? (
+                  <View style={{
+                    backgroundColor: todayCardBg,
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: todayCardBorder,
+                    borderLeftWidth: 3,
+                    borderLeftColor: '#D4A843',
+                    padding: 16,
+                    marginBottom: 16,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <TroyCoinIcon size={20} />
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>
+                        Your Daily Brief · {dailyBrief && dailyBrief.date && !dailyBrief.is_current
+                          ? new Date(dailyBrief.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                          : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                      </Text>
+                    </View>
+                    {dailyBriefLoading ? (
+                      <ActivityIndicator size="small" color="#D4A843" style={{ paddingVertical: 8 }} />
+                    ) : dailyBrief && dailyBrief.brief_text ? (
+                      <>
+                        {!dailyBrief.is_current && (
+                          <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontStyle: 'italic', marginBottom: 6 }}>
+                            Today's brief will be available after 6:30 AM EST. Showing the most recent.
+                          </Text>
+                        )}
+                        <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }} numberOfLines={briefExpanded ? undefined : 2}>{dailyBrief.brief_text}</Text>
+                        <TouchableOpacity onPress={() => setBriefExpanded(!briefExpanded)} style={{ marginTop: 4, paddingVertical: 12 }}>
+                          <Text style={{ color: '#D4A843', fontSize: scaledFonts.medium, fontWeight: '700' }}>{briefExpanded ? 'See less' : 'See more'}</Text>
+                        </TouchableOpacity>
+                        {briefExpanded && <Text style={{ color: '#666', fontSize: scaledFonts.tiny, fontStyle: 'italic' }}>AI-generated analysis. Not financial advice.</Text>}
+                      </>
+                    ) : (
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontStyle: 'italic' }}>
+                        Your first daily brief will be available after 6:30 AM EST.
+                      </Text>
+                    )}
+                  </View>
+                ) : dailyBrief && dailyBrief.brief_text ? (
+                  <View style={{
+                    backgroundColor: todayCardBg,
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: todayCardBorder,
+                    borderLeftWidth: 3,
+                    borderLeftColor: '#D4A843',
+                    padding: 16,
+                    marginBottom: 16,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <TroyCoinIcon size={20} />
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Your Daily Brief</Text>
+                    </View>
+                    <View style={{ maxHeight: 60, overflow: 'hidden' }}>
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }}>{dailyBrief.brief_text}</Text>
+                    </View>
+                    <View style={{ height: 40, marginTop: -40 }}>
+                      <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0 }} />
+                      <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.4 }} />
+                      <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.7 }} />
+                      <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.95 }} />
+                    </View>
+                    <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
+                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock Your Daily Brief — upgrade now →</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: todayCardBg,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: todayCardBorder,
+                      borderLeftWidth: 3,
+                      borderLeftColor: '#D4A843',
+                      padding: 16,
+                      marginBottom: 16,
+                    }}
+                    onPress={() => setShowPaywallModal(true)}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <TroyCoinIcon size={20} />
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Your Daily Brief</Text>
+                    </View>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
+                      Get your daily brief — upgrade to unlock
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
+                      <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* ===== SECTION 2: LIVE SPOT (2x2 Grid) ===== */}
@@ -7546,8 +7566,16 @@ function AppContent() {
                 )}
               </View>
 
-              {/* ===== SECTION 3.5: VAULT WATCH (Gold-only) ===== */}
+              {/* ===== VAULT WATCH (Full) ===== */}
               <View onLayout={(e) => { sectionOffsets.current['vaultWatch'] = e.nativeEvent.layout.y; }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 8 }}>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', marginLeft: 4 }}>
+                    {'🏦'} Vault Watch
+                  </Text>
+                  <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.2)' }} />
+                </View>
+                <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginBottom: 10, marginLeft: 4 }}>COMEX Inventory Tracking</Text>
+
               {(() => {
                 const vaultMetalsAll = [
                   { key: 'silver', label: 'Ag', color: '#C0C0C0' },
@@ -7555,16 +7583,13 @@ function AppContent() {
                   { key: 'platinum', label: 'Pt', color: '#A8D8EA' },
                   { key: 'palladium', label: 'Pd', color: '#4CAF50' },
                 ];
-                // Only show tabs for metals that have meaningful data (at least one row with registered_oz > 0)
                 const vaultMetals = vaultMetalsAll.filter(m => {
                   const data = vaultData[m.key] || [];
                   return data.length > 0 && data.some(d => (d.registered_oz || 0) > 0);
                 });
 
-                // If current selected metal has no data, auto-switch to first available
                 const activeMetal = vaultMetals.some(m => m.key === vaultMetal) ? vaultMetal : (vaultMetals[0]?.key || 'silver');
                 if (activeMetal !== vaultMetal) {
-                  // Schedule state update after render to avoid setState during render
                   setTimeout(() => setVaultMetal(activeMetal), 0);
                 }
 
@@ -7572,7 +7597,6 @@ function AppContent() {
                 const latestVault = currentVaultData.length > 0 ? currentVaultData[currentVaultData.length - 1] : null;
                 const currentVaultColor = (vaultMetalsAll.find(m => m.key === activeMetal) || {}).color || '#D4A843';
 
-                // Format large oz numbers compactly: 101394888 → "101.4M"
                 const formatOzCompact = (val) => {
                   if (!val && val !== 0) return '—';
                   const abs = Math.abs(val);
@@ -7582,48 +7606,26 @@ function AppContent() {
                   return val.toLocaleString();
                 };
 
-                // Format change with comma separators
                 const formatChangeOz = (val) => {
                   if (!val && val !== 0) return '—';
                   const sign = val > 0 ? '+' : '';
                   return `${sign}${Math.round(val).toLocaleString()} oz`;
                 };
 
-                // Chart data for registered inventory trend
                 const chartDataPoints = currentVaultData.map(d => d.registered_oz).filter(v => v > 0);
-                const chartLabels = currentVaultData.map(d => {
-                  const dt = new Date(d.date + 'T00:00:00');
-                  return `${dt.getMonth() + 1}/${dt.getDate()}`;
-                });
-                // Show max 8 labels evenly spaced
-                const labelInterval = Math.max(1, Math.floor(chartLabels.length / 7));
-                const sparseLabels = chartLabels.map((l, i) => i % labelInterval === 0 || i === chartLabels.length - 1 ? l : '');
 
                 const ratio = latestVault?.oversubscribed_ratio || 0;
-                const ratioWarning = ratio > 3.0 ? { icon: '\uD83D\uDD25', label: 'Supply squeeze territory', color: '#F87171' }
-                  : ratio > 2.0 ? { icon: '\u26A0\uFE0F', label: 'Elevated', color: '#FBBF24' }
+                const ratioWarning = ratio > 3.0 ? { icon: '🔥', label: 'Supply squeeze territory', color: '#F87171' }
+                  : ratio > 2.0 ? { icon: '⚠️', label: 'Elevated', color: '#FBBF24' }
                   : null;
 
-                // Bullish color for inventory decreases (gold accent), gray for increases
                 const bullishColor = '#D4A843';
                 const bearishColor = colors.muted;
-
                 const getChangeColor = (val) => val < 0 ? bullishColor : val > 0 ? bearishColor : colors.muted;
-                const getChangeArrow = (val) => val < 0 ? '\u25BC' : val > 0 ? '\u25B2' : '';
+                const getChangeArrow = (val) => val < 0 ? '▼' : val > 0 ? '▲' : '';
 
                 return (
                   <View style={{ marginBottom: 16 }}>
-                      {/* Section header with gold divider */}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 10 }}>
-                        <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', marginLeft: 4 }}>
-                          {'\uD83C\uDFE6'} Vault Watch
-                        </Text>
-                        <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.2)' }} />
-                      </View>
-
-                      <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginBottom: 10, marginLeft: 4 }}>COMEX Warehouse Inventory</Text>
-
-                      {/* Metal selector pills */}
                       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
                         {vaultMetals.map(m => (
                           <TouchableOpacity
@@ -7647,7 +7649,6 @@ function AppContent() {
                       </View>
 
                       {vaultLoading && !latestVault ? (
-                        /* Loading skeleton */
                         <View style={{
                           backgroundColor: todayCardBg,
                           borderRadius: 12,
@@ -7667,9 +7668,7 @@ function AppContent() {
                           borderColor: todayCardBorder,
                           overflow: 'hidden',
                         }}>
-                          {/* Key stats */}
                           <View style={{ padding: 16 }}>
-                            {/* Registered */}
                             <View style={{ marginBottom: 14 }}>
                               <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Registered</Text>
                               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
@@ -7684,7 +7683,6 @@ function AppContent() {
 
                             {effHasGoldAccess ? (
                               <>
-                                {/* Eligible */}
                                 <View style={{ marginBottom: 14 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Eligible</Text>
                                   <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
@@ -7697,13 +7695,11 @@ function AppContent() {
                                   </View>
                                 </View>
 
-                                {/* Combined */}
                                 <View style={{ marginBottom: 14 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Combined</Text>
                                   <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '600' }}>{formatOzCompact(latestVault.combined_oz)} oz</Text>
                                 </View>
 
-                                {/* Oversubscribed Ratio */}
                                 <View style={{ marginBottom: 4 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Oversubscribed Ratio</Text>
                                   {ratio > 0 ? (
@@ -7731,31 +7727,24 @@ function AppContent() {
                               </>
                             ) : (
                               <>
-                                {/* Eligible - redacted */}
                                 <View style={{ marginBottom: 14 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Eligible</Text>
-                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.large, fontWeight: '600' }}>{'\u2022\u2022\u2022\u2022\u2022\u2022'} oz</Text>
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.large, fontWeight: '600' }}>{'••••••'} oz</Text>
                                 </View>
-
-                                {/* Combined - redacted */}
                                 <View style={{ marginBottom: 14 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Combined</Text>
-                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.large, fontWeight: '600' }}>{'\u2022\u2022\u2022\u2022\u2022\u2022'} oz</Text>
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.large, fontWeight: '600' }}>{'••••••'} oz</Text>
                                 </View>
-
-                                {/* Oversubscribed Ratio - redacted */}
                                 <View style={{ marginBottom: 4 }}>
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Oversubscribed Ratio</Text>
-                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.xlarge, fontWeight: '700' }}>{'\u2022\u2022\u2022'}x</Text>
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.xlarge, fontWeight: '700' }}>{'•••'}x</Text>
                                 </View>
                               </>
                             )}
                           </View>
 
-                          {/* Divider */}
                           <View style={{ height: 1, backgroundColor: 'rgba(212,168,67,0.15)', marginHorizontal: 16 }} />
 
-                          {/* Mini trend chart */}
                           {chartDataPoints.length >= 2 ? (
                             effHasGoldAccess ? (
                               <View style={{ paddingVertical: 12, paddingHorizontal: 4 }}>
@@ -7766,7 +7755,7 @@ function AppContent() {
                                   width={SCREEN_WIDTH - 56}
                                   height={160}
                                   range="1M"
-                                  chartId="vaultWatch"
+                                  chartId="vaultWatchToday"
                                   yFormat={(v) => {
                                     if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
                                     if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
@@ -7782,7 +7771,7 @@ function AppContent() {
                                 style={{ margin: 12, height: 200, borderWidth: 1.5, borderColor: 'rgba(212, 168, 67, 0.3)', borderStyle: 'dashed', borderRadius: 12, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? 'rgba(212, 168, 67, 0.03)' : 'rgba(212, 168, 67, 0.05)' }}
                               >
                                 <Text style={{ fontSize: scaledFonts.tiny, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, color: colors.muted, marginBottom: 12 }}>30-day inventory trend</Text>
-                                <Text style={{ fontSize: 28, marginBottom: 8 }}>{'\uD83D\uDD12'}</Text>
+                                <Text style={{ fontSize: 28, marginBottom: 8 }}>{'🔒'}</Text>
                                 <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>Available with Gold</Text>
                               </TouchableOpacity>
                             )
@@ -7792,7 +7781,6 @@ function AppContent() {
                             </View>
                           ) : null}
 
-                          {/* Source footer */}
                           <View style={{ paddingHorizontal: 16, paddingBottom: 12, paddingTop: 4 }}>
                             <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, opacity: 0.6 }}>Source: CME Group {'\u00B7'} Updated daily</Text>
                           </View>
@@ -7832,149 +7820,51 @@ function AppContent() {
               })()}
               </View>
 
-              {/* ===== SECTION 4: INTELLIGENCE FEED ===== */}
-              <View onLayout={(e) => { sectionOffsets.current['intelligenceFeed'] = e.nativeEvent.layout.y; }} style={{ marginBottom: 16 }}>
-                  {/* Section header with gold divider */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 6 }}>
-                    <TroyCoinIcon size={16} />
-                    <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase' }}>Market Intelligence</Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.2)' }} />
-                  </View>
+              {/* ===== STACK SIGNAL TEASER ===== */}
+              <TouchableOpacity
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setTab('signal'); setTimeout(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, 100); }}
+                activeOpacity={0.7}
+                style={{
+                  backgroundColor: todayCardBg,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: todayCardBorder,
+                  padding: 16,
+                  marginBottom: 16,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <View style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: 'rgba(212,168,67,0.12)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <StackSignalIcon size={24} color={colors.gold} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: scaledFonts.medium, fontWeight: '600' }}>The Stack Signal</Text>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>
+                    {stackSignalDaily?.title ? stackSignalDaily.title : 'Daily market synthesis & curated articles'}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.gold, fontSize: 18 }}>{'\u203A'}</Text>
+              </TouchableOpacity>
 
-                  {intelligenceLoading && intelligenceBriefs.length === 0 ? (
-                    // Loading skeletons
-                    <View style={{ gap: 10 }}>
-                      {[1, 2, 3].map(i => (
-                        <View key={i} style={{
-                          backgroundColor: todayCardBg,
-                          borderRadius: 12,
-                          borderWidth: 1,
-                          borderColor: todayCardBorder,
-                          padding: 16,
-                        }}>
-                          <View style={{ width: 60, height: 12, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', borderRadius: 4, marginBottom: 8 }} />
-                          <View style={{ width: '80%', height: 14, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', borderRadius: 4, marginBottom: 6 }} />
-                          <View style={{ width: '100%', height: 10, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', borderRadius: 4, marginBottom: 4 }} />
-                          <View style={{ width: '90%', height: 10, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', borderRadius: 4 }} />
-                        </View>
-                      ))}
-                    </View>
-                  ) : intelligenceBriefs.length > 0 ? (
-                    <View style={{ gap: 10 }}>
-                      {(() => {
-                        const visibleBriefs = effHasGoldAccess
-                          ? (intelligenceExpanded ? intelligenceBriefs : intelligenceBriefs.slice(0, 3))
-                          : intelligenceBriefs.slice(0, 1);
-                        return visibleBriefs.map((brief, i) => (
-                        <TouchableOpacity
-                          key={brief.id || i}
-                          style={{
-                            backgroundColor: todayCardBg,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: todayCardBorder,
-                            padding: 16,
-                          }}
-                          onPress={() => {
-                            if (brief.source_url) {
-                              Alert.alert(
-                                'Open External Link',
-                                "You're about to leave Stack Tracker Gold to view this link. Continue?",
-                                [
-                                  { text: 'Cancel', style: 'cancel' },
-                                  { text: 'Open', onPress: () => Linking.openURL(brief.source_url) },
-                                ]
-                              );
-                            }
-                          }}
-                          activeOpacity={brief.source_url ? 0.7 : 1}
-                        >
-                          {/* Category tag */}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                            <View style={{
-                              backgroundColor: `${categoryColors[brief.category] || '#D4A843'}20`,
-                              borderRadius: 4,
-                              paddingHorizontal: 6,
-                              paddingVertical: 2,
-                            }}>
-                              <Text style={{ color: categoryColors[brief.category] || '#D4A843', fontSize: scaledFonts.tiny, fontWeight: '700', textTransform: 'uppercase' }}>
-                                {categoryLabels[brief.category] || brief.category}
-                              </Text>
-                            </View>
-                            {brief.source && (
-                              <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny }}>{brief.source}</Text>
-                            )}
-                          </View>
-
-                          {/* Title */}
-                          <Text style={{ color: colors.text, fontSize: scaledFonts.medium, fontWeight: '600', marginBottom: 6, lineHeight: scaledFonts.medium * 1.35 }}>{brief.title}</Text>
-
-                          {/* Summary */}
-                          <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5 }} numberOfLines={3}>{brief.summary}</Text>
-                        </TouchableOpacity>
-                        ));
-                      })()}
-
-                      {/* "See all" link for Gold users with more than 3 briefs */}
-                      {effHasGoldAccess && intelligenceBriefs.length > 3 && !intelligenceExpanded && (
-                        <TouchableOpacity
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIntelligenceExpanded(true); }}
-                          style={{ paddingVertical: 8, alignItems: 'center' }}
-                        >
-                          <Text style={{ color: '#D4A843', fontSize: scaledFonts.normal, fontWeight: '600' }}>
-                            See all {intelligenceBriefs.length} briefs {'\u2192'}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-
-                      {/* Gated count card for free users */}
-                      {!effHasGoldAccess && intelligenceBriefs.length > 1 && (
-                        <TouchableOpacity
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowPaywallModal(true); }}
-                          style={{
-                            backgroundColor: todayCardBg,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: 'rgba(212, 168, 67, 0.3)',
-                            padding: 20,
-                            alignItems: 'center',
-                          }}
-                        >
-                          <Text style={{ fontSize: 24, marginBottom: 8 }}>{'\uD83D\uDD12'}</Text>
-                          <Text style={{ color: colors.text, fontSize: scaledFonts.medium, fontWeight: '600', marginBottom: 6 }}>
-                            {intelligenceBriefs.length - 1} more market brief{intelligenceBriefs.length - 1 > 1 ? 's' : ''} today
-                          </Text>
-                          <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{hasSilver ? 'Upgrade to Gold' : 'Try Gold free for 7 days'}</Text>
-                          {!hasSilver && <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 2 }}>Then $9.99/mo {'\u00B7'} Cancel anytime</Text>}
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  ) : (
-                    <View style={{
-                      backgroundColor: todayCardBg,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: todayCardBorder,
-                      padding: 24,
-                      alignItems: 'center',
-                    }}>
-                      <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, textAlign: 'center' }}>Intelligence feed updating...</Text>
-                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 4, textAlign: 'center' }}>Check back soon for today's market briefs</Text>
-                    </View>
-                  )}
-              </View>
-
-              {/* Troy advisor section removed — now accessible via FAB */}
-
-              {/* ===== SECTION 5: FOOTER ===== */}
+              {/* ===== FOOTER ===== */}
               <View style={{ alignItems: 'center', paddingVertical: 24, marginBottom: 20 }}>
                 <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, opacity: 0.6 }}>Powered by Stack Tracker Gold</Text>
-                <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, opacity: 0.4, marginTop: 4 }}>Intelligence updates daily at 6:30 AM EST</Text>
               </View>
 
             </View>
           );
         })()}
+
+
 
         {/* PORTFOLIO TAB */}
         {tab === 'portfolio' && (() => {
@@ -8444,174 +8334,6 @@ function AppContent() {
           );
         })()}
 
-        {/* TOOLS TAB */}
-        {tab === 'tools' && (
-          <>
-                {/* Price Alerts */}
-                <View onLayout={(e) => { sectionOffsets.current['priceAlerts'] = e.nativeEvent.layout.y; }}>
-                <TouchableOpacity
-                  style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setShowAddAlertModal(true);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><BellIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Price Alerts</Text></View>
-                    {priceAlerts.length > 0 && (
-                      <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny }}>{priceAlerts.length} active</Text>
-                    )}
-                  </View>
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>Set alerts for gold and silver price targets</Text>
-                </TouchableOpacity>
-                </View>
-
-                <View onLayout={(e) => { sectionOffsets.current['speculationTool'] = e.nativeEvent.layout.y; }}>
-                <TouchableOpacity style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSpeculationModal(true); }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><TrendingUpIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Speculation Tool</Text></View>
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>What if silver hits $100? What if gold hits $10,000?</Text>
-                </TouchableOpacity>
-                </View>
-
-                <View onLayout={(e) => { sectionOffsets.current['junkSilver'] = e.nativeEvent.layout.y; }}>
-                <TouchableOpacity style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]} onPress={() => setShowJunkCalcModal(true)}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><CalculatorIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Junk Silver Calculator</Text></View>
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>Calculate melt value of constitutional silver</Text>
-                </TouchableOpacity>
-                </View>
-
-                {/* Stack Milestones - Tappable to Edit */}
-                <View onLayout={(e) => { sectionOffsets.current['stackMilestones'] = e.nativeEvent.layout.y; }}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setTempSilverMilestone(customSilverMilestone?.toString() || '');
-                    setTempGoldMilestone(customGoldMilestone?.toString() || '');
-                    setShowMilestoneModal(true);
-                  }}
-                >
-                  <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><TrophyIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Stack Milestones</Text></View>
-                      <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny }}>Tap to edit</Text>
-                    </View>
-                    <ProgressBar value={totalSilverOzt} max={nextSilverMilestone} color={colors.silver} label={`Silver: ${formatOunces(totalSilverOzt, 0)} / ${nextSilverMilestone} oz${customSilverMilestone ? ' (custom)' : ''}`} />
-                    <ProgressBar value={totalGoldOzt} max={nextGoldMilestone} color={colors.gold} label={`Gold: ${formatOunces(totalGoldOzt, 2)} / ${nextGoldMilestone} oz${customGoldMilestone ? ' (custom)' : ''}`} />
-                  </View>
-                </TouchableOpacity>
-                </View>
-
-                {/* Share My Stack - Inline Card */}
-                <View onLayout={(e) => { sectionOffsets.current['shareMyStack'] = e.nativeEvent.layout.y; }}>
-                {(silverItems.length > 0 || goldItems.length > 0 || platinumItems.length > 0 || palladiumItems.length > 0) && (() => {
-                  const shareMetals = [
-                    { label: 'Gold', symbol: 'Au', ozt: totalGoldOzt, spot: goldSpot, color: '#D4A843', decimals: 3, value: totalGoldOzt * goldSpot },
-                    { label: 'Silver', symbol: 'Ag', ozt: totalSilverOzt, spot: silverSpot, color: '#9ca3af', decimals: 2, value: totalSilverOzt * silverSpot },
-                    { label: 'Platinum', symbol: 'Pt', ozt: totalPlatinumOzt, spot: platinumSpot, color: '#7BB3D4', decimals: 3, value: totalPlatinumOzt * platinumSpot },
-                    { label: 'Palladium', symbol: 'Pd', ozt: totalPalladiumOzt, spot: palladiumSpot, color: '#6BBF8A', decimals: 3, value: totalPalladiumOzt * palladiumSpot },
-                  ].filter(m => m.ozt > 0);
-                  return (
-                    <View style={{ position: 'relative' }}>
-                      <ViewShot
-                        ref={shareViewRef}
-                        options={{ format: 'png', quality: 1.0, result: 'tmpfile' }}
-                      >
-                        <View style={{
-                          backgroundColor: '#111111',
-                          borderRadius: 16,
-                          overflow: 'hidden',
-                        }}>
-                          {/* Gold accent line */}
-                          <View style={{ height: 2, backgroundColor: '#D4A843' }} />
-
-                          <View style={{ padding: 20, paddingTop: 16 }}>
-                            {/* App icon + title */}
-                            <View style={{ alignItems: 'center', marginBottom: 12 }}>
-                              <Image source={require('./assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 10, marginBottom: 8 }} />
-                              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700', letterSpacing: 3, textTransform: 'uppercase' }}>My Stack</Text>
-                            </View>
-
-                            {/* Portfolio value */}
-                            <Text style={{ color: '#ffffff', fontSize: 36, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>${formatCurrency(totalMeltValue, 0)}</Text>
-
-                            {/* Colored dots for held metals */}
-                            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 }}>
-                              {shareMetals.map(m => (
-                                <View key={m.label} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.color }} />
-                              ))}
-                            </View>
-
-                            {/* Gold divider */}
-                            <View style={{ height: 1, backgroundColor: 'rgba(212,168,67,0.4)', marginBottom: 16 }} />
-
-                            {/* Metal rows */}
-                            {shareMetals.map(m => {
-                              const pct = totalMeltValue > 0 ? ((m.value / totalMeltValue) * 100).toFixed(0) : '0';
-                              return (
-                                <View key={m.label} style={{ marginBottom: 12 }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.color }} />
-                                      <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '600' }}>{m.label}</Text>
-                                    </View>
-                                    <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>${formatCurrency(m.value, 0)}</Text>
-                                  </View>
-                                  <Text style={{ color: '#71717a', fontSize: 12, marginLeft: 18, marginTop: 2 }}>{formatOunces(m.ozt, m.decimals)} oz · {pct}%</Text>
-                                </View>
-                              );
-                            })}
-
-                            {/* Gold divider */}
-                            <View style={{ height: 1, backgroundColor: 'rgba(212,168,67,0.4)', marginTop: 4, marginBottom: 12 }} />
-
-                            {/* Spot prices row */}
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginBottom: 16 }}>
-                              {shareMetals.map(m => (
-                                <Text key={m.symbol} style={{ color: '#71717a', fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{m.symbol} ${m.symbol === 'Ag' ? m.spot.toFixed(2) : m.spot.toFixed(0)}</Text>
-                              ))}
-                            </View>
-
-                            {/* Branding */}
-                            <View style={{ alignItems: 'center' }}>
-                              <Text style={{ color: '#D4A843', fontSize: 14, fontWeight: '700', marginBottom: 2 }}>stacktrackergold.com</Text>
-                              <Text style={{ color: '#52525b', fontSize: 11 }}>Tracked with Stack Tracker Gold</Text>
-                            </View>
-                          </View>
-                        </View>
-                      </ViewShot>
-
-                      {/* Share button - outside ViewShot so not captured */}
-                      <TouchableOpacity
-                        style={{
-                          position: 'absolute',
-                          top: 14,
-                          right: 12,
-                          zIndex: 10,
-                          width: 36,
-                          height: 36,
-                          borderRadius: 18,
-                          backgroundColor: 'rgba(255,255,255,0.1)',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                        onPress={() => {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          shareMyStack();
-                        }}
-                      >
-                        <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                          <Path d="M12 2L12 16M12 2L8 6M12 2L16 6" stroke="#D4A843" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                          <Path d="M4 14V18C4 19.1 4.9 20 6 20H18C19.1 20 20 19.1 20 18V14" stroke="#D4A843" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                        </Svg>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })()}
-                </View>
-          </>
-        )}
-
         {/* ANALYTICS TAB */}
         {tab === 'analytics' && (() => {
           const effPortfolioIntel = demoData ? demoData.portfolioIntel : portfolioIntel;
@@ -8646,71 +8368,9 @@ function AppContent() {
             )}
 
             {/* Portfolio Intelligence */}
-            {effHasGoldAccess ? (
-              <View style={{
-                backgroundColor: colors.cardBg,
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderLeftWidth: 3,
-                borderLeftColor: '#D4A843',
-                padding: 16,
-                marginHorizontal: 16,
-                marginBottom: 12,
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <TroyCoinIcon size={20} />
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Troy's Take</Text>
-                </View>
-                {effPortfolioIntelLoading ? (
-                  <ActivityIndicator size="small" color="#D4A843" style={{ paddingVertical: 8 }} />
-                ) : effPortfolioIntel && effPortfolioIntel.text ? (
-                  <>
-                    <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }} numberOfLines={portfolioIntelExpanded ? undefined : 2}>{effPortfolioIntel.text}</Text>
-                    <TouchableOpacity onPress={() => setPortfolioIntelExpanded(!portfolioIntelExpanded)} style={{ marginTop: 4, paddingVertical: 12 }}>
-                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.medium, fontWeight: '700' }}>{portfolioIntelExpanded ? 'See less' : 'See more'}</Text>
-                    </TouchableOpacity>
-                    {portfolioIntelExpanded && <Text style={{ color: '#666', fontSize: scaledFonts.tiny, fontStyle: 'italic' }}>Troy is AI-powered. Not financial advice.</Text>}
-                  </>
-                ) : (
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontStyle: 'italic' }}>
-                    Troy's take will be available after 6:30 AM EST.
-                  </Text>
-                )}
-              </View>
-            ) : effPortfolioIntel && effPortfolioIntel.text ? (
-              <View style={{
-                backgroundColor: colors.cardBg,
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderLeftWidth: 3,
-                borderLeftColor: '#D4A843',
-                padding: 16,
-                marginHorizontal: 16,
-                marginBottom: 12,
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <TroyCoinIcon size={20} />
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Troy's Take</Text>
-                </View>
-                <View style={{ maxHeight: 60, overflow: 'hidden' }}>
-                  <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }}>{effPortfolioIntel.text}</Text>
-                </View>
-                {/* Gradient fade overlay */}
-                <View style={{ height: 40, marginTop: -40 }}>
-                  <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0 }} />
-                  <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.4 }} />
-                  <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.7 }} />
-                  <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.95 }} />
-                </View>
-                <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
-                  <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock Troy's full stack take — upgrade to Gold →</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={{
+            <View onLayout={(e) => { sectionOffsets.current['portfolioIntelligence'] = e.nativeEvent.layout.y; }}>
+              {effHasGoldAccess ? (
+                <View style={{
                   backgroundColor: colors.cardBg,
                   borderRadius: 16,
                   borderWidth: 1,
@@ -8718,23 +8378,83 @@ function AppContent() {
                   borderLeftWidth: 3,
                   borderLeftColor: '#D4A843',
                   padding: 16,
-                  marginHorizontal: 16,
                   marginBottom: 12,
-                }}
-                onPress={() => setShowPaywallModal(true)}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <TroyCoinIcon size={20} />
-                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Troy's Take</Text>
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <TroyCoinIcon size={20} />
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Portfolio Intelligence</Text>
+                  </View>
+                  {effPortfolioIntelLoading ? (
+                    <ActivityIndicator size="small" color="#D4A843" style={{ paddingVertical: 8 }} />
+                  ) : effPortfolioIntel && effPortfolioIntel.text ? (
+                    <>
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }} numberOfLines={portfolioIntelExpanded ? undefined : 2}>{effPortfolioIntel.text}</Text>
+                      <TouchableOpacity onPress={() => setPortfolioIntelExpanded(!portfolioIntelExpanded)} style={{ marginTop: 4, paddingVertical: 12 }}>
+                        <Text style={{ color: '#D4A843', fontSize: scaledFonts.medium, fontWeight: '700' }}>{portfolioIntelExpanded ? 'See less' : 'See more'}</Text>
+                      </TouchableOpacity>
+                      {portfolioIntelExpanded && <Text style={{ color: '#666', fontSize: scaledFonts.tiny, fontStyle: 'italic' }}>Troy is AI-powered. Not financial advice.</Text>}
+                    </>
+                  ) : (
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontStyle: 'italic' }}>
+                      Portfolio intelligence will be available after 6:30 AM EST.
+                    </Text>
+                  )}
                 </View>
-                <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
-                  Get Troy's take — upgrade to Gold
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
-                  <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
+              ) : effPortfolioIntel && effPortfolioIntel.text ? (
+                <View style={{
+                  backgroundColor: colors.cardBg,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderLeftWidth: 3,
+                  borderLeftColor: '#D4A843',
+                  padding: 16,
+                  marginBottom: 12,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <TroyCoinIcon size={20} />
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Portfolio Intelligence</Text>
+                  </View>
+                  <View style={{ maxHeight: 60, overflow: 'hidden' }}>
+                    <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.5 }}>{effPortfolioIntel.text}</Text>
+                  </View>
+                  <View style={{ height: 40, marginTop: -40 }}>
+                    <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0 }} />
+                    <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.4 }} />
+                    <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.7 }} />
+                    <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.95 }} />
+                  </View>
+                  <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
+                    <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock full portfolio intelligence — upgrade to Gold →</Text>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
-            )}
+              ) : (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: colors.cardBg,
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderLeftWidth: 3,
+                    borderLeftColor: '#D4A843',
+                    padding: 16,
+                    marginBottom: 12,
+                  }}
+                  onPress={() => setShowPaywallModal(true)}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <TroyCoinIcon size={20} />
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Portfolio Intelligence</Text>
+                  </View>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
+                    Get Troy's portfolio intelligence — upgrade to Gold
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
+                    <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
 
             {/* Analytics Content */}
             <View>
@@ -9246,6 +8966,156 @@ function AppContent() {
                   )}
                 </View>
 
+                {/* ===== TOOLS ===== */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 12, gap: 8, marginHorizontal: 16 }}>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase' }}>Tools</Text>
+                  <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.2)' }} />
+                </View>
+
+                {/* Price Alerts */}
+                <View onLayout={(e) => { sectionOffsets.current['priceAlerts'] = e.nativeEvent.layout.y; }}>
+                <TouchableOpacity
+                  style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowAddAlertModal(true);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><BellIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Price Alerts</Text></View>
+                    {priceAlerts.length > 0 && (
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny }}>{priceAlerts.length} active</Text>
+                    )}
+                  </View>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>Set alerts for gold and silver price targets</Text>
+                </TouchableOpacity>
+                </View>
+
+                <View onLayout={(e) => { sectionOffsets.current['speculationTool'] = e.nativeEvent.layout.y; }}>
+                <TouchableOpacity style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSpeculationModal(true); }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><TrendingUpIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Speculation Tool</Text></View>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>What if silver hits $100? What if gold hits $10,000?</Text>
+                </TouchableOpacity>
+                </View>
+
+                <View onLayout={(e) => { sectionOffsets.current['junkSilver'] = e.nativeEvent.layout.y; }}>
+                <TouchableOpacity style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]} onPress={() => setShowJunkCalcModal(true)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><CalculatorIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Junk Silver Calculator</Text></View>
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal }}>Calculate melt value of constitutional silver</Text>
+                </TouchableOpacity>
+                </View>
+
+                {/* Stack Milestones */}
+                <View onLayout={(e) => { sectionOffsets.current['stackMilestones'] = e.nativeEvent.layout.y; }}>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setTempSilverMilestone(customSilverMilestone?.toString() || '');
+                    setTempGoldMilestone(customGoldMilestone?.toString() || '');
+                    setShowMilestoneModal(true);
+                  }}
+                >
+                  <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 18, height: 18, justifyContent: 'center', alignItems: 'center' }}><TrophyIcon size={18} color={colors.gold} /></View><Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium, marginBottom: 0 }]}>Stack Milestones</Text></View>
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny }}>Tap to edit</Text>
+                    </View>
+                    <ProgressBar value={totalSilverOzt} max={nextSilverMilestone} color={colors.silver} label={`Silver: ${formatOunces(totalSilverOzt, 0)} / ${nextSilverMilestone} oz${customSilverMilestone ? ' (custom)' : ''}`} />
+                    <ProgressBar value={totalGoldOzt} max={nextGoldMilestone} color={colors.gold} label={`Gold: ${formatOunces(totalGoldOzt, 2)} / ${nextGoldMilestone} oz${customGoldMilestone ? ' (custom)' : ''}`} />
+                  </View>
+                </TouchableOpacity>
+                </View>
+
+                {/* Share My Stack */}
+                <View onLayout={(e) => { sectionOffsets.current['shareMyStack'] = e.nativeEvent.layout.y; }}>
+                {(silverItems.length > 0 || goldItems.length > 0 || platinumItems.length > 0 || palladiumItems.length > 0) && (() => {
+                  const shareMetals = [
+                    { label: 'Gold', symbol: 'Au', ozt: totalGoldOzt, spot: goldSpot, color: '#D4A843', decimals: 3, value: totalGoldOzt * goldSpot },
+                    { label: 'Silver', symbol: 'Ag', ozt: totalSilverOzt, spot: silverSpot, color: '#9ca3af', decimals: 2, value: totalSilverOzt * silverSpot },
+                    { label: 'Platinum', symbol: 'Pt', ozt: totalPlatinumOzt, spot: platinumSpot, color: '#7BB3D4', decimals: 3, value: totalPlatinumOzt * platinumSpot },
+                    { label: 'Palladium', symbol: 'Pd', ozt: totalPalladiumOzt, spot: palladiumSpot, color: '#6BBF8A', decimals: 3, value: totalPalladiumOzt * palladiumSpot },
+                  ].filter(m => m.ozt > 0);
+                  return (
+                    <View style={{ position: 'relative' }}>
+                      <ViewShot
+                        ref={shareViewRef}
+                        options={{ format: 'png', quality: 1.0, result: 'tmpfile' }}
+                      >
+                        <View style={{
+                          backgroundColor: '#111111',
+                          borderRadius: 16,
+                          overflow: 'hidden',
+                        }}>
+                          <View style={{ height: 2, backgroundColor: '#D4A843' }} />
+                          <View style={{ padding: 20, paddingTop: 16 }}>
+                            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+                              <Image source={require('./assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 10, marginBottom: 8 }} />
+                              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700', letterSpacing: 3, textTransform: 'uppercase' }}>My Stack</Text>
+                            </View>
+                            <Text style={{ color: '#ffffff', fontSize: 36, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>${formatCurrency(totalMeltValue, 0)}</Text>
+                            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 }}>
+                              {shareMetals.map(m => (
+                                <View key={m.label} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.color }} />
+                              ))}
+                            </View>
+                            <View style={{ height: 1, backgroundColor: 'rgba(212,168,67,0.4)', marginBottom: 16 }} />
+                            {shareMetals.map(m => {
+                              const pct = totalMeltValue > 0 ? ((m.value / totalMeltValue) * 100).toFixed(0) : '0';
+                              return (
+                                <View key={m.label} style={{ marginBottom: 12 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.color }} />
+                                      <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '600' }}>{m.label}</Text>
+                                    </View>
+                                    <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>${formatCurrency(m.value, 0)}</Text>
+                                  </View>
+                                  <Text style={{ color: '#71717a', fontSize: 12, marginLeft: 18, marginTop: 2 }}>{formatOunces(m.ozt, m.decimals)} oz · {pct}%</Text>
+                                </View>
+                              );
+                            })}
+                            <View style={{ height: 1, backgroundColor: 'rgba(212,168,67,0.4)', marginTop: 4, marginBottom: 12 }} />
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginBottom: 16 }}>
+                              {shareMetals.map(m => (
+                                <Text key={m.symbol} style={{ color: '#71717a', fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{m.symbol} ${m.symbol === 'Ag' ? m.spot.toFixed(2) : m.spot.toFixed(0)}</Text>
+                              ))}
+                            </View>
+                            <View style={{ alignItems: 'center' }}>
+                              <Text style={{ color: '#D4A843', fontSize: 14, fontWeight: '700', marginBottom: 2 }}>stacktrackergold.com</Text>
+                              <Text style={{ color: '#52525b', fontSize: 11 }}>Tracked with Stack Tracker Gold</Text>
+                            </View>
+                          </View>
+                        </View>
+                      </ViewShot>
+                      <TouchableOpacity
+                        style={{
+                          position: 'absolute',
+                          top: 14,
+                          right: 12,
+                          zIndex: 10,
+                          width: 36,
+                          height: 36,
+                          borderRadius: 18,
+                          backgroundColor: 'rgba(255,255,255,0.1)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          shareMyStack();
+                        }}
+                      >
+                        <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                          <Path d="M12 2L12 16M12 2L8 6M12 2L16 6" stroke="#D4A843" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                          <Path d="M4 14V18C4 19.1 4.9 20 6 20H18C19.1 20 20 19.1 20 18V14" stroke="#D4A843" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                        </Svg>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })()}
+                </View>
+
               </>
 
             </View>
@@ -9345,8 +9215,15 @@ function AppContent() {
           // ===== MAIN SETTINGS PAGE =====
           return (
             <View style={pageStyle}>
+              {/* Done button header */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: 12, marginBottom: 8 }}>
+                <Text style={{ color: colors.text, fontSize: scaledFonts.xlarge, fontWeight: '700' }}>Settings</Text>
+                <TouchableOpacity onPress={() => setTab(previousTab)}>
+                  <Text style={{ color: colors.gold, fontSize: scaledFonts.medium, fontWeight: '600' }}>Done</Text>
+                </TouchableOpacity>
+              </View>
               {/* ACCOUNT (no section header, card at top) */}
-              <View onLayout={(e) => { sectionOffsets.current['account'] = e.nativeEvent.layout.y; }} style={{ marginTop: 16 }}>
+              <View onLayout={(e) => { sectionOffsets.current['account'] = e.nativeEvent.layout.y; }} style={{ marginTop: 8 }}>
                 <View style={{ borderRadius: 10, overflow: 'hidden' }}>
                   {/* Profile row */}
                   {supabaseUser ? (
@@ -9624,45 +9501,498 @@ function AppContent() {
           );
         })()}
 
-        <View style={{ height: (tab === 'settings' || tab === 'analytics') ? 300 : 100 }} />
+        {/* SIGNAL TAB */}
+        {tab === 'signal' && (() => {
+          const effHasPaidAccess = demoData ? true : hasPaidAccess;
+          const signalCardBg = isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
+          const signalCardBorder = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+
+          return (
+            <View style={{ backgroundColor: isDarkMode ? '#0d0d0d' : colors.bg, marginHorizontal: -20, paddingHorizontal: 16, paddingTop: 4, minHeight: Dimensions.get('window').height - 200 }}>
+
+              {/* Section header */}
+              <View onLayout={(e) => { sectionOffsets.current['stackSignal'] = e.nativeEvent.layout.y; }} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+                <StackSignalIcon size={16} color="#C9A84C" />
+                <Text style={{ color: '#C9A84C', fontSize: scaledFonts.tiny, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase' }}>The Stack Signal</Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(201,168,76,0.2)' }} />
+              </View>
+
+              {/* Daily Synthesis Card */}
+              {stackSignalDaily && stackSignalDaily.title ? (
+                <View style={{ borderRadius: 12, borderWidth: 1, borderColor: '#C9A84C', backgroundColor: signalCardBg, marginBottom: 20, overflow: 'hidden' }}>
+                  {stackSignalDaily.image_url && (
+                    <Image source={{ uri: stackSignalDaily.image_url, cache: 'force-cache' }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
+                  )}
+                  <View style={{ padding: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                      <StackSignalIcon size={12} color="#C9A84C" />
+                      <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '700', letterSpacing: 1.5 }}>THE STACK SIGNAL</Text>
+                    </View>
+                    <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 10 }}>
+                      {stackSignalDaily.published_at
+                        ? new Date(stackSignalDaily.published_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                        : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </Text>
+                    <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 8 }}>{stackSignalDaily.title}</Text>
+                    {stackSignalDaily.troy_one_liner ? (
+                      <Text style={{ color: '#C9A84C', fontSize: 14, fontStyle: 'italic', marginBottom: 12, lineHeight: 20 }}>{stackSignalDaily.troy_one_liner}</Text>
+                    ) : null}
+                    {stackSignalDaily.troy_commentary ? (
+                        <Markdown style={{
+                          body: { color: isDarkMode ? '#f5f5f5' : colors.text, fontSize: 15, lineHeight: 22 },
+                          paragraph: { marginTop: 0, marginBottom: 8 },
+                          strong: { fontWeight: '700' },
+                          em: { fontStyle: 'italic' },
+                          bullet_list: { marginTop: 2, marginBottom: 2 },
+                          ordered_list: { marginTop: 2, marginBottom: 2 },
+                          list_item: { marginTop: 1, marginBottom: 1 },
+                        }}>{stackSignalDaily.troy_commentary}</Markdown>
+                    ) : null}
+                    {stackSignalDaily.sources && Array.isArray(stackSignalDaily.sources) && stackSignalDaily.sources.length > 0 ? (() => {
+                      const seen = new Set();
+                      const unique = stackSignalDaily.sources.filter(src => {
+                        const key = src.name || src.url;
+                        if (seen.has(key)) return false;
+                        seen.add(key);
+                        return true;
+                      });
+                      return (
+                        <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDarkMode ? '#222' : '#ddd' }}>
+                          <Text style={{ color: colors.muted, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>SOURCES</Text>
+                          {unique.slice(0, 5).map((src, idx) => (
+                            <TouchableOpacity key={idx} onPress={() => Linking.openURL(src.url)} style={{ marginBottom: 4 }}>
+                              <Text style={{ color: '#4A90D9', fontSize: 13 }}>{src.name || src.url}</Text>
+                            </TouchableOpacity>
+                          ))}
+                          {unique.length > 5 && (
+                            <Text style={{ color: colors.muted, fontSize: 12, marginTop: 2 }}>and {unique.length - 5} more sources</Text>
+                          )}
+                        </View>
+                      );
+                    })() : null}
+                  </View>
+                </View>
+              ) : stackSignalArticles.length === 0 ? (
+                <View style={{ alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+                  <TroyCoinIcon size={48} />
+                  <Text style={{ color: colors.muted, fontSize: 15, textAlign: 'center', marginTop: 16, lineHeight: 22 }}>Troy is monitoring the markets. The Stack Signal will arrive shortly.</Text>
+                </View>
+              ) : null}
+
+              {/* Article Feed */}
+              {stackSignalArticles.filter(a => !a.is_stack_signal).length > 0 && (
+                <View style={{ gap: 12 }}>
+                  {stackSignalArticles.filter(a => !a.is_stack_signal).map((item) => {
+                    const isExpanded = expandedArticleId === item.id;
+                    const categoryColors = {
+                      price_action: '#C9A84C',
+                      comex_vaults: '#E8432A',
+                      central_banks: '#C9A84C',
+                      macro: '#4A90D9',
+                      supply: '#7B8D6F',
+                      geopolitical: '#D4A574',
+                      sentiment: '#9B59B6',
+                      silver: '#C0C0C0',
+                      gold: '#C9A84C',
+                      mining: '#7B8D6F',
+                      market_data: '#4A90D9',
+                    };
+                    const catColor = categoryColors[item.category] || '#C9A84C';
+                    const timeAgo = (() => {
+                      if (!item.published_at) return '';
+                      const diff = Date.now() - new Date(item.published_at).getTime();
+                      const mins = Math.floor(diff / 60000);
+                      if (mins < 60) return `${mins}m ago`;
+                      const hrs = Math.floor(mins / 60);
+                      if (hrs < 24) return `${hrs}h ago`;
+                      const days = Math.floor(hrs / 24);
+                      if (days === 1) return 'Yesterday';
+                      return `${days}d ago`;
+                    })();
+                    return (
+                      <TouchableOpacity
+                        key={item.id || item.slug}
+                        activeOpacity={0.8}
+                        onPress={async () => {
+                          if (isExpanded) {
+                            setExpandedArticleId(null);
+                            return;
+                          }
+                          setExpandedArticleId(item.id);
+                          if (!item.troy_commentary && item.slug) {
+                            try {
+                              const fullRes = await stackSignalAPI.fetchArticle(item.slug);
+                              const full = fullRes?.article || fullRes;
+                              if (full && full.troy_commentary) {
+                                setStackSignalArticles(prev => prev.map(a =>
+                                  a.id === item.id ? { ...a, troy_commentary: full.troy_commentary, sources: full.sources } : a
+                                ));
+                              }
+                            } catch (err) {
+                              if (__DEV__) console.log('Stack Signal article fetch error:', err.message);
+                            }
+                          }
+                        }}
+                        style={{ backgroundColor: signalCardBg, borderRadius: 12, borderWidth: 1, borderColor: signalCardBorder, overflow: 'hidden' }}
+                      >
+                        {item.image_url ? (
+                          <Image source={{ uri: item.image_url, cache: 'force-cache' }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
+                        ) : null}
+                        <View style={{ padding: 14 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                            {item.category ? (
+                              <View style={{ backgroundColor: catColor + '22', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
+                                <Text style={{ color: catColor, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>{(item.category || '').replace(/_/g, ' ')}</Text>
+                              </View>
+                            ) : <View />}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                              <Text style={{ color: colors.muted, fontSize: 11 }}>{item.source ? item.source.replace(/_/g, ' ') : ''} · {timeAgo}</Text>
+                              <TouchableOpacity
+                                onPress={() => handleShareArticle(item)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              >
+                                <Svg width={15} height={15} viewBox="0 0 24 24" fill="none">
+                                  <Path d="M12 2L12 15" stroke="#666" strokeWidth="2" strokeLinecap="round" />
+                                  <Path d="M8.5 7.5L12 4L15.5 7.5" stroke="#666" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  <Path d="M20 14V18C20 19.1046 19.1046 20 18 20H6C4.89543 20 4 19.1046 4 18V14" stroke="#666" strokeWidth="2" strokeLinecap="round" />
+                                </Svg>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 4 }}>{item.title}</Text>
+                          {item.troy_one_liner ? (
+                              <Text style={{ color: '#C9A84C', fontSize: 13, fontStyle: 'italic', lineHeight: 18 }} numberOfLines={isExpanded ? undefined : 2}>{item.troy_one_liner}</Text>
+                          ) : null}
+
+                          {isExpanded && (
+                            <View style={{ marginTop: 12 }}>
+                              {item.troy_commentary ? (
+                                  <Markdown style={{
+                                    body: { color: isDarkMode ? '#f5f5f5' : colors.text, fontSize: 15, lineHeight: 22 },
+                                    paragraph: { marginTop: 0, marginBottom: 8 },
+                                    strong: { fontWeight: '700' },
+                                    em: { fontStyle: 'italic' },
+                                    bullet_list: { marginTop: 2, marginBottom: 2 },
+                                    ordered_list: { marginTop: 2, marginBottom: 2 },
+                                    list_item: { marginTop: 1, marginBottom: 1 },
+                                  }}>{item.troy_commentary}</Markdown>
+                              ) : (
+                                  <ActivityIndicator size="small" color="#C9A84C" style={{ marginVertical: 12 }} />
+                              )}
+
+                              {(item.gold_price_at_publish || item.silver_price_at_publish) ? (
+                                <View style={{ flexDirection: 'row', gap: 12, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#222' : '#ddd' }}>
+                                  {item.gold_price_at_publish ? (
+                                    <Text style={{ color: colors.muted, fontSize: 11 }}>Au ${Number(item.gold_price_at_publish).toLocaleString()}</Text>
+                                  ) : null}
+                                  {item.silver_price_at_publish ? (
+                                    <Text style={{ color: colors.muted, fontSize: 11 }}>Ag ${Number(item.silver_price_at_publish).toFixed(2)}</Text>
+                                  ) : null}
+                                </View>
+                              ) : null}
+
+                              {item.sources && Array.isArray(item.sources) && item.sources.length > 0 ? (() => {
+                                const seen = new Set();
+                                const unique = item.sources.filter(src => {
+                                  const key = src.name || src.url;
+                                  if (seen.has(key)) return false;
+                                  seen.add(key);
+                                  return true;
+                                });
+                                return (
+                                  <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#222' : '#ddd' }}>
+                                    <Text style={{ color: colors.muted, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>SOURCES</Text>
+                                    {unique.slice(0, 5).map((src, idx) => (
+                                      <TouchableOpacity key={idx} onPress={() => Linking.openURL(src.url)} style={{ marginBottom: 4 }}>
+                                        <Text style={{ color: '#4A90D9', fontSize: 13 }}>{src.name || src.url}</Text>
+                                      </TouchableOpacity>
+                                    ))}
+                                    {unique.length > 5 && (
+                                      <Text style={{ color: colors.muted, fontSize: 12, marginTop: 2 }}>and {unique.length - 5} more sources</Text>
+                                    )}
+                                  </View>
+                                );
+                              })() : null}
+
+                              <TouchableOpacity
+                                onPress={() => handleShareArticle(item)}
+                                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#ddd', backgroundColor: 'rgba(201,168,76,0.06)' }}
+                              >
+                                <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
+                                  <Path d="M12 2L12 15" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                                  <Path d="M8.5 7.5L12 4L15.5 7.5" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  <Path d="M20 14V18C20 19.1046 19.1046 20 18 20H6C4.89543 20 4 19.1046 4 18V14" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+                                </Svg>
+                                <Text style={{ color: '#C9A84C', fontSize: 14, fontWeight: '600' }}>Share Article</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Loading state */}
+              {stackSignalArticles.length === 0 && stackSignalDaily && (
+                <View style={{ gap: 12 }}>
+                  {[1, 2, 3].map(i => (
+                    <View key={i} style={{ backgroundColor: signalCardBg, borderRadius: 12, borderWidth: 1, borderColor: signalCardBorder, overflow: 'hidden' }}>
+                      <View style={{ width: '100%', aspectRatio: 16/9, backgroundColor: isDarkMode ? '#222' : '#eee' }} />
+                      <View style={{ padding: 14 }}>
+                        <View style={{ width: 60, height: 10, backgroundColor: isDarkMode ? '#222' : '#ddd', borderRadius: 4, marginBottom: 10 }} />
+                        <View style={{ width: '90%', height: 14, backgroundColor: isDarkMode ? '#222' : '#ddd', borderRadius: 4, marginBottom: 8 }} />
+                        <View style={{ width: '70%', height: 11, backgroundColor: isDarkMode ? '#1a1a1a' : '#eee', borderRadius: 4 }} />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Footer */}
+              <View style={{ alignItems: 'center', paddingVertical: 24, marginBottom: 20 }}>
+                <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, opacity: 0.6 }}>Powered by Troy — Stack Tracker Gold</Text>
+              </View>
+            </View>
+          );
+        })()}
+
+        <View style={{ height: (tab === 'settings' || tab === 'analytics' || tab === 'signal') ? 300 : 100 }} />
 
       </ScrollView>
+      )}
 
-      {/* Troy FAB — realistic gold coin, every tab */}
-      {showTroyFab && <Animated.View style={{
-        position: 'absolute',
-        right: 20,
-        bottom: 100 + Math.max(insets.bottom, 10),
-        zIndex: 100,
-        transform: [{ scale: fabScale }],
-      }}>
-        <TouchableOpacity
-          onPressIn={() => {
-            Animated.spring(fabScale, { toValue: 0.95, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
-          }}
-          onPressOut={() => {
-            Animated.spring(fabScale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
-          }}
-          onPress={() => {
-            fabTapped.current = true;
-            fabGlow.stopAnimation();
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            openTroyChat();
-          }}
-          activeOpacity={1}
-        >
-          <Animated.View style={{
-            shadowColor: '#D4A843',
-            shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: fabGlow,
-            shadowRadius: 8,
-            elevation: 8,
-            borderRadius: 28,
-          }}>
-            <TroyCoinIcon size={56} />
-          </Animated.View>
-        </TouchableOpacity>
-      </Animated.View>}
+      {/* Troy Tab — Inline Chat (rendered outside ScrollView) */}
+      {tab === 'troy' && (
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? (insets.top + 68) : 0}>
+            {/* Message List */}
+            <FlatList
+              ref={troyFlatListRef}
+              data={troyMessages}
+              keyExtractor={(item, index) => item.id || `msg-${index}`}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16, flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              onContentSizeChange={() => {
+                troyFlatListRef.current?.scrollToEnd({ animated: true });
+              }}
+              ListEmptyComponent={
+                !troyLoading ? (
+                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 }}>
+                    <TroyCoinIcon size={64} />
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', marginTop: 16 }}>Ask Troy anything</Text>
+                    <Text style={{ color: '#999', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+                      Your personal stack analyst. I know your stack{'\n'}and can help you make smarter decisions.
+                    </Text>
+                    <View style={{ marginTop: 24, gap: 10, alignSelf: 'stretch', paddingHorizontal: 16 }}>
+                      {[
+                        'How is my stack performing?',
+                        'Should I buy more silver or gold?',
+                        'Analyze my gold-to-silver ratio',
+                        'What if silver hits $100?',
+                        "What's my best and worst purchase?",
+                      ].map((q, i) => (
+                        <TouchableOpacity
+                          key={i}
+                          style={{
+                            backgroundColor: 'rgba(212,168,67,0.08)',
+                            borderRadius: 16,
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                            borderWidth: 1,
+                            borderColor: 'rgba(212,168,67,0.2)',
+                            alignSelf: 'flex-start',
+                          }}
+                          onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            sendTroyMessage(q);
+                          }}
+                        >
+                          <Text style={{ color: '#D4A843', fontSize: 13 }}>{q}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ) : null
+              }
+              renderItem={({ item }) => (
+                <View style={{
+                  alignSelf: item.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '85%',
+                  marginBottom: 12,
+                }}>
+                  {item.role === 'assistant' && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                      <TroyCoinIcon size={20} />
+                      <Text style={{ color: '#C9A84C', fontSize: 12, fontWeight: '600', marginLeft: 6 }}>Troy</Text>
+                    </View>
+                  )}
+                  <View style={{
+                    backgroundColor: item.role === 'user' ? '#C9A84C' : '#1a1a1a',
+                    borderRadius: 16,
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    borderTopRightRadius: item.role === 'user' ? 4 : 16,
+                    borderTopLeftRadius: item.role === 'assistant' ? 4 : 16,
+                  }}>
+                    {item.role === 'user' ? (
+                      <Text style={{ color: '#000', fontSize: 15, lineHeight: 22 }}>{item.content}</Text>
+                    ) : (
+                      <Markdown style={{
+                        body: { color: '#f5f5f5', fontSize: 15, lineHeight: 22 },
+                        paragraph: { marginTop: 0, marginBottom: 4 },
+                        strong: { fontWeight: '700' },
+                        em: { fontStyle: 'italic' },
+                        bullet_list: { marginTop: 2, marginBottom: 2 },
+                        ordered_list: { marginTop: 2, marginBottom: 2 },
+                        list_item: { marginTop: 1, marginBottom: 1 },
+                      }}>{item.content}</Markdown>
+                    )}
+                  </View>
+                </View>
+              )}
+            />
+
+            {/* Typing Indicator */}
+            {troyLoading && troyMessages.length > 0 && (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TroyCoinIcon size={20} />
+                  <Text style={{ color: '#999', fontSize: 13, marginLeft: 6, fontStyle: 'italic' }}>Troy is thinking...</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Input Bar */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'flex-end',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderTopWidth: 1,
+              borderTopColor: '#1a1a1a',
+              backgroundColor: '#000',
+            }}>
+              <TextInput
+                style={{
+                  flex: 1,
+                  backgroundColor: '#1a1a1a',
+                  borderRadius: 20,
+                  paddingHorizontal: 16,
+                  paddingTop: 10,
+                  paddingBottom: 10,
+                  color: '#fff',
+                  fontSize: 15,
+                  maxHeight: 100,
+                }}
+                placeholder="Ask Troy..."
+                placeholderTextColor="#666"
+                value={troyInputText}
+                onChangeText={setTroyInputText}
+                multiline={true}
+                textAlignVertical="top"
+                returnKeyType="default"
+                blurOnSubmit={false}
+                autoCorrect={true}
+                spellCheck={true}
+                autoCapitalize="sentences"
+              />
+              <TouchableOpacity
+                onPress={() => sendTroyMessage()}
+                disabled={!troyInputText.trim() || troyLoading}
+                style={{
+                  marginLeft: 8,
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor: troyInputText.trim() && !troyLoading ? '#C9A84C' : '#333',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: troyInputText.trim() && !troyLoading ? '#000' : '#666', fontSize: 16, fontWeight: '700' }}>{'\u2191'}</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+
+          {/* Sidebar Overlay for conversation history */}
+          {troySidebarVisible && (
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={() => setTroySidebarVisible(false)}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10000 }}
+            >
+              <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                bottom: 0,
+                width: 280,
+                backgroundColor: '#111',
+                zIndex: 10001,
+                paddingTop: 60,
+              }}>
+                <View style={{ paddingHorizontal: 16, marginBottom: 20 }}>
+                  <TouchableOpacity
+                    onPress={startNewConversation}
+                    style={{
+                      backgroundColor: '#C9A84C',
+                      borderRadius: 8,
+                      paddingVertical: 12,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#000', fontWeight: '700', fontSize: 15 }}>New Conversation</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <FlatList
+                  data={troyConversations}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      onPress={() => {
+                        loadConversation(item.id);
+                        setTroySidebarVisible(false);
+                      }}
+                      onLongPress={() => {
+                        Alert.alert(
+                          'Delete Conversation',
+                          'Are you sure you want to delete this conversation?',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Delete', style: 'destructive', onPress: () => deleteConversation(item.id) }
+                          ]
+                        );
+                      }}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 14,
+                        backgroundColor: item.id === activeConversationId ? '#1a1a1a' : 'transparent',
+                        borderLeftWidth: item.id === activeConversationId ? 3 : 0,
+                        borderLeftColor: '#C9A84C',
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: item.id === activeConversationId ? '600' : '400' }} numberOfLines={1}>
+                        {item.title || 'New conversation'}
+                      </Text>
+                      <Text style={{ color: '#666', fontSize: 11, marginTop: 4 }}>
+                        {new Date(item.updated_at || item.created_at).toLocaleDateString()}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={{ color: '#666', textAlign: 'center', marginTop: 40, fontSize: 14 }}>No conversations yet</Text>
+                  }
+                />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Troy Chat — Full Screen */}
       {showTroyChat && (
@@ -9920,21 +10250,27 @@ function AppContent() {
       )}
 
       {/* Bottom Tabs */}
-      <View style={[styles.bottomTabs, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.95)', borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <View style={[styles.bottomTabs, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.95)', borderTopColor: tab === 'troy' ? '#1a1a1a' : colors.border, paddingBottom: Math.max(insets.bottom, 10) }]}>
         {[
           { key: 'today', label: 'Today', Icon: TodayIcon },
           { key: 'portfolio', label: 'Stack', Icon: HoldingsIcon },
           { key: 'analytics', label: 'Analytics', Icon: DashboardIcon },
-          { key: 'tools', label: 'Tools', Icon: ToolsIcon },
-          { key: 'settings', label: 'Settings', Icon: SettingsIcon },
+          { key: 'signal', label: 'Signal', Icon: StackSignalIcon },
+          { key: 'troy', label: 'Troy', Icon: ({ size, color }) => (
+            <View style={{ opacity: color === colors.gold ? 1 : 0.4 }}>
+              <TroyCoinIcon size={size} />
+            </View>
+          )},
         ].map(t => (
           <TouchableOpacity key={t.key} style={styles.bottomTab} onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            if (tab === t.key) {
+            if (tab === t.key && t.key !== 'troy') {
               scrollRef.current?.scrollTo({ y: 0, animated: true });
-            } else {
+            } else if (tab !== t.key) {
               setTab(t.key);
-              setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: false }), 0);
+              if (t.key !== 'troy') {
+                setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: false }), 0);
+              }
             }
           }}>
             <t.Icon size={22} color={tab === t.key ? colors.gold : colors.muted} />
@@ -10001,6 +10337,15 @@ function AppContent() {
                       {renderNotifRow('breaking_news', 'Market Intelligence', 'Breaking news and major market events', {})}
                       <Sep />
                       {renderNotifRow('price_alerts', 'Price Alerts', 'Triggered when your price targets are hit', { isLast: true })}
+                    </View>
+
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600', textTransform: 'uppercase', marginLeft: 16, marginTop: 24, marginBottom: 6 }}>Stack Signal</Text>
+                    <View style={{ borderRadius: 10, overflow: 'hidden' }}>
+                      {renderNotifRow('morning_brief', "Troy's Morning Brief", 'Daily market briefing at 6:35 AM', { isFirst: true })}
+                      <Sep />
+                      {renderNotifRow('market_alerts', 'Market Alerts', 'Stack Signal articles scoring 85+', {})}
+                      <Sep />
+                      {renderNotifRow('critical_alerts', 'Critical Alerts', 'Major market events scoring 95+', { isLast: true })}
                     </View>
 
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600', textTransform: 'uppercase', marginLeft: 16, marginTop: 24, marginBottom: 6 }}>COMEX Vault Alerts</Text>
@@ -10138,6 +10483,8 @@ function AppContent() {
                       paddingVertical: 12,
                       paddingHorizontal: 16,
                       minHeight: 44,
+                      borderBottomLeftRadius: 10,
+                      borderBottomRightRadius: 10,
                     }}>
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.text, fontSize: scaledFonts.normal }}>Hide Values on Widget</Text>
@@ -10149,35 +10496,6 @@ function AppContent() {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                           setHideWidgetValues(value);
                           AsyncStorage.setItem('stack_hide_widget_values', value ? 'true' : 'false');
-                        }}
-                        trackColor={{ false: isDarkMode ? '#39393d' : '#e9e9eb', true: '#34c759' }}
-                        thumbColor="#fff"
-                        ios_backgroundColor={isDarkMode ? '#39393d' : '#e9e9eb'}
-                      />
-                    </View>
-                    <Sep />
-                    {/* Show Troy Button */}
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      backgroundColor: grpBg,
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      minHeight: 44,
-                      borderBottomLeftRadius: 10,
-                      borderBottomRightRadius: 10,
-                    }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.text, fontSize: scaledFonts.normal }}>Show Troy Button</Text>
-                        <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>Display the floating Troy assistant button</Text>
-                      </View>
-                      <Switch
-                        value={showTroyFab}
-                        onValueChange={(value) => {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          setShowTroyFab(value);
-                          AsyncStorage.setItem('stack_show_troy_fab', value ? 'true' : 'false');
                         }}
                         trackColor={{ false: isDarkMode ? '#39393d' : '#e9e9eb', true: '#34c759' }}
                         thumbColor="#fff"
@@ -10359,7 +10677,8 @@ function AppContent() {
               <TouchableOpacity onPress={() => setShowStackSignal(false)} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Text style={{ color: '#C9A84C', fontSize: 28, fontWeight: '300' }}>{'\u2039'}</Text>
               </TouchableOpacity>
-              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>The Stack Signal</Text>
+              <StackSignalIcon size={20} color="#C9A84C" />
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1, marginLeft: 8 }}>The Stack Signal</Text>
               {stackSignalDaily && stackSignalDaily.title ? (
                 <TouchableOpacity
                   onPress={() => handleShareArticle(stackSignalDaily)}
@@ -10427,7 +10746,10 @@ function AppContent() {
                         <Image source={{ uri: daily.image_url, cache: 'force-cache' }} style={{ width: '100%', aspectRatio: 16/9 }} resizeMode="cover" />
                       ) : null}
                       <View style={{ padding: 16 }}>
-                        <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 4 }}>THE STACK SIGNAL</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                          <StackSignalIcon size={12} color="#C9A84C" />
+                          <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '700', letterSpacing: 1.5 }}>THE STACK SIGNAL</Text>
+                        </View>
                         <Text style={{ color: '#999', fontSize: 12, marginBottom: 10 }}>
                           {daily && daily.published_at
                             ? new Date(daily.published_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
@@ -10440,7 +10762,6 @@ function AppContent() {
                               <Text style={{ color: '#C9A84C', fontSize: 14, fontStyle: 'italic', marginBottom: 12, lineHeight: 20 }}>{daily.troy_one_liner}</Text>
                             ) : null}
                             {daily.troy_commentary ? (
-                              hasPaidAccess ? (
                                 <Markdown style={{
                                   body: { color: '#f5f5f5', fontSize: 15, lineHeight: 22 },
                                   paragraph: { marginTop: 0, marginBottom: 8 },
@@ -10450,27 +10771,8 @@ function AppContent() {
                                   ordered_list: { marginTop: 2, marginBottom: 2 },
                                   list_item: { marginTop: 1, marginBottom: 1 },
                                 }}>{daily.troy_commentary}</Markdown>
-                              ) : (
-                                <View>
-                                  <View style={{ maxHeight: 60, overflow: 'hidden' }}>
-                                    <Text style={{ color: '#f5f5f5', fontSize: 15, lineHeight: 22 }}>{daily.troy_commentary}</Text>
-                                  </View>
-                                  <View style={{ height: 40, marginTop: -40 }}>
-                                    <View style={{ flex: 1, backgroundColor: '#111', opacity: 0 }} />
-                                    <View style={{ flex: 1, backgroundColor: '#111', opacity: 0.5 }} />
-                                    <View style={{ flex: 1, backgroundColor: '#111', opacity: 0.8 }} />
-                                    <View style={{ flex: 1, backgroundColor: '#111', opacity: 0.95 }} />
-                                  </View>
-                                  <TouchableOpacity
-                                    onPress={() => setShowPaywallModal(true)}
-                                    style={{ marginTop: 8, borderWidth: 1, borderColor: 'rgba(201,168,76,0.4)', borderRadius: 8, paddingVertical: 10, alignItems: 'center', backgroundColor: 'rgba(201,168,76,0.08)' }}
-                                  >
-                                    <Text style={{ color: '#C9A84C', fontSize: 13, fontWeight: '600' }}>Upgrade to Silver to read Troy's full analysis</Text>
-                                  </TouchableOpacity>
-                                </View>
-                              )
                             ) : null}
-                            {hasPaidAccess && daily.sources && Array.isArray(daily.sources) && daily.sources.length > 0 ? (() => {
+                            {daily.sources && Array.isArray(daily.sources) && daily.sources.length > 0 ? (() => {
                               const seen = new Set();
                               const unique = daily.sources.filter(src => {
                                 const key = src.name || src.url;
@@ -10536,8 +10838,8 @@ function AppContent() {
                           return;
                         }
                         setExpandedArticleId(item.id);
-                        // Fetch full article details if not already loaded (only for paid users)
-                        if (hasPaidAccess && !item.troy_commentary && item.slug) {
+                        // Fetch full article details if not already loaded
+                        if (!item.troy_commentary && item.slug) {
                           try {
                             const fullRes = await stackSignalAPI.fetchArticle(item.slug);
                             const full = fullRes?.article || fullRes;
@@ -10584,8 +10886,7 @@ function AppContent() {
 
                         {isExpanded && (
                           <View style={{ marginTop: 12 }}>
-                            {hasPaidAccess ? (
-                              item.troy_commentary ? (
+                            {item.troy_commentary ? (
                                 <Markdown style={{
                                   body: { color: '#f5f5f5', fontSize: 15, lineHeight: 22 },
                                   paragraph: { marginTop: 0, marginBottom: 8 },
@@ -10595,20 +10896,11 @@ function AppContent() {
                                   ordered_list: { marginTop: 2, marginBottom: 2 },
                                   list_item: { marginTop: 1, marginBottom: 1 },
                                 }}>{item.troy_commentary}</Markdown>
-                              ) : (
-                                <ActivityIndicator size="small" color="#C9A84C" style={{ marginVertical: 12 }} />
-                              )
                             ) : (
-                              <TouchableOpacity
-                                onPress={() => setShowPaywallModal(true)}
-                                style={{ borderWidth: 1, borderColor: 'rgba(201,168,76,0.4)', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', backgroundColor: 'rgba(201,168,76,0.08)' }}
-                              >
-                                <Text style={{ color: '#C9A84C', fontSize: 13, fontWeight: '600' }}>Upgrade to Silver to read Troy's full analysis</Text>
-                                <Text style={{ color: '#666', fontSize: 11, marginTop: 4 }}>Plans from $4.99/mo</Text>
-                              </TouchableOpacity>
+                                <ActivityIndicator size="small" color="#C9A84C" style={{ marginVertical: 12 }} />
                             )}
 
-                            {hasPaidAccess && (item.gold_price_at_publish || item.silver_price_at_publish) ? (
+                            {(item.gold_price_at_publish || item.silver_price_at_publish) ? (
                               <View style={{ flexDirection: 'row', gap: 12, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#222' }}>
                                 {item.gold_price_at_publish ? (
                                   <Text style={{ color: '#666', fontSize: 11 }}>Au ${Number(item.gold_price_at_publish).toLocaleString()}</Text>
@@ -10619,7 +10911,7 @@ function AppContent() {
                               </View>
                             ) : null}
 
-                            {hasPaidAccess && item.sources && Array.isArray(item.sources) && item.sources.length > 0 ? (() => {
+                            {item.sources && Array.isArray(item.sources) && item.sources.length > 0 ? (() => {
                               const seen = new Set();
                               const unique = item.sources.filter(src => {
                                 const key = src.name || src.url;
