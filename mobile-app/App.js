@@ -1007,7 +1007,7 @@ const buildMonotonePath = (points) => {
  * Uses onTouchStart/Move/End so it doesn't block ScrollView scroll.
  * Long press (~200ms) activates scrubbing; moving before that lets scroll happen.
  */
-const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradientId, formatValue, label, style }) => {
+const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradientId, formatValue, label, style, baselineValue }) => {
   const [scrubIndex, setScrubIndex] = useState(null);
   const scrubIndexRef = useRef(null);
   const containerRef = useRef(null);
@@ -1018,18 +1018,29 @@ const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradi
   const startPageX = useRef(0);
   const startPageY = useRef(0);
 
-  const min = Math.min(...dataPoints);
-  const max = Math.max(...dataPoints);
-  const range = max - min || 1;
+  const dataMin = Math.min(...dataPoints);
+  const dataMax = Math.max(...dataPoints);
+  const rawRange = dataMax - dataMin;
+  // Minimum 0.5% visual range so flat days still show movement
+  const minRange = Math.abs(dataMin) * 0.005 || 1;
+  const range = Math.max(rawRange, minRange);
+  // Center data if artificial range was applied
+  const min = rawRange < minRange ? dataMin - (minRange - rawRange) / 2 : dataMin;
+
+  // Tight padding — 2px top/bottom for compact, dramatic sparklines
+  const pad = 2;
 
   // Build points array — downsample large datasets, then always use monotone cubic interpolation
   const sampledData = downsamplePoints(dataPoints, svgH > 40 ? 60 : 24);
   const pts = sampledData.map((v, i) => ({
     x: (i / (sampledData.length - 1)) * svgW,
-    y: 4 + (svgH - 8) * (1 - (v - min) / range),
+    y: pad + (svgH - pad * 2) * (1 - (v - min) / range),
   }));
   const pathD = buildMonotonePath(pts);
   const fillD = `${pathD} L${svgW},${svgH} L0,${svgH} Z`;
+
+  // Previous-close baseline Y position
+  const baselineY = baselineValue !== undefined ? pad + (svgH - pad * 2) * (1 - (baselineValue - min) / range) : null;
 
   const getScrubDataIndex = (pageX) => {
     const relX = pageX - containerX.current;
@@ -1088,7 +1099,7 @@ const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradi
 
   // Crosshair position in SVG coords
   const scrubXSvg = scrubIndex !== null ? (scrubIndex / (dataPoints.length - 1)) * svgW : 0;
-  const scrubYSvg = scrubIndex !== null ? 4 + (svgH - 8) * (1 - (dataPoints[scrubIndex] - min) / range) : 0;
+  const scrubYSvg = scrubIndex !== null ? pad + (svgH - pad * 2) * (1 - (dataPoints[scrubIndex] - min) / range) : 0;
 
   const formatTime = (isoStr) => {
     if (!isoStr) return '';
@@ -1146,6 +1157,10 @@ const ScrubSparkline = ({ dataPoints, timestamps, svgW, svgH, strokeColor, gradi
             <Stop offset="1" stopColor={strokeColor} stopOpacity="0" />
           </SvgLinearGradient>
         </Defs>
+        {/* Previous-close baseline — behind sparkline */}
+        {baselineY !== null && (
+          <Line x1={0} y1={baselineY} x2={svgW} y2={baselineY} stroke="rgba(255,255,255,0.25)" strokeWidth={0.75} strokeDasharray="4 3" />
+        )}
         <Path d={fillD} fill={`url(#${gradientId})`} />
         <Path d={pathD} stroke={strokeColor} strokeWidth={svgH > 40 ? 2 : 1.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
         {/* Crosshair line + dot */}
@@ -7352,6 +7367,7 @@ function AppContent() {
                       gradientId="portfolioGrad"
                       formatValue={(v) => `$${formatCurrency(v, 0)}`}
                       label="Stack"
+                      baselineValue={portfolioPoints[0]}
                       style={{ marginBottom: 4 }}
                     />
                   );
@@ -7530,6 +7546,7 @@ function AppContent() {
                             gradientId={`metalGrad_${m.symbol}`}
                             formatValue={(v) => `$${m.symbol === 'Ag' ? v.toFixed(2) : formatCurrency(v, 0)}`}
                             label={m.label}
+                            baselineValue={points[0]}
                             style={{ alignItems: 'center', marginBottom: 6 }}
                           />
                         )}
