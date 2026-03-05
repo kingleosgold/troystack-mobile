@@ -7573,6 +7573,28 @@ function AppContent() {
                     );
                   })}
                 </View>
+                {/* Troy one-liner — Live Spot */}
+                {metalMovers.length > 0 && !effMarketsClosed && (() => {
+                  const sorted = [...metalMovers].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+                  const best = sorted[0];
+                  const worst = sorted[sorted.length - 1];
+                  const gsRatio = effSilverSpot > 0 ? effGoldSpot / effSilverSpot : 0;
+                  let liner;
+                  if (Math.abs(best.pct) > 2) {
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} {best.pct >= 0 ? 'up' : 'down'} <Text style={{ fontWeight: '700' }}>{Math.abs(best.pct).toFixed(1)}%</Text> today — biggest mover across the board.</Text>;
+                  } else if (gsRatio > 0) {
+                    const ctx = gsRatio > 80 ? 'historically stretched — silver tends to catch up' : gsRatio >= 65 ? 'elevated range' : 'tightening — silver gaining ground';
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>Gold-silver ratio at <Text style={{ fontWeight: '700' }}>{gsRatio.toFixed(1)}:1</Text> — {ctx}.</Text>;
+                  } else {
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} leading at <Text style={{ fontWeight: '700' }}>{best.pct >= 0 ? '+' : ''}{best.pct.toFixed(1)}%</Text>, {worst.label.toLowerCase()} lagging at <Text style={{ fontWeight: '700' }}>{worst.pct >= 0 ? '+' : ''}{worst.pct.toFixed(1)}%</Text>.</Text>;
+                  }
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 }}>
+                      <TroyCoinIcon size={14} />
+                      {liner}
+                    </View>
+                  );
+                })()}
               </View>
 
               {/* ===== SECTION 3: METAL MOVERS ===== */}
@@ -7650,6 +7672,32 @@ function AppContent() {
                     </TouchableOpacity>
                   </>
                 )}
+                {/* Troy one-liner — Metal Movers */}
+                {holdingsImpact.length > 0 && !effMarketsClosed && (() => {
+                  const totalChange = holdingsImpact.reduce((s, m) => s + m.dollarChange, 0);
+                  const allGreen = holdingsImpact.every(m => m.dollarChange >= 0);
+                  const allRed = holdingsImpact.every(m => m.dollarChange <= 0);
+                  const best = holdingsImpact[0]; // already sorted by abs dollarChange
+                  const worst = [...holdingsImpact].sort((a, b) => a.dollarChange - b.dollarChange)[0];
+                  let liner;
+                  if (Math.abs(best.dollarChange) > 0 && totalChange !== 0) {
+                    const pctOfMove = Math.round(Math.abs(best.dollarChange) / Math.abs(totalChange) * 100);
+                    const ozStr = best.label === 'Silver' ? formatOunces(best.ozt, 0) : formatOunces(best.ozt, 2);
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>Your {best.label.toLowerCase()} ({ozStr} oz) {best.dollarChange >= 0 ? 'gained' : 'lost'} <Text style={{ fontWeight: '700' }}>${formatCurrency(Math.abs(best.dollarChange), 0)}</Text> — driving {pctOfMove}% of today's move.</Text>;
+                  } else if (allGreen) {
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>All four metals green today — your stack is working.</Text>;
+                  } else if (!allRed) {
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} carrying the load while {worst.label.toLowerCase()} drags.</Text>;
+                  } else {
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>Rough day — {worst.label.toLowerCase()} taking the biggest hit.</Text>;
+                  }
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 }}>
+                      <TroyCoinIcon size={14} />
+                      {liner}
+                    </View>
+                  );
+                })()}
               </View>
 
               {/* ===== VAULT WATCH (Full) ===== */}
@@ -7901,6 +7949,31 @@ function AppContent() {
                         )}
                       </>
                     )}
+                  </View>
+                );
+              })()}
+              {/* Troy one-liner — Vault Watch */}
+              {(() => {
+                const vd = vaultData[vaultMetal] || [];
+                const latest = vd.length > 0 ? vd[vd.length - 1] : null;
+                if (!latest) return null;
+                const regChange = latest.registered_change_oz || 0;
+                const metalLabel = vaultMetal === 'gold' ? 'gold' : vaultMetal === 'silver' ? 'silver' : vaultMetal === 'platinum' ? 'platinum' : 'palladium';
+                const absChange = Math.abs(regChange);
+                let liner;
+                if (regChange < 0) {
+                  const ctx = absChange > 1e6 ? 'significant drawdown' : absChange > 500000 ? 'drawdowns continue' : absChange > 100000 ? 'steady bleed' : 'minor movement';
+                  liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>COMEX {metalLabel} registered down <Text style={{ fontWeight: '700' }}>{Math.round(absChange).toLocaleString()} oz</Text> — {ctx}.</Text>;
+                } else if (regChange > 0) {
+                  const ctx = absChange > 1e6 ? 'notable restocking' : absChange > 500000 ? 'some restocking' : 'minor addition';
+                  liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>COMEX {metalLabel} registered added <Text style={{ fontWeight: '700' }}>{Math.round(absChange).toLocaleString()} oz</Text> — {ctx}.</Text>;
+                } else {
+                  liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>COMEX {metalLabel} inventories holding steady.</Text>;
+                }
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 }}>
+                    <TroyCoinIcon size={14} />
+                    {liner}
                   </View>
                 );
               })()}
