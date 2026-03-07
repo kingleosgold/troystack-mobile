@@ -1565,6 +1565,31 @@ function AppContent() {
   const [showJunkCalcModal, setShowJunkCalcModal] = useState(false);
   const [showPremiumAnalysisModal, setShowPremiumAnalysisModal] = useState(false);
   const [showPaywallModal, setShowPaywallModal] = useState(false);
+  const [showDealerPrices, setShowDealerPrices] = useState(false);
+  const [dealerMetal, setDealerMetal] = useState('silver');
+  const [dealerData, setDealerData] = useState(null);
+  const [dealerLoading, setDealerLoading] = useState(false);
+  const [dealerError, setDealerError] = useState(null);
+
+  useEffect(() => {
+    if (!showDealerPrices) return;
+    let cancelled = false;
+    setDealerLoading(true);
+    setDealerError(null);
+    fetch(`${API_BASE_URL}/v1/dealer-prices?metal=${dealerMetal}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        if (!cancelled) { setDealerData(data); setDealerLoading(false); }
+      })
+      .catch(err => {
+        if (!cancelled) { setDealerError(err.message); setDealerLoading(false); }
+      });
+    return () => { cancelled = true; };
+  }, [dealerMetal, showDealerPrices]);
+
   const [showTutorial, setShowTutorial] = useState(false);
   const [showV20Tutorial, setShowV20Tutorial] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(null);
@@ -1604,6 +1629,7 @@ function AppContent() {
   const exportSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const advancedSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const stackSignalSwipe = useRef(useSwipeBack(() => setShowStackSignal(false))).current;
+  const dealerPricesSwipe = useRef(useSwipeBack(() => setShowDealerPrices(false))).current;
 
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [importData, setImportData] = useState([]);
@@ -8419,6 +8445,43 @@ function AppContent() {
                 })()}
               </View>
 
+              {/* ===== DEALER PRICE COMPARISON BUTTON ===== */}
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  if (!hasGoldAccess) {
+                    setShowPaywallModal(true);
+                  } else {
+                    setShowDealerPrices(true);
+                  }
+                }}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                  backgroundColor: colors.cardBg, borderRadius: 14, padding: 14,
+                  borderWidth: 1, borderColor: colors.border, marginBottom: 14,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(212,168,67,0.15)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                      <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke={colors.gold} strokeWidth={1.5} strokeLinecap="round" />
+                      <Path d="M9 5a2 2 0 012-2h2a2 2 0 012 2v0a2 2 0 01-2 2h-2a2 2 0 01-2-2v0z" stroke={colors.gold} strokeWidth={1.5} />
+                      <Path d="M9 12h6M9 16h4" stroke={colors.gold} strokeWidth={1.5} strokeLinecap="round" />
+                    </Svg>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '600' }}>Compare Dealer Prices</Text>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>Find the lowest premiums on popular products</Text>
+                  </View>
+                </View>
+                {!hasGoldAccess && (
+                  <View style={{ backgroundColor: 'rgba(212,168,67,0.2)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 }}>
+                    <Text style={{ color: colors.gold, fontSize: 11, fontWeight: '700' }}>GOLD</Text>
+                  </View>
+                )}
+                <Text style={{ color: colors.muted, fontSize: 18, marginLeft: 8 }}>{'\u203A'}</Text>
+              </TouchableOpacity>
+
               {/* ===== SECTION 2: SORT/FILTER/GROUP BAR ===== */}
               <View onLayout={(e) => { sectionOffsets.current['holdings'] = e.nativeEvent.layout.y; }} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 }}>
                 {stackSearchVisible ? (
@@ -12723,6 +12786,153 @@ function AppContent() {
           </View>
         </View>
       </Modal>
+
+      {/* ===== DEALER PRICE COMPARISON OVERLAY ===== */}
+      {showDealerPrices && (
+        <View {...dealerPricesSwipe.panHandlers} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9998 }}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' }}>
+              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowDealerPrices(false); }} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ color: '#C9A84C', fontSize: 28, fontWeight: '300' }}>{'\u2039'}</Text>
+              </TouchableOpacity>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>Compare Dealer Prices</Text>
+            </View>
+            {(() => {
+              const spotMap = { gold: goldSpot, silver: silverSpot, platinum: platinumSpot, palladium: palladiumSpot };
+
+              const metalPills = [
+                { key: 'silver', label: 'Silver' },
+                { key: 'gold', label: 'Gold' },
+              ];
+
+              const currentSpot = spotMap[dealerMetal] || 0;
+
+              return (
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+                  {/* Metal selector pills */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+                    {metalPills.map(m => (
+                      <TouchableOpacity
+                        key={m.key}
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setDealerMetal(m.key); }}
+                        style={{
+                          paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 8,
+                          backgroundColor: dealerMetal === m.key ? 'rgba(212,168,67,0.25)' : 'rgba(255,255,255,0.08)',
+                          borderWidth: 1, borderColor: dealerMetal === m.key ? colors.gold : 'transparent',
+                        }}
+                      >
+                        <Text style={{ color: dealerMetal === m.key ? colors.gold : colors.muted, fontSize: scaledFonts.small, fontWeight: dealerMetal === m.key ? '700' : '500' }}>
+                          {m.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {/* Spot price reference */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, paddingHorizontal: 4 }}>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
+                      Live Spot: <Text style={{ color: colors.gold, fontWeight: '700' }}>${currentSpot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>/oz
+                    </Text>
+                  </View>
+
+                  {/* Loading state */}
+                  {dealerLoading && (
+                    <View style={{ paddingTop: 40 }}>
+                      {[1,2,3].map(i => (
+                        <View key={i} style={{ backgroundColor: colors.cardBg, borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: colors.border }}>
+                          <View style={{ height: 18, width: '60%', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, marginBottom: 12 }} />
+                          <View style={{ height: 14, width: '40%', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 6, marginBottom: 16 }} />
+                          {[1,2,3].map(j => (
+                            <View key={j} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                              <View style={{ height: 14, width: '30%', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 6 }} />
+                              <View style={{ height: 14, width: '20%', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 6 }} />
+                            </View>
+                          ))}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Error / coming soon state */}
+                  {!dealerLoading && (dealerError || !dealerData?.products?.length) && (
+                    <View style={{ alignItems: 'center', paddingTop: 60, paddingHorizontal: 20 }}>
+                      <Svg width={48} height={48} viewBox="0 0 24 24" fill="none" style={{ marginBottom: 16 }}>
+                        <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="rgba(212,168,67,0.4)" strokeWidth={1.5} strokeLinecap="round" />
+                        <Path d="M9 5a2 2 0 012-2h2a2 2 0 012 2v0a2 2 0 01-2 2h-2a2 2 0 01-2-2v0z" stroke="rgba(212,168,67,0.4)" strokeWidth={1.5} />
+                        <Path d="M9 12h6M9 16h4" stroke="rgba(212,168,67,0.4)" strokeWidth={1.5} strokeLinecap="round" />
+                      </Svg>
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>Coming Soon</Text>
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, textAlign: 'center', lineHeight: scaledFonts.normal * 1.5 }}>
+                        Live dealer price comparison is being built. You'll be able to compare prices across APMEX, JM Bullion, SD Bullion, and more — sorted by lowest premium.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Product list */}
+                  {!dealerLoading && dealerData?.products?.length > 0 && dealerData.products.map((product, idx) => {
+                    const bestPrice = product.dealers?.[0]?.price;
+                    const premiumAmt = bestPrice && currentSpot ? bestPrice - (currentSpot * (product.weight_oz || 1)) : null;
+                    const premiumPct = premiumAmt && currentSpot ? (premiumAmt / (currentSpot * (product.weight_oz || 1))) * 100 : null;
+
+                    return (
+                      <View key={product.id || idx} style={{ backgroundColor: colors.cardBg, borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: colors.border }}>
+                        {/* Product header */}
+                        <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '700', marginBottom: 4 }}>{product.name}</Text>
+                        {product.weight_oz && (
+                          <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 12 }}>
+                            {product.weight_oz} oz {dealerMetal.charAt(0).toUpperCase() + dealerMetal.slice(1)}
+                            {premiumPct != null && ` · Best premium: ${premiumPct.toFixed(1)}%`}
+                          </Text>
+                        )}
+
+                        {/* Dealer rows sorted by price */}
+                        {(product.dealers || []).map((dealer, dIdx) => {
+                          const dPremium = dealer.price && currentSpot ? ((dealer.price / (currentSpot * (product.weight_oz || 1))) - 1) * 100 : null;
+                          const isBest = dIdx === 0;
+                          return (
+                            <View key={dealer.name || dIdx} style={{
+                              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                              paddingVertical: 10,
+                              borderTopWidth: dIdx > 0 ? 1 : 0, borderTopColor: 'rgba(255,255,255,0.06)',
+                            }}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: isBest ? colors.gold : colors.text, fontSize: scaledFonts.normal, fontWeight: isBest ? '700' : '500' }}>
+                                  {dealer.name}
+                                  {isBest && ' ★'}
+                                </Text>
+                                {dealer.in_stock === false && (
+                                  <Text style={{ color: '#ef4444', fontSize: scaledFonts.small, marginTop: 2 }}>Out of stock</Text>
+                                )}
+                              </View>
+                              <View style={{ alignItems: 'flex-end' }}>
+                                <Text style={{ color: isBest ? colors.gold : colors.text, fontSize: scaledFonts.normal, fontWeight: '700' }}>
+                                  ${dealer.price?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </Text>
+                                {dPremium != null && (
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 1 }}>
+                                    +{dPremium.toFixed(1)}% over spot
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })}
+
+                  {/* Updated timestamp */}
+                  {!dealerLoading && dealerData?.updated_at && (
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.small, textAlign: 'center', marginTop: 8 }}>
+                      Last updated: {new Date(dealerData.updated_at).toLocaleString()}
+                    </Text>
+                  )}
+                </ScrollView>
+              );
+            })()}
+          </SafeAreaView>
+        </View>
+      )}
 
       {/* Detail View Modal */}
       {showDetailView && (
