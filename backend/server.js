@@ -5540,6 +5540,138 @@ RULES:
 - Be concise but thorough — this is for serious stackers
 - Never guarantee returns or make definitive price predictions
 - Add a brief disclaimer at the end of financial advice responses`;
+
+  // Return both prompt and context data (for preview detection)
+  return {
+    prompt: systemPrompt,
+    contextData: {
+      holdings: holdingDetails,
+      metalTotals,
+      totalValue: parseFloat(totalValue.toFixed(2)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      totalGain: parseFloat((totalValue - totalCost).toFixed(2)),
+      totalGainPercent: totalCost > 0 ? parseFloat((((totalValue - totalCost) / totalCost) * 100).toFixed(1)) : 0,
+      goldPrice: prices.gold,
+      silverPrice: prices.silver,
+      platinumPrice: prices.platinum,
+      palladiumPrice: prices.palladium,
+      goldSilverRatio: gsRatio,
+      change,
+      purchasingPower: {
+        goldPerBarrelOfOil: parseFloat((prices.gold / 85).toFixed(1)),
+        goldPerMedianRent: parseFloat((prices.gold / 1850).toFixed(2)),
+        goldPerHoursOfLabor: parseFloat((prices.gold / 29).toFixed(1)),
+        goldPerGallonOfGas: parseFloat((prices.gold / 3.50).toFixed(0)),
+        silverPerGallonOfGas: parseFloat((prices.silver / 3.50).toFixed(1)),
+        silverPerHoursOfLabor: parseFloat((prices.silver / 29).toFixed(2)),
+        goldOilRatio1971: 9.7,
+        silverGasRatio1971: 3.6,
+        stackBarrelsOfOil: parseFloat((totalValue / 85).toFixed(1)),
+        stackMonthsOfRent: parseFloat((totalValue / 1850).toFixed(1)),
+        stackHoursOfLabor: parseFloat((totalValue / 29).toFixed(0)),
+      },
+    }
+  };
+}
+
+/**
+ * Detect if Troy's response references content that can be previewed.
+ */
+function detectPreviewContent(troyResponse, contextData) {
+  if (!troyResponse || !contextData) return null;
+  const r = troyResponse.toLowerCase();
+
+  // Portfolio/performance references
+  if (contextData.holdings?.length > 0 && (
+    r.includes('your stack') || r.includes('portfolio') ||
+    r.includes('your gold') || r.includes('your silver') ||
+    r.includes('holdings') || r.includes('all-time') ||
+    r.includes('overall gain') || r.includes('performance') ||
+    r.includes('your total')
+  )) {
+    return {
+      type: 'portfolio',
+      data: {
+        holdings: contextData.holdings,
+        metalTotals: contextData.metalTotals,
+        totalValue: contextData.totalValue,
+        totalCost: contextData.totalCost,
+        totalGain: contextData.totalGain,
+        totalGainPercent: contextData.totalGainPercent,
+        goldPrice: contextData.goldPrice,
+        silverPrice: contextData.silverPrice,
+      }
+    };
+  }
+
+  // Cost basis references
+  if (r.includes('cost basis') || r.includes('average cost') ||
+      r.includes('break even') || r.includes('break-even') ||
+      r.includes('acquisition cost')) {
+    return {
+      type: 'cost_basis',
+      data: {
+        holdings: contextData.holdings,
+        metalTotals: contextData.metalTotals,
+        totalCost: contextData.totalCost,
+        totalValue: contextData.totalValue,
+      }
+    };
+  }
+
+  // Spot price / chart references
+  if (r.includes('gold price') || r.includes('silver price') ||
+      r.includes('spot price') || r.includes('price action') ||
+      r.includes('chart') || r.includes('gold at $') ||
+      r.includes('silver at $')) {
+    return {
+      type: 'chart',
+      chartType: 'spot_price',
+      data: {
+        goldPrice: contextData.goldPrice,
+        silverPrice: contextData.silverPrice,
+        platinumPrice: contextData.platinumPrice,
+        palladiumPrice: contextData.palladiumPrice,
+        change: contextData.change,
+      }
+    };
+  }
+
+  // Gold/silver ratio
+  if (r.includes('gold/silver ratio') || r.includes('gold-silver ratio') ||
+      r.includes('gold silver ratio') || r.includes('g/s ratio')) {
+    return {
+      type: 'chart',
+      chartType: 'ratio',
+      data: { ratio: contextData.goldSilverRatio }
+    };
+  }
+
+  // Daily brief references
+  if (r.includes('daily brief') || r.includes('this morning') ||
+      r.includes("morning brief") || r.includes('market open')) {
+    return { type: 'daily_brief', data: null };
+  }
+
+  // Signal/article references
+  if (r.includes('stack signal') || r.includes('latest signal') ||
+      r.includes('article') || r.includes('wrote about')) {
+    return { type: 'signal_article', data: null };
+  }
+
+  // Purchasing power references
+  if (r.includes('purchasing power') || r.includes('barrels of oil') ||
+      r.includes('real terms') || r.includes('buys today') ||
+      r.includes('can buy') || r.includes('hours of labor') ||
+      r.includes('gallons of gas') || r.includes('real stuff') ||
+      r.includes('buying power')) {
+    return {
+      type: 'purchasing_power',
+      data: contextData.purchasingPower,
+    };
+  }
+
+  return null;
 }
 
 // POST /v1/troy/conversations — Create a new conversation
@@ -5747,7 +5879,7 @@ app.post('/v1/troy/conversations/:id/messages', async (req, res) => {
     }
 
     // Build system prompt with user's portfolio context
-    const systemPrompt = await buildTroySystemPrompt(userId);
+    const { prompt: systemPrompt, contextData } = await buildTroySystemPrompt(userId);
 
     const geminiBody = {
       contents,
@@ -5793,8 +5925,11 @@ app.post('/v1/troy/conversations/:id/messages', async (req, res) => {
         .eq('id', conversationId);
     }
 
-    console.log(`🧠 [Troy] Response for ${userId.substring(0, 8)}... in conv ${conversationId.substring(0, 8)}...: ${responseText.length} chars`);
-    return res.json({ message: assistantMsg, title });
+    // Detect previewable content in Troy's response
+    const preview = detectPreviewContent(responseText, contextData);
+
+    console.log(`🧠 [Troy] Response for ${userId.substring(0, 8)}... in conv ${conversationId.substring(0, 8)}...: ${responseText.length} chars${preview ? ` [preview: ${preview.type}]` : ''}`);
+    return res.json({ message: assistantMsg, title, preview });
   } catch (error) {
     console.error('❌ [Troy] Send message error:', error.message);
     return res.status(500).json({ error: 'Failed to get response from Troy' });
