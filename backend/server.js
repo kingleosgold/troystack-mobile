@@ -23,7 +23,7 @@ app.set('trust proxy', 1);
 // CORS - allow requests from any origin (mobile app, web preview, etc.)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -5414,6 +5414,390 @@ app.post('/api/stripe/verify-session', async (req, res) => {
   } catch (error) {
     console.error('❌ [Stripe Verify] Error:', error.message);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TROY CONVERSATIONS — Persistent Chat
+// ============================================
+
+/**
+ * Reusable: Build Troy's system prompt with user portfolio context.
+ * Shared by the /v1/troy/conversations/:id/messages endpoint and (legacy) /api/advisor/chat.
+ */
+async function buildTroySystemPrompt(userId) {
+  const supabaseClient = getSupabase();
+
+  // Fetch user's holdings
+  const { data: holdings } = await supabaseClient
+    .from('holdings')
+    .select('metal, type, weight, weight_unit, quantity, purchase_price, purchase_date, notes')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const userHoldings = holdings || [];
+  const prices = spotPriceCache.prices;
+  const change = spotPriceCache.change || {};
+
+  // Build portfolio summary
+  const metalTotals = { gold: { oz: 0, cost: 0 }, silver: { oz: 0, cost: 0 }, platinum: { oz: 0, cost: 0 }, palladium: { oz: 0, cost: 0 } };
+  const holdingDetails = [];
+
+  for (const h of userHoldings) {
+    const metal = h.metal;
+    if (!metalTotals[metal]) continue;
+    const weightOz = h.weight || 0;
+    const qty = h.quantity || 1;
+    const totalOz = weightOz * qty;
+    const purchasePrice = h.purchase_price || 0;
+    const totalCost = purchasePrice * qty;
+    const currentValue = totalOz * (prices[metal] || 0);
+
+    metalTotals[metal].oz += totalOz;
+    metalTotals[metal].cost += totalCost;
+
+    let typeName = h.type || 'Other';
+    if (typeof typeName === 'string' && typeName.startsWith('{')) {
+      try { typeName = JSON.parse(typeName).name || 'Other'; } catch { /* keep as-is */ }
+    }
+
+    holdingDetails.push({
+      metal, type: typeName, qty,
+      totalOz: totalOz.toFixed(4),
+      purchasePrice: purchasePrice.toFixed(2),
+      totalCost: totalCost.toFixed(2),
+      currentValue: currentValue.toFixed(2),
+      gainLoss: (currentValue - totalCost).toFixed(2),
+      gainLossPct: totalCost > 0 ? (((currentValue - totalCost) / totalCost) * 100).toFixed(1) : '0',
+      purchaseDate: h.purchase_date || 'Unknown',
+    });
+  }
+
+  const totalValue = Object.keys(metalTotals).reduce((sum, m) => sum + metalTotals[m].oz * (prices[m] || 0), 0);
+  const totalCost = Object.keys(metalTotals).reduce((sum, m) => sum + metalTotals[m].cost, 0);
+  const gsRatio = prices.silver > 0 ? (prices.gold / prices.silver).toFixed(1) : 'N/A';
+
+  const holdingsText = holdingDetails.length > 0
+    ? holdingDetails.map(h =>
+      `- ${h.qty}x ${h.type} (${h.metal}): ${h.totalOz} oz, Cost $${h.totalCost}, Value $${h.currentValue}, ${parseFloat(h.gainLoss) >= 0 ? '+' : ''}$${h.gainLoss} (${h.gainLossPct}%), Purchased ${h.purchaseDate}`
+    ).join('\n')
+    : 'No holdings found.';
+
+  const metalSummary = Object.entries(metalTotals)
+    .filter(([_, v]) => v.oz > 0)
+    .map(([m, v]) => {
+      const val = v.oz * (prices[m] || 0);
+      const gl = val - v.cost;
+      return `${m.charAt(0).toUpperCase() + m.slice(1)}: ${v.oz.toFixed(2)} oz, Value $${val.toFixed(2)}, Cost $${v.cost.toFixed(2)}, ${gl >= 0 ? '+' : ''}$${gl.toFixed(2)}`;
+    }).join('\n');
+
+  const changeText = ['gold', 'silver', 'platinum', 'palladium']
+    .map(m => {
+      const c = change[m];
+      if (!c || !c.percent) return null;
+      return `${m.charAt(0).toUpperCase() + m.slice(1)}: ${c.percent >= 0 ? '+' : ''}${c.percent.toFixed(2)}% ($${c.amount?.toFixed(2) || '?'})`;
+    })
+    .filter(Boolean)
+    .join(', ');
+
+  return `You are Troy, the AI stack analyst inside TroyStack — a precious metals portfolio tracker. You have access to the user's full stack and live market data. You remember the full conversation history.
+
+PERSONALITY:
+- Confident, concise, opinionated — like a trusted metals dealer who also reads macro.
+- Address the user directly. Reference their specific holdings by name.
+- You're not a generic chatbot. You're THEIR analyst.
+
+FORMATTING:
+- Use **bold** for key numbers, dollar amounts, percentages, and metal names.
+- Use paragraph breaks for readability.
+- Do NOT use headers (#), tables, or code blocks.
+- Keep it conversational prose with selective bold for important figures.
+- Keep responses under 600 words unless the user asks for detail.
+
+STACK SUMMARY:
+Total Value: $${totalValue.toFixed(2)}
+Total Cost Basis: $${totalCost.toFixed(2)}
+Overall ${totalValue >= totalCost ? 'Gain' : 'Loss'}: ${totalValue >= totalCost ? '+' : ''}$${(totalValue - totalCost).toFixed(2)} (${totalCost > 0 ? (((totalValue - totalCost) / totalCost) * 100).toFixed(1) : '0'}%)
+
+BY METAL:
+${metalSummary || 'No holdings'}
+
+INDIVIDUAL HOLDINGS:
+${holdingsText}
+
+CURRENT SPOT PRICES:
+Gold: $${prices.gold}, Silver: $${prices.silver}, Platinum: $${prices.platinum}, Palladium: $${prices.palladium}
+
+MARKET CONTEXT:
+Gold/Silver Ratio: ${gsRatio}
+Today's Moves: ${changeText || 'No data available'}
+
+RULES:
+- Give specific, actionable advice based on their actual stack
+- Reference their holdings by name when relevant
+- Use current spot prices in calculations
+- Be concise but thorough — this is for serious stackers
+- Never guarantee returns or make definitive price predictions
+- Add a brief disclaimer at the end of financial advice responses`;
+}
+
+// POST /v1/troy/conversations — Create a new conversation
+app.post('/v1/troy/conversations', async (req, res) => {
+  try {
+    if (!isSupabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+    const userId = req.body.userId;
+    if (!userId || !isUUID(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
+    }
+
+    const supabaseClient = getSupabase();
+    const { data, error } = await supabaseClient
+      .from('troy_conversations')
+      .insert({ user_id: userId })
+      .select('id, title, created_at, updated_at')
+      .single();
+
+    if (error) {
+      console.error('❌ [Troy] Create conversation error:', error.message);
+      return res.status(500).json({ error: 'Failed to create conversation' });
+    }
+
+    console.log(`💬 [Troy] New conversation ${data.id} for user ${userId.substring(0, 8)}...`);
+    return res.json(data);
+  } catch (error) {
+    console.error('❌ [Troy] Create conversation error:', error.message);
+    return res.status(500).json({ error: 'Failed to create conversation' });
+  }
+});
+
+// GET /v1/troy/conversations — List conversations for a user
+app.get('/v1/troy/conversations', async (req, res) => {
+  try {
+    if (!isSupabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+    const userId = req.query.userId;
+    if (!userId || !isUUID(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
+    }
+
+    const supabaseClient = getSupabase();
+    const { data, error } = await supabaseClient
+      .from('troy_conversations')
+      .select('id, title, created_at, updated_at, message_count')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('❌ [Troy] List conversations error:', error.message);
+      return res.status(500).json({ error: 'Failed to list conversations' });
+    }
+
+    return res.json(data || []);
+  } catch (error) {
+    console.error('❌ [Troy] List conversations error:', error.message);
+    return res.status(500).json({ error: 'Failed to list conversations' });
+  }
+});
+
+// GET /v1/troy/conversations/:id — Get conversation with messages
+app.get('/v1/troy/conversations/:id', async (req, res) => {
+  try {
+    if (!isSupabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+    const userId = req.query.userId;
+    if (!userId || !isUUID(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
+    }
+
+    const supabaseClient = getSupabase();
+
+    // Verify ownership
+    const { data: conv, error: convError } = await supabaseClient
+      .from('troy_conversations')
+      .select('id, title, created_at, updated_at')
+      .eq('id', req.params.id)
+      .eq('user_id', userId)
+      .single();
+
+    if (convError || !conv) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    // Fetch messages
+    const { data: messages, error: msgError } = await supabaseClient
+      .from('troy_messages')
+      .select('id, role, content, created_at')
+      .eq('conversation_id', req.params.id)
+      .order('created_at', { ascending: true });
+
+    if (msgError) {
+      console.error('❌ [Troy] Fetch messages error:', msgError.message);
+      return res.status(500).json({ error: 'Failed to fetch messages' });
+    }
+
+    return res.json({ ...conv, messages: messages || [] });
+  } catch (error) {
+    console.error('❌ [Troy] Get conversation error:', error.message);
+    return res.status(500).json({ error: 'Failed to get conversation' });
+  }
+});
+
+// DELETE /v1/troy/conversations/:id — Delete a conversation
+app.delete('/v1/troy/conversations/:id', async (req, res) => {
+  try {
+    if (!isSupabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+    const userId = req.query.userId;
+    if (!userId || !isUUID(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
+    }
+
+    const supabaseClient = getSupabase();
+
+    // Delete (cascade removes messages via FK constraint)
+    const { error } = await supabaseClient
+      .from('troy_conversations')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('❌ [Troy] Delete conversation error:', error.message);
+      return res.status(500).json({ error: 'Failed to delete conversation' });
+    }
+
+    console.log(`🗑️ [Troy] Deleted conversation ${req.params.id}`);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('❌ [Troy] Delete conversation error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete conversation' });
+  }
+});
+
+// POST /v1/troy/conversations/:id/messages — Send message and get Troy's response
+app.post('/v1/troy/conversations/:id/messages', async (req, res) => {
+  try {
+    if (!GEMINI_API_KEY) {
+      return res.status(503).json({ error: 'AI is not configured' });
+    }
+    if (!isSupabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+
+    const userId = req.body.userId;
+    const message = req.body.message;
+
+    if (!userId || !isUUID(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
+    }
+    if (!message || typeof message !== 'string' || message.length > 2000) {
+      return res.status(400).json({ error: 'Message is required (max 2000 characters)' });
+    }
+
+    const supabaseClient = getSupabase();
+    const conversationId = req.params.id;
+
+    // Verify ownership
+    const { data: conv, error: convError } = await supabaseClient
+      .from('troy_conversations')
+      .select('id, title, user_id')
+      .eq('id', conversationId)
+      .eq('user_id', userId)
+      .single();
+
+    if (convError || !conv) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    // Insert user message
+    const { data: userMsg, error: userMsgError } = await supabaseClient
+      .from('troy_messages')
+      .insert({ conversation_id: conversationId, role: 'user', content: message })
+      .select('id, role, content, created_at')
+      .single();
+
+    if (userMsgError) {
+      console.error('❌ [Troy] Insert user message error:', userMsgError.message);
+      return res.status(500).json({ error: 'Failed to save message' });
+    }
+
+    // Fetch conversation history for context
+    const { data: allMessages } = await supabaseClient
+      .from('troy_messages')
+      .select('role, content')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .limit(40);
+
+    // Build Gemini messages from conversation history
+    const contents = [];
+    for (const msg of (allMessages || [])) {
+      if (msg.role === 'user') {
+        contents.push({ role: 'user', parts: [{ text: msg.content }] });
+      } else if (msg.role === 'assistant') {
+        contents.push({ role: 'model', parts: [{ text: msg.content }] });
+      }
+    }
+
+    // Build system prompt with user's portfolio context
+    const systemPrompt = await buildTroySystemPrompt(userId);
+
+    const geminiBody = {
+      contents,
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+    };
+
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const geminiResp = await axios.post(geminiUrl, geminiBody, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
+
+    const responseText = geminiResp.data?.candidates?.[0]?.content?.parts
+      ?.filter(p => p.text)
+      ?.map(p => p.text)
+      ?.join('') || '';
+
+    if (!responseText) {
+      return res.status(500).json({ error: 'Troy returned an empty response' });
+    }
+
+    // Insert Troy's response
+    const { data: assistantMsg, error: assistantMsgError } = await supabaseClient
+      .from('troy_messages')
+      .insert({ conversation_id: conversationId, role: 'assistant', content: responseText })
+      .select('id, role, content, created_at')
+      .single();
+
+    if (assistantMsgError) {
+      console.error('❌ [Troy] Insert assistant message error:', assistantMsgError.message);
+      // Still return the response even if DB insert failed
+      return res.json({ message: { id: 'temp-' + Date.now(), role: 'assistant', content: responseText, created_at: new Date().toISOString() } });
+    }
+
+    // Auto-generate title from first user message if conversation has no title
+    let title = conv.title;
+    if (!title) {
+      title = message.length > 50 ? message.substring(0, 47) + '...' : message;
+      await supabaseClient
+        .from('troy_conversations')
+        .update({ title })
+        .eq('id', conversationId);
+    }
+
+    console.log(`🧠 [Troy] Response for ${userId.substring(0, 8)}... in conv ${conversationId.substring(0, 8)}...: ${responseText.length} chars`);
+    return res.json({ message: assistantMsg, title });
+  } catch (error) {
+    console.error('❌ [Troy] Send message error:', error.message);
+    return res.status(500).json({ error: 'Failed to get response from Troy' });
   }
 });
 
