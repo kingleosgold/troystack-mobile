@@ -429,11 +429,12 @@ function InlinePriceCard({ data }) {
 
 function InlineRatioCard({ data }) {
   if (!data) return null;
-  const ratio = data.ratio || 'N/A';
+  const ratio = data.ratio;
+  const ratioDisplay = typeof ratio === 'number' ? ratio.toFixed(1) : (ratio || 'N/A');
   return (
     <View style={INLINE_CARD_STYLE}>
       <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 2 }}>Gold/Silver Ratio</Text>
-      <Text style={{ color: '#DAA520', fontSize: 28, fontWeight: '700', marginBottom: 4 }}>{ratio}</Text>
+      <Text style={{ color: '#DAA520', fontSize: 28, fontWeight: '700', marginBottom: 4 }}>{ratioDisplay}</Text>
       <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, lineHeight: 15 }}>
         {data.interpretation || 'Historically, ratios above 80 have preceded significant silver rallies.'}
       </Text>
@@ -11510,20 +11511,6 @@ function AppContent() {
               </View>
             )}
 
-            {/* Stop Troy button — visible when TTS is playing */}
-            {playingMessageId && (
-              <TouchableOpacity
-                onPress={stopTroyAudio}
-                style={{
-                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                  paddingVertical: 8, backgroundColor: 'rgba(218,165,32,0.1)',
-                  borderTopWidth: 1, borderTopColor: '#1a1a1a',
-                }}
-              >
-                <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600' }}>■ Stop Troy</Text>
-              </TouchableOpacity>
-            )}
-
             {/* Input Bar */}
             <View style={{
               flexDirection: 'row',
@@ -11577,74 +11564,49 @@ function AppContent() {
                 spellCheck={true}
                 autoCapitalize="sentences"
               />
+              {/* Right button: 4 states — stop generation | stop speaking | send | mic */}
               {troyLoading ? (
                 <TouchableOpacity
                   onPress={stopTroyGeneration}
-                  style={{
-                    marginLeft: 8,
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
+                  style={{ marginLeft: 8, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' }}
                 >
                   <View style={{ width: 14, height: 14, backgroundColor: '#fff', borderRadius: 2 }} />
+                </TouchableOpacity>
+              ) : playingMessageId ? (
+                <TouchableOpacity
+                  onPress={stopTroyAudio}
+                  style={{ marginLeft: 8, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(218,165,32,0.2)', justifyContent: 'center', alignItems: 'center' }}
+                >
+                  <View style={{ width: 14, height: 14, backgroundColor: '#DAA520', borderRadius: 2 }} />
                 </TouchableOpacity>
               ) : troyInputText.trim() ? (
                 <TouchableOpacity
                   onPress={() => sendTroyMessage()}
-                  style={{
-                    marginLeft: 8,
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: '#C9A84C',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
+                  style={{ marginLeft: 8, width: 36, height: 36, borderRadius: 18, backgroundColor: '#C9A84C', justifyContent: 'center', alignItems: 'center' }}
                 >
                   <Text style={{ color: '#000', fontSize: 16, fontWeight: '700' }}>{'\u2191'}</Text>
                 </TouchableOpacity>
               ) : (
-                <View style={{ alignItems: 'center', marginLeft: 8 }}>
-                  <TouchableOpacity
-                    onPressIn={voiceState === 'idle' ? startVoiceRecording : undefined}
-                    onPressOut={isRecording ? stopVoiceRecording : undefined}
-                    delayPressIn={0}
-                    disabled={voiceState === 'transcribing'}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: isRecording ? '#EF4444' : voiceState === 'transcribing' ? '#DAA520' : 'rgba(255,255,255,0.1)',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                    }}
-                  >
-                    {isRecording ? (
-                      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                        <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </Svg>
-                    ) : voiceState === 'transcribing' ? (
-                      <ActivityIndicator size="small" color="#000" />
-                    ) : (
-                      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                        <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        <Path d="M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </Svg>
-                    )}
-                  </TouchableOpacity>
-                  {voiceState === 'idle' && !troyLoading && (
-                    <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9, marginTop: 2 }}>Hold</Text>
+                <TouchableOpacity
+                  onPress={isRecording ? stopVoiceRecording : voiceState === 'transcribing' ? undefined : startVoiceRecording}
+                  disabled={voiceState === 'transcribing'}
+                  style={{ marginLeft: 8, width: 36, height: 36, borderRadius: 18, backgroundColor: isRecording ? '#EF4444' : voiceState === 'transcribing' ? '#DAA520' : 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }}
+                >
+                  {isRecording ? (
+                    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                      <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
+                  ) : voiceState === 'transcribing' ? (
+                    <ActivityIndicator size="small" color="#000" />
+                  ) : (
+                    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                      <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <Path d="M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
                   )}
-                  {isRecording && (
-                    <Text style={{ color: '#EF4444', fontSize: 9, marginTop: 2 }}>Release</Text>
-                  )}
-                </View>
+                </TouchableOpacity>
               )}
             </View>
           </KeyboardAvoidingView>
