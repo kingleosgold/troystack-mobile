@@ -2319,6 +2319,7 @@ function AppContent() {
   const autoPlayNextResponseRef = useRef(false);
   const maxRecordTimerRef = useRef(null);
   const recordingStartTimeRef = useRef(null);
+  const troyAbortRef = useRef(null);
   const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
@@ -4348,11 +4349,12 @@ function AppContent() {
       });
       return res.json();
     },
-    async sendMessage(conversationId, message) {
+    async sendMessage(conversationId, message, signal) {
       const res = await fetch(`${API_BASE_URL}/v1/troy/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: supabaseUser?.id || null, message })
+        body: JSON.stringify({ userId: supabaseUser?.id || null, message }),
+        signal,
       });
       return res.json();
     }
@@ -4844,6 +4846,15 @@ function AppContent() {
     }
   };
 
+  const stopTroyGeneration = () => {
+    if (troyAbortRef.current) {
+      troyAbortRef.current.abort();
+      troyAbortRef.current = null;
+    }
+    setTroyLoading(false);
+    console.log('[Troy] Generation stopped by user');
+  };
+
   const sendTroyMessage = async (messageText) => {
     if (__DEV__) console.log('💬 [Troy] sendTroyMessage called, messageText:', messageText ? messageText.substring(0, 50) : '(from input)', 'troyLoading:', troyLoading, 'activeConversationId:', activeConversationId);
     const text = (messageText || troyInputText).trim();
@@ -4899,7 +4910,9 @@ function AppContent() {
     AsyncStorage.setItem('stack_advisor_count', JSON.stringify({ date: new Date().toDateString(), count: newCount }));
 
     try {
-      const response = await troyAPI.sendMessage(convId, text);
+      troyAbortRef.current = new AbortController();
+      const response = await troyAPI.sendMessage(convId, text, troyAbortRef.current.signal);
+      troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
 
       // Replace temp message with real one and add Troy's response (with preview if available)
@@ -4937,6 +4950,11 @@ function AppContent() {
         playTroyVoice(assistantMsg.content, assistantMsg.id);
       }
     } catch (e) {
+      troyAbortRef.current = null;
+      if (e.name === 'AbortError') {
+        console.log('[Troy] Generation stopped by user');
+        return;
+      }
       console.error('Failed to send message:', e);
       setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
       Alert.alert('Error', 'Failed to send message. Please try again.');
@@ -11559,21 +11577,35 @@ function AppContent() {
                 spellCheck={true}
                 autoCapitalize="sentences"
               />
-              {troyInputText.trim() ? (
+              {troyLoading ? (
                 <TouchableOpacity
-                  onPress={() => sendTroyMessage()}
-                  disabled={troyLoading}
+                  onPress={stopTroyGeneration}
                   style={{
                     marginLeft: 8,
                     width: 36,
                     height: 36,
                     borderRadius: 18,
-                    backgroundColor: !troyLoading ? '#C9A84C' : '#333',
+                    backgroundColor: 'rgba(255,255,255,0.15)',
                     justifyContent: 'center',
                     alignItems: 'center',
                   }}
                 >
-                  <Text style={{ color: !troyLoading ? '#000' : '#666', fontSize: 16, fontWeight: '700' }}>{'\u2191'}</Text>
+                  <View style={{ width: 14, height: 14, backgroundColor: '#fff', borderRadius: 2 }} />
+                </TouchableOpacity>
+              ) : troyInputText.trim() ? (
+                <TouchableOpacity
+                  onPress={() => sendTroyMessage()}
+                  style={{
+                    marginLeft: 8,
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#C9A84C',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#000', fontSize: 16, fontWeight: '700' }}>{'\u2191'}</Text>
                 </TouchableOpacity>
               ) : (
                 <View style={{ alignItems: 'center', marginLeft: 8 }}>
@@ -11581,7 +11613,7 @@ function AppContent() {
                     onPressIn={voiceState === 'idle' ? startVoiceRecording : undefined}
                     onPressOut={isRecording ? stopVoiceRecording : undefined}
                     delayPressIn={0}
-                    disabled={troyLoading || voiceState === 'transcribing'}
+                    disabled={voiceState === 'transcribing'}
                     style={{
                       width: 36,
                       height: 36,
