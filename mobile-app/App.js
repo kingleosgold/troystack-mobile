@@ -3729,27 +3729,36 @@ function AppContent() {
   useEffect(() => {
     (async () => {
       try {
-        await TrackPlayer.setupPlayer();
+        await TrackPlayer.setupPlayer({ autoHandleInterruptions: true });
         await TrackPlayer.updateOptions({
           capabilities: [Capability.Play, Capability.Pause, Capability.Stop],
           compactCapabilities: [Capability.Play, Capability.Pause],
+          android: { appKilledPlaybackBehavior: 'StopPlaybackAndRemoveNotification' },
         });
         setTrackPlayerReady(true);
         console.log('[Audio] TrackPlayer initialized');
       } catch (e) {
-        // Already initialized from a previous render
         setTrackPlayerReady(true);
         console.log('[Audio] TrackPlayer already set up');
       }
     })();
 
-    // Listen for playback completion
-    const sub = TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
-      setPlayingMessageId(null);
-      TrackPlayer.reset().catch(() => {});
-    });
+    // Remote control event handlers (lock screen + Dynamic Island)
+    const subs = [
+      TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
+        setPlayingMessageId(null);
+        TrackPlayer.reset().catch(() => {});
+      }),
+      TrackPlayer.addEventListener(Event.RemotePause, () => { TrackPlayer.pause(); }),
+      TrackPlayer.addEventListener(Event.RemotePlay, () => { TrackPlayer.play(); }),
+      TrackPlayer.addEventListener(Event.RemoteStop, () => {
+        TrackPlayer.stop();
+        TrackPlayer.reset().catch(() => {});
+        setPlayingMessageId(null);
+      }),
+    ];
 
-    return () => sub.remove();
+    return () => subs.forEach(s => s.remove());
   }, []);
 
   // Register for push notifications (for price alerts)
@@ -4669,13 +4678,15 @@ function AppContent() {
       console.log('[Voice] START: Recording active');
 
       // Silence detection — auto-stop after 2s of silence (skip first 500ms)
+      console.log('[Voice] Silence timer started');
       silenceTimerRef.current = setInterval(async () => {
         if (!currentRecordingRef.current) { clearInterval(silenceTimerRef.current); silenceTimerRef.current = null; return; }
-        // Skip first 500ms — user hasn't started speaking yet
-        if (Date.now() - recordingStartTimeRef.current < 500) return;
+        const elapsed = Date.now() - recordingStartTimeRef.current;
+        if (elapsed < 500) return;
         try {
           const status = await currentRecordingRef.current.getStatusAsync();
           if (!status.isRecording) { clearInterval(silenceTimerRef.current); silenceTimerRef.current = null; return; }
+          console.log('[Voice] Silence poll - metering:', status.metering, 'elapsed:', elapsed);
           if (status.metering !== undefined && status.metering < -40) {
             if (!silenceStartRef.current) {
               silenceStartRef.current = Date.now();
@@ -4686,7 +4697,7 @@ function AppContent() {
           } else {
             silenceStartRef.current = null;
           }
-        } catch {}
+        } catch (e) { console.log('[Voice] Silence poll error:', e.message); }
       }, 300);
 
       // 15-second max safety net
@@ -4843,7 +4854,9 @@ function AppContent() {
         url: fileUri,
         title: 'Troy',
         artist: 'TroyStack',
+        artwork: Image.resolveAssetSource(require('./assets/icon.png')).uri,
       });
+      await TrackPlayer.setVolume(1.0);
       await TrackPlayer.play();
       console.log('[Audio] Playing via TrackPlayer');
 
