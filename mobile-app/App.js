@@ -2318,6 +2318,7 @@ function AppContent() {
   const currentRecordingRef = useRef(null);
   const autoPlayNextResponseRef = useRef(false);
   const maxRecordTimerRef = useRef(null);
+  const recordingStartTimeRef = useRef(null);
   const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
@@ -4568,15 +4569,27 @@ function AppContent() {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: 1, shouldDuckAndroid: true, interruptionModeAndroid: 1, playThroughEarpieceAndroid: false }); } catch {}
   };
 
+  // Stop Troy's TTS playback
+  const stopTroyAudio = async () => {
+    if (currentAudioRef.current) {
+      try {
+        await currentAudioRef.current.stopAsync();
+        await currentAudioRef.current.unloadAsync();
+      } catch {}
+      currentAudioRef.current = null;
+    }
+    setPlayingMessageId(null);
+  };
+
   // Voice recording state: 'idle' | 'recording' | 'transcribing'
   const [voiceState, setVoiceState] = useState('idle');
   const setVoiceStateLog = (newState) => {
-    console.log('[Voice] voiceState:', voiceState, '→', newState);
+    console.log('[Voice] voiceState →', newState);
     setVoiceState(newState);
   };
 
   const startVoiceRecording = async () => {
-    if (voiceState !== 'idle') return; // Prevent double-start
+    if (voiceState !== 'idle') return;
     try {
       console.log('[Voice] START: Requesting permission');
       const permission = await Audio.requestPermissionsAsync();
@@ -4585,7 +4598,13 @@ function AppContent() {
         return;
       }
 
-      // ALWAYS set recording mode before creating Recording — fixes "could not start" on first tap
+      // Stop Troy if he's speaking — prevents feedback loop
+      if (playingMessageId) {
+        console.log('[Voice] START: Stopping Troy audio first');
+        await stopTroyAudio();
+        await new Promise(r => setTimeout(r, 200));
+      }
+
       console.log('[Voice] START: Setting audio mode to recording');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
@@ -4611,6 +4630,7 @@ function AppContent() {
       await recording.startAsync();
 
       currentRecordingRef.current = recording;
+      recordingStartTimeRef.current = Date.now();
       setIsRecording(true);
       setVoiceStateLog('recording');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -4628,28 +4648,39 @@ function AppContent() {
       setIsRecording(false);
       setVoiceStateLog('idle');
       currentRecordingRef.current = null;
-      Alert.alert('Error', 'Could not start recording. Please try again.');
+      recordingStartTimeRef.current = null;
     }
   };
 
   const stopVoiceRecording = async () => {
     console.log('[Voice] STOP: Entered');
 
-    // Clear max timer
     if (maxRecordTimerRef.current) { clearTimeout(maxRecordTimerRef.current); maxRecordTimerRef.current = null; }
 
-    // Grab and null atomically — prevents double-fire
     const recording = currentRecordingRef.current;
     currentRecordingRef.current = null;
 
     if (!recording) {
-      console.log('[Voice] STOP: No recording (already stopped)');
+      console.log('[Voice] STOP: No recording');
       setIsRecording(false);
       setVoiceStateLog('idle');
       return;
     }
 
-    // Transition to transcribing — keeps UI stable (no black flash)
+    // Check minimum hold duration — discard accidental taps
+    const holdDuration = Date.now() - (recordingStartTimeRef.current || 0);
+    recordingStartTimeRef.current = null;
+
+    if (holdDuration < 500) {
+      console.log('[Voice] STOP: Too short (' + holdDuration + 'ms), discarding');
+      try { await recording.stopAndUnloadAsync(); } catch {}
+      setIsRecording(false);
+      setVoiceStateLog('idle');
+      await resetAudioMode();
+      return;
+    }
+
+    // Transition to transcribing
     setIsRecording(false);
     setVoiceStateLog('transcribing');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -8370,7 +8401,7 @@ function AppContent() {
                         <Path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" stroke="#DAA520" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </Svg>
                     )}
-                    {isRecording && (
+                    {voiceState === 'recording' && (
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginLeft: 6 }} />
                     )}
                   </View>
@@ -11459,6 +11490,20 @@ function AppContent() {
                   ))}
                 </ScrollView>
               </View>
+            )}
+
+            {/* Stop Troy button — visible when TTS is playing */}
+            {playingMessageId && (
+              <TouchableOpacity
+                onPress={stopTroyAudio}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  paddingVertical: 8, backgroundColor: 'rgba(218,165,32,0.1)',
+                  borderTopWidth: 1, borderTopColor: '#1a1a1a',
+                }}
+              >
+                <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600' }}>■ Stop Troy</Text>
+              </TouchableOpacity>
             )}
 
             {/* Input Bar */}
