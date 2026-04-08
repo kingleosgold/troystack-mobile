@@ -2317,9 +2317,7 @@ function AppContent() {
   const [isRecording, setIsRecording] = useState(false);
   const currentRecordingRef = useRef(null);
   const autoPlayNextResponseRef = useRef(false);
-  const silenceTimerRef = useRef(null);
   const maxRecordTimerRef = useRef(null);
-  const silenceStartRef = useRef(null);
   const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
@@ -4566,30 +4564,36 @@ function AppContent() {
     }
   };
 
-  const cleanupRecordingTimers = () => {
-    if (silenceTimerRef.current) { clearInterval(silenceTimerRef.current); silenceTimerRef.current = null; }
-    if (maxRecordTimerRef.current) { clearTimeout(maxRecordTimerRef.current); maxRecordTimerRef.current = null; }
-    silenceStartRef.current = null;
-  };
-
   const resetAudioMode = async () => {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: 1, shouldDuckAndroid: true, interruptionModeAndroid: 1, playThroughEarpieceAndroid: false }); } catch {}
   };
 
-  // Voice recording state label: 'idle' | 'recording' | 'transcribing'
+  // Voice recording state: 'idle' | 'recording' | 'transcribing'
   const [voiceState, setVoiceState] = useState('idle');
+  const setVoiceStateLog = (newState) => {
+    console.log('[Voice] voiceState:', voiceState, '→', newState);
+    setVoiceState(newState);
+  };
 
   const startVoiceRecording = async () => {
+    if (voiceState !== 'idle') return; // Prevent double-start
     try {
-      console.log('[Voice] START: Beginning');
+      console.log('[Voice] START: Requesting permission');
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Allow microphone access to talk to Troy.');
         return;
       }
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      // ALWAYS set recording mode before creating Recording — fixes "could not start" on first tap
+      console.log('[Voice] START: Setting audio mode to recording');
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+      });
 
+      console.log('[Voice] START: Creating recording');
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync({
         android: Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
@@ -4603,70 +4607,51 @@ function AppContent() {
           bitRate: 128000,
         },
         web: {},
-        isMeteringEnabled: true,
       });
       await recording.startAsync();
 
-      setIsRecording(true);
-      setVoiceState('recording');
       currentRecordingRef.current = recording;
+      setIsRecording(true);
+      setVoiceStateLog('recording');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      console.log('[Voice] START: Recording active');
 
-      // Silence detection — best-effort, metering may not work on all devices
-      silenceStartRef.current = null;
-      silenceTimerRef.current = setInterval(async () => {
-        if (!currentRecordingRef.current) { cleanupRecordingTimers(); return; }
-        try {
-          const status = await currentRecordingRef.current.getStatusAsync();
-          if (!status.isRecording) { cleanupRecordingTimers(); return; }
-          if (status.metering !== undefined && status.metering < -40) {
-            if (!silenceStartRef.current) {
-              silenceStartRef.current = Date.now();
-            } else if (Date.now() - silenceStartRef.current > 2000) {
-              console.log('[Voice] AUTO-STOP: Silence detected');
-              cleanupRecordingTimers();
-              stopVoiceRecording();
-            }
-          } else {
-            silenceStartRef.current = null;
-          }
-        } catch {}
-      }, 300);
-
-      // Max recording duration — 15 seconds safety net
+      // 15-second max safety net
       maxRecordTimerRef.current = setTimeout(() => {
         console.log('[Voice] AUTO-STOP: Max duration (15s)');
-        cleanupRecordingTimers();
         stopVoiceRecording();
       }, 15000);
 
     } catch (error) {
-      console.error('[Voice] START error:', error);
+      console.log('[Voice] START ERROR:', error.message, error.stack);
       await resetAudioMode();
-      setVoiceState('idle');
-      Alert.alert('Error', 'Could not start recording.');
+      setIsRecording(false);
+      setVoiceStateLog('idle');
+      currentRecordingRef.current = null;
+      Alert.alert('Error', 'Could not start recording. Please try again.');
     }
   };
 
   const stopVoiceRecording = async () => {
     console.log('[Voice] STOP: Entered');
-    cleanupRecordingTimers();
 
-    // Grab and null atomically — prevents double-fire from timer
+    // Clear max timer
+    if (maxRecordTimerRef.current) { clearTimeout(maxRecordTimerRef.current); maxRecordTimerRef.current = null; }
+
+    // Grab and null atomically — prevents double-fire
     const recording = currentRecordingRef.current;
     currentRecordingRef.current = null;
 
     if (!recording) {
       console.log('[Voice] STOP: No recording (already stopped)');
       setIsRecording(false);
-      setVoiceState('idle');
-      await resetAudioMode();
+      setVoiceStateLog('idle');
       return;
     }
 
-    // Keep recording UI visible but change label to "Transcribing..."
+    // Transition to transcribing — keeps UI stable (no black flash)
     setIsRecording(false);
-    setVoiceState('transcribing');
+    setVoiceStateLog('transcribing');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     try {
@@ -4689,7 +4674,7 @@ function AppContent() {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        setVoiceState('idle');
+        setVoiceStateLog('idle');
         if (response.status === 429) {
           Alert.alert('Voice Limit', error.message || 'Daily voice limit reached. Upgrade to Gold for more.');
           return;
@@ -4700,11 +4685,9 @@ function AppContent() {
       const { text } = await response.json();
       console.log('[Voice] STOP: Transcribed:', text);
 
-      // Transition from transcribing → chat with message
-      setVoiceState('idle');
+      setVoiceStateLog('idle');
 
       if (text && text.trim()) {
-        // Show transcribed text in input briefly so user sees what was heard
         setTroyInputText(text.trim());
         setTimeout(() => {
           setTroyInputText('');
@@ -4715,10 +4698,10 @@ function AppContent() {
         Alert.alert('Could not hear you', 'Try speaking again, closer to the mic.');
       }
     } catch (error) {
-      console.error('[Voice] STOP error:', error.message);
+      console.log('[Voice] STOP ERROR:', error.message, error.stack);
       await resetAudioMode();
       setIsRecording(false);
-      setVoiceState('idle');
+      setVoiceStateLog('idle');
       currentRecordingRef.current = null;
       Alert.alert('Error', 'Voice transcription failed. Try again.');
     }
@@ -11548,31 +11531,43 @@ function AppContent() {
                   <Text style={{ color: !troyLoading ? '#000' : '#666', fontSize: 16, fontWeight: '700' }}>{'\u2191'}</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity
-                  onPress={isRecording ? stopVoiceRecording : voiceState === 'transcribing' ? undefined : startVoiceRecording}
-                  disabled={troyLoading || voiceState === 'transcribing'}
-                  style={{
-                    marginLeft: 8,
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: isRecording ? '#EF4444' : voiceState === 'transcribing' ? '#DAA520' : 'rgba(255,255,255,0.1)',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
-                >
-                  {isRecording ? (
-                    <View style={{ width: 14, height: 14, borderRadius: 2, backgroundColor: '#fff' }} />
-                  ) : voiceState === 'transcribing' ? (
-                    <ActivityIndicator size="small" color="#000" />
-                  ) : (
-                    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                      <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <Path d="M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </Svg>
+                <View style={{ alignItems: 'center', marginLeft: 8 }}>
+                  <TouchableOpacity
+                    onPressIn={voiceState === 'idle' ? startVoiceRecording : undefined}
+                    onPressOut={isRecording ? stopVoiceRecording : undefined}
+                    delayPressIn={0}
+                    disabled={troyLoading || voiceState === 'transcribing'}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: isRecording ? '#EF4444' : voiceState === 'transcribing' ? '#DAA520' : 'rgba(255,255,255,0.1)',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {isRecording ? (
+                      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                        <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </Svg>
+                    ) : voiceState === 'transcribing' ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                        <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <Path d="M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </Svg>
+                    )}
+                  </TouchableOpacity>
+                  {voiceState === 'idle' && !troyLoading && (
+                    <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9, marginTop: 2 }}>Hold</Text>
                   )}
-                </TouchableOpacity>
+                  {isRecording && (
+                    <Text style={{ color: '#EF4444', fontSize: 9, marginTop: 2 }}>Release</Text>
+                  )}
+                </View>
               )}
             </View>
           </KeyboardAvoidingView>
