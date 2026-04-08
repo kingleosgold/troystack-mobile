@@ -18,7 +18,6 @@ struct TroyActionWidget: Widget {
         StaticConfiguration(kind: kind, provider: TroyActionProvider()) { entry in
             TroyActionWidgetView()
                 .widgetBackground(Color(hex: "#0A0A0E"))
-                .widgetURL(URL(string: "troystack://chat"))
         }
         .configurationDisplayName("Ask Troy")
         .description("Quick launch Troy AI chat.")

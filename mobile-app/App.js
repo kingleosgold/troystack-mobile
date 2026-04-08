@@ -2320,6 +2320,7 @@ function AppContent() {
   const silenceTimerRef = useRef(null);
   const maxRecordTimerRef = useRef(null);
   const silenceStartRef = useRef(null);
+  const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
   const accountSwipe = useRef(useSwipeBack(() => setShowAccountScreen(false))).current;
@@ -4572,7 +4573,7 @@ function AppContent() {
   };
 
   const resetAudioMode = async () => {
-    try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }); } catch {}
+    try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, shouldDuckAndroid: true }); } catch {}
   };
 
   const startVoiceRecording = async () => {
@@ -4697,8 +4698,13 @@ function AppContent() {
 
       if (text && text.trim()) {
         console.log('[Voice] Sending to Troy:', text.trim());
-        autoPlayNextResponseRef.current = true;
-        sendTroyMessage(text.trim());
+        // Show transcribed text in input briefly so user sees what was heard
+        setTroyInputText(text.trim());
+        setTimeout(() => {
+          setTroyInputText('');
+          autoPlayNextResponseRef.current = true;
+          sendTroyMessage(text.trim());
+        }, 300);
       } else {
         Alert.alert('Could not hear you', 'Try speaking again, closer to the mic.');
       }
@@ -4734,8 +4740,8 @@ function AppContent() {
 
       setPlayingMessageId(messageId);
 
-      // Set audio mode for playback
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      // Set audio mode for playback (background + silent mode)
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: true, shouldDuckAndroid: true });
 
       const truncatedText = text.substring(0, 2000);
       console.log('🔊 Fetching audio...');
@@ -4847,7 +4853,11 @@ function AppContent() {
 
     // Optimistically add user message to the UI
     const tempUserMsg = { id: 'temp-' + Date.now(), role: 'user', content: text, created_at: new Date().toISOString() };
+    // Animate the new message in
+    const userAnim = new Animated.Value(0);
+    messageAnimsRef.current.set(tempUserMsg.id, userAnim);
     setTroyMessages(prev => [...prev, tempUserMsg]);
+    Animated.spring(userAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
 
     // Show typing indicator
     setTroyLoading(true);
@@ -4869,13 +4879,22 @@ function AppContent() {
         ...(response.message || { id: 'fallback-' + Date.now(), role: 'assistant', content: response.response || 'No response', created_at: new Date().toISOString() }),
         preview: response.preview || null,
       };
+      const realUserId = 'user-' + Date.now();
+      // Animate assistant message in
+      const assistAnim = new Animated.Value(0);
+      messageAnimsRef.current.set(assistantMsg.id, assistAnim);
+      // Transfer user message animation from temp to real id
+      messageAnimsRef.current.set(realUserId, messageAnimsRef.current.get(tempUserMsg.id));
+      messageAnimsRef.current.delete(tempUserMsg.id);
+
       setTroyMessages(prev => {
         const withoutTemp = prev.filter(m => m.id !== tempUserMsg.id);
         return [...withoutTemp,
-          { id: 'user-' + Date.now(), role: 'user', content: text, created_at: tempUserMsg.created_at },
+          { id: realUserId, role: 'user', content: text, created_at: tempUserMsg.created_at },
           assistantMsg
         ];
       });
+      Animated.spring(assistAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
 
       // Update conversation title if it changed (first message auto-titles)
       if (response.title) {
@@ -4884,10 +4903,10 @@ function AppContent() {
         ));
       }
 
-      // Auto-play Troy's voice response after voice input
+      // Auto-play Troy's voice response after voice input — immediate, no delay
       if (autoPlayNextResponseRef.current && assistantMsg.content && assistantMsg.id) {
         autoPlayNextResponseRef.current = false;
-        setTimeout(() => playTroyVoice(assistantMsg.content, assistantMsg.id), 100);
+        playTroyVoice(assistantMsg.content, assistantMsg.id);
       }
     } catch (e) {
       console.error('Failed to send message:', e);
@@ -11324,12 +11343,18 @@ function AppContent() {
                   </View>
                 ) : null
               }
-              renderItem={({ item }) => (
-                <View style={{
+              renderItem={({ item }) => {
+                const anim = messageAnimsRef.current.get(item.id);
+                const animStyle = anim ? {
+                  opacity: anim,
+                  transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
+                } : {};
+                return (
+                <Animated.View style={[{
                   alignSelf: item.role === 'user' ? 'flex-end' : 'flex-start',
                   maxWidth: '85%',
                   marginBottom: 12,
-                }}>
+                }, animStyle]}>
                   {item.role === 'assistant' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                       <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
@@ -11390,8 +11415,9 @@ function AppContent() {
                       )}
                     </TouchableOpacity>
                   )}
-                </View>
-              )}
+                </Animated.View>
+              );
+              }}
             />
 
             {/* Typing Indicator */}
