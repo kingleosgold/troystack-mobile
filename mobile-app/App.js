@@ -483,21 +483,18 @@ function InlinePurchasingPowerCard({ data, onExpand }) {
       <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 6 }}>Your Stack Buys</Text>
       {data.stackBarrelsOfOil != null && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
-          <Text style={{ fontSize: 13, width: 24 }}>🛢</Text>
           <Text style={{ color: '#DAA520', fontSize: 13, fontWeight: '700', marginRight: 4 }}>{Math.round(data.stackBarrelsOfOil).toLocaleString()}</Text>
           <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>barrels of oil</Text>
         </View>
       )}
       {data.stackMonthsOfRent != null && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
-          <Text style={{ fontSize: 13, width: 24 }}>🏠</Text>
           <Text style={{ color: '#DAA520', fontSize: 13, fontWeight: '700', marginRight: 4 }}>{Math.round(data.stackMonthsOfRent).toLocaleString()}</Text>
           <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>months of rent</Text>
         </View>
       )}
       {data.silverPerGallonOfGas != null && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
-          <Text style={{ fontSize: 13, width: 24 }}>⛽</Text>
           <Text style={{ color: '#DAA520', fontSize: 13, fontWeight: '700', marginRight: 4 }}>{Math.round(data.stackHoursOfLabor || 0).toLocaleString()}</Text>
           <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>hours of labor</Text>
         </View>
@@ -2320,6 +2317,9 @@ function AppContent() {
   const [isRecording, setIsRecording] = useState(false);
   const [currentRecording, setCurrentRecording] = useState(null);
   const [autoPlayNextResponse, setAutoPlayNextResponse] = useState(false);
+  const silenceTimerRef = useRef(null);
+  const maxRecordTimerRef = useRef(null);
+  const silenceStartRef = useRef(null);
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
   const accountSwipe = useRef(useSwipeBack(() => setShowAccountScreen(false))).current;
@@ -4565,9 +4565,19 @@ function AppContent() {
     }
   };
 
+  const cleanupRecordingTimers = () => {
+    if (silenceTimerRef.current) { clearInterval(silenceTimerRef.current); silenceTimerRef.current = null; }
+    if (maxRecordTimerRef.current) { clearTimeout(maxRecordTimerRef.current); maxRecordTimerRef.current = null; }
+    silenceStartRef.current = null;
+  };
+
+  const resetAudioMode = async () => {
+    try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }); } catch {}
+  };
+
   const startVoiceRecording = async () => {
     try {
-      console.log('🎙 Starting recording...');
+      if (__DEV__) console.log('[Voice] Starting recording...');
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Allow microphone access to talk to Troy.');
@@ -4577,33 +4587,72 @@ function AppContent() {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
 
       const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.prepareToRecordAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      });
       await recording.startAsync();
 
       setIsRecording(true);
       setCurrentRecording(recording);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      console.log('🎙 Recording started');
+
+      // Silence detection — poll metering every 300ms
+      silenceStartRef.current = null;
+      silenceTimerRef.current = setInterval(async () => {
+        try {
+          const status = await recording.getStatusAsync();
+          if (!status.isRecording) { cleanupRecordingTimers(); return; }
+          if (status.metering !== undefined) {
+            if (status.metering < -45) {
+              if (!silenceStartRef.current) {
+                silenceStartRef.current = Date.now();
+              } else if (Date.now() - silenceStartRef.current > 1500) {
+                if (__DEV__) console.log('[Voice] Silence detected, auto-stopping');
+                cleanupRecordingTimers();
+                stopVoiceRecording();
+              }
+            } else {
+              silenceStartRef.current = null;
+            }
+          }
+        } catch {}
+      }, 300);
+
+      // Max recording duration — 30 seconds
+      maxRecordTimerRef.current = setTimeout(() => {
+        if (__DEV__) console.log('[Voice] Max duration reached, auto-stopping');
+        cleanupRecordingTimers();
+        stopVoiceRecording();
+      }, 30000);
+
     } catch (error) {
-      console.error('🎙 Recording error:', error);
+      console.error('[Voice] Recording error:', error);
+      await resetAudioMode();
       Alert.alert('Error', 'Could not start recording.');
     }
   };
 
   const stopVoiceRecording = async () => {
+    cleanupRecordingTimers();
+
+    if (!currentRecording) {
+      setIsRecording(false);
+      await resetAudioMode();
+      return;
+    }
+
     try {
-      console.log('🎙 Stopping recording...');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       await currentRecording.stopAndUnloadAsync();
       const uri = currentRecording.getURI();
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-
+      await resetAudioMode();
       setIsRecording(false);
       setCurrentRecording(null);
 
-      console.log('🎙 Recording stopped, URI:', uri);
+      if (__DEV__) console.log('[Voice] Recording stopped, URI:', uri);
 
       setTroyLoading(true);
 
@@ -4627,7 +4676,7 @@ function AppContent() {
       }
 
       const { text } = await response.json();
-      console.log('🎙 Transcribed:', text);
+      if (__DEV__) console.log('[Voice] Transcribed:', text);
 
       setTroyLoading(false);
 
@@ -4638,7 +4687,8 @@ function AppContent() {
         Alert.alert('Could not hear you', 'Try speaking again, closer to the mic.');
       }
     } catch (error) {
-      console.error('🎙 Transcription error:', error);
+      console.error('[Voice] Transcription error:', error);
+      await resetAudioMode();
       setIsRecording(false);
       setCurrentRecording(null);
       setTroyLoading(false);
@@ -8275,8 +8325,15 @@ function AppContent() {
                 <View style={{ marginLeft: 10 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>Troy</Text>
-                    {playingMessageId && <Text style={{ color: '#DAA520', fontSize: 12, marginLeft: 4 }}>🔊</Text>}
-                    {isRecording && <Text style={{ color: '#EF4444', fontSize: 12, marginLeft: 4 }}>🎙</Text>}
+                    {playingMessageId && (
+                      <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" style={{ marginLeft: 4 }}>
+                        <Path d="M11 5L6 9H2v6h4l5 4V5z" stroke="#DAA520" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <Path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" stroke="#DAA520" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </Svg>
+                    )}
+                    {isRecording && (
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginLeft: 6 }} />
+                    )}
                   </View>
                   <Text style={{ color: '#999', fontSize: 12 }}>{isRecording ? 'Listening...' : 'Your Stack Analyst'}</Text>
                 </View>
@@ -11205,11 +11262,11 @@ function AppContent() {
                     </Text>
                     <View style={{ marginTop: 24, gap: 10, alignSelf: 'stretch', paddingHorizontal: 16 }}>
                       {[
-                        { label: "Today's Brief", emoji: '📋', action: 'brief' },
-                        { label: "How's my stack?", emoji: '📊', action: 'send', text: "How's my stack performing?" },
-                        { label: 'Gold/Silver Ratio', emoji: '🔄', action: 'send', text: 'Analyze my gold-to-silver ratio' },
-                        { label: 'Purchasing Power', emoji: '💰', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
-                        { label: 'Scan a receipt', emoji: '📸', action: 'scan' },
+                        { label: "Today's Brief", action: 'brief' },
+                        { label: "How's my stack?", action: 'send', text: "How's my stack performing?" },
+                        { label: 'Gold/Silver Ratio', action: 'send', text: 'Analyze my gold-to-silver ratio' },
+                        { label: 'Purchasing Power', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
+                        { label: 'Scan a receipt', action: 'scan' },
                       ].map((chip, i) => (
                         <TouchableOpacity
                           key={i}
@@ -11221,9 +11278,6 @@ function AppContent() {
                             borderWidth: 1,
                             borderColor: 'rgba(212,168,67,0.2)',
                             alignSelf: 'flex-start',
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 6,
                           }}
                           onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -11240,7 +11294,6 @@ function AppContent() {
                             }
                           }}
                         >
-                          <Text style={{ fontSize: 14 }}>{chip.emoji}</Text>
                           <Text style={{ color: '#D4A843', fontSize: 13 }}>{chip.label}</Text>
                         </TouchableOpacity>
                       ))}
@@ -11333,11 +11386,11 @@ function AppContent() {
               <View style={{ height: 44, borderTopWidth: 1, borderTopColor: '#1a1a1a', backgroundColor: '#000' }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: 12, gap: 8, height: 44 }}>
                   {[
-                    { label: "Today's Brief", emoji: '📋', action: 'brief' },
-                    { label: "My stack", emoji: '📊', action: 'send', text: "How's my stack performing?" },
-                    { label: 'Ratio', emoji: '🔄', action: 'send', text: 'Analyze my gold-to-silver ratio' },
-                    { label: 'Buying power', emoji: '💰', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
-                    { label: 'Scan receipt', emoji: '📸', action: 'scan' },
+                    { label: "Today's Brief", action: 'brief' },
+                    { label: 'My stack', action: 'send', text: "How's my stack performing?" },
+                    { label: 'Ratio', action: 'send', text: 'Analyze my gold-to-silver ratio' },
+                    { label: 'Buying power', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
+                    { label: 'Scan receipt', action: 'scan' },
                   ].map((chip, i) => (
                     <TouchableOpacity
                       key={i}
@@ -11353,9 +11406,8 @@ function AppContent() {
                         }
                         else sendTroyMessage(chip.text);
                       }}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#1a1a1a', borderRadius: 14, height: 30, paddingHorizontal: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                      style={{ backgroundColor: '#1a1a1a', borderRadius: 14, height: 30, paddingHorizontal: 10, justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
                     >
-                      <Text style={{ fontSize: 12 }}>{chip.emoji}</Text>
                       <Text style={{ color: '#d4d4d8', fontSize: 12 }}>{chip.label}</Text>
                     </TouchableOpacity>
                   ))}
@@ -11373,6 +11425,25 @@ function AppContent() {
               borderTopColor: '#1a1a1a',
               backgroundColor: '#000',
             }}>
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Alert.alert('Add to your stack', null, [
+                    { text: 'Take a Photo', onPress: () => performScan('camera') },
+                    { text: 'Choose Photo', onPress: () => performScan('gallery') },
+                    { text: 'Import Spreadsheet', onPress: () => importSpreadsheet() },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
+                }}
+                style={{
+                  width: 32, height: 32, borderRadius: 16,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  justifyContent: 'center', alignItems: 'center',
+                  marginRight: 8, marginBottom: 2,
+                }}
+              >
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20, lineHeight: 22 }}>+</Text>
+              </TouchableOpacity>
               <TextInput
                 style={{
                   flex: 1,
@@ -11427,9 +11498,15 @@ function AppContent() {
                     alignItems: 'center',
                   }}
                 >
-                  <Text style={{ color: isRecording ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 18 }}>
-                    {isRecording ? '■' : '🎙'}
-                  </Text>
+                  {isRecording ? (
+                    <View style={{ width: 14, height: 14, borderRadius: 2, backgroundColor: '#fff' }} />
+                  ) : (
+                    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                      <Path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <Path d="M19 10v2a7 7 0 01-14 0v-2" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <Path d="M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
+                  )}
                 </TouchableOpacity>
               )}
             </View>
