@@ -2315,8 +2315,8 @@ function AppContent() {
   const [playingMessageId, setPlayingMessageId] = useState(null);
   const currentAudioRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [currentRecording, setCurrentRecording] = useState(null);
-  const [autoPlayNextResponse, setAutoPlayNextResponse] = useState(false);
+  const currentRecordingRef = useRef(null);
+  const autoPlayNextResponseRef = useRef(false);
   const silenceTimerRef = useRef(null);
   const maxRecordTimerRef = useRef(null);
   const silenceStartRef = useRef(null);
@@ -4588,13 +4588,23 @@ function AppContent() {
 
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync({
-        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        android: Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
+        ios: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        web: {},
         isMeteringEnabled: true,
       });
       await recording.startAsync();
 
       setIsRecording(true);
-      setCurrentRecording(recording);
+      currentRecordingRef.current = recording;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       // Silence detection — poll metering every 300ms
@@ -4602,13 +4612,14 @@ function AppContent() {
       silenceTimerRef.current = setInterval(async () => {
         try {
           const status = await recording.getStatusAsync();
+          console.log('[Voice] Silence check - metering:', status.metering, 'isRecording:', status.isRecording);
           if (!status.isRecording) { cleanupRecordingTimers(); return; }
           if (status.metering !== undefined) {
-            if (status.metering < -45) {
+            if (status.metering < -40) {
               if (!silenceStartRef.current) {
                 silenceStartRef.current = Date.now();
-              } else if (Date.now() - silenceStartRef.current > 1500) {
-                if (__DEV__) console.log('[Voice] Silence detected, auto-stopping');
+              } else if (Date.now() - silenceStartRef.current > 2000) {
+                console.log('[Voice] Silence detected, auto-stopping');
                 cleanupRecordingTimers();
                 stopVoiceRecording();
               }
@@ -4616,7 +4627,7 @@ function AppContent() {
               silenceStartRef.current = null;
             }
           }
-        } catch {}
+        } catch (e) { console.log('[Voice] Silence check error:', e.message); }
       }, 300);
 
       // Max recording duration — 30 seconds
@@ -4634,9 +4645,12 @@ function AppContent() {
   };
 
   const stopVoiceRecording = async () => {
+    console.log('[Voice] stopVoiceRecording called');
     cleanupRecordingTimers();
 
-    if (!currentRecording) {
+    const recording = currentRecordingRef.current;
+    if (!recording) {
+      console.log('[Voice] No recording ref, aborting');
       setIsRecording(false);
       await resetAudioMode();
       return;
@@ -4645,25 +4659,26 @@ function AppContent() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      await currentRecording.stopAndUnloadAsync();
-      const uri = currentRecording.getURI();
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      console.log('[Voice] Recording stopped, URI:', uri);
 
       await resetAudioMode();
       setIsRecording(false);
-      setCurrentRecording(null);
-
-      if (__DEV__) console.log('[Voice] Recording stopped, URI:', uri);
+      currentRecordingRef.current = null;
 
       setTroyLoading(true);
 
       const formData = new FormData();
       formData.append('audio', { uri, type: 'audio/m4a', name: 'recording.m4a' });
       formData.append('userId', supabaseUser?.id || 'anonymous');
+      console.log('[Voice] Sending to transcribe...');
 
       const response = await fetch(`${API_BASE_URL}/v1/troy/transcribe`, {
         method: 'POST',
         body: formData,
       });
+      console.log('[Voice] Transcribe response status:', response.status);
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -4676,21 +4691,22 @@ function AppContent() {
       }
 
       const { text } = await response.json();
-      if (__DEV__) console.log('[Voice] Transcribed:', text);
+      console.log('[Voice] Transcribed text:', text);
 
       setTroyLoading(false);
 
       if (text && text.trim()) {
-        setAutoPlayNextResponse(true);
+        console.log('[Voice] Sending to Troy:', text.trim());
+        autoPlayNextResponseRef.current = true;
         sendTroyMessage(text.trim());
       } else {
         Alert.alert('Could not hear you', 'Try speaking again, closer to the mic.');
       }
     } catch (error) {
-      console.error('[Voice] Transcription error:', error);
+      console.error('[Voice] stopVoiceRecording error:', error.message, error.stack);
       await resetAudioMode();
       setIsRecording(false);
-      setCurrentRecording(null);
+      currentRecordingRef.current = null;
       setTroyLoading(false);
       Alert.alert('Error', 'Voice transcription failed. Try again.');
     }
@@ -4869,9 +4885,9 @@ function AppContent() {
       }
 
       // Auto-play Troy's voice response after voice input
-      if (autoPlayNextResponse && assistantMsg.content && assistantMsg.id) {
-        setAutoPlayNextResponse(false);
-        setTimeout(() => playTroyVoice(assistantMsg.content, assistantMsg.id), 500);
+      if (autoPlayNextResponseRef.current && assistantMsg.content && assistantMsg.id) {
+        autoPlayNextResponseRef.current = false;
+        setTimeout(() => playTroyVoice(assistantMsg.content, assistantMsg.id), 100);
       }
     } catch (e) {
       console.error('Failed to send message:', e);
@@ -5989,10 +6005,14 @@ function AppContent() {
     }
   }, [currentScreen, hasGoldAccess, spotHistoryMetal.gold.range, spotHistoryMetal.silver.range, spotHistoryMetal.platinum.range, spotHistoryMetal.palladium.range]);
 
-  // Fetch sparkline data when Today tab loads
+  // Fetch sparkline data when Today tab loads OR when app finishes loading (for widgets)
   useEffect(() => {
     if (currentScreen === 'Dashboard') fetchSparklineData();
   }, [currentScreen]);
+
+  useEffect(() => {
+    if (dataLoaded && spotPricesLive) fetchSparklineData();
+  }, [dataLoaded, spotPricesLive]);
 
 
   // ============================================
@@ -6544,15 +6564,17 @@ function AppContent() {
     }
   }, [currentScreen]);
 
-  // Load Troy Chat conversations when Troy tab opens
+  // Load Troy Chat conversations on auth and when Troy tab opens
   useEffect(() => {
-    if (currentScreen === 'TroyChat' && supabaseUser) {
+    if (supabaseUser) {
+      console.log('[Troy] Fetching conversations...');
       troyAPI.listConversations().then(result => {
         const convos = result?.conversations || (Array.isArray(result) ? result : []);
+        console.log('[Troy] Fetched conversations:', convos.length);
         setTroyConversations(convos);
       }).catch(() => {});
     }
-  }, [currentScreen]);
+  }, [supabaseUser?.id, currentScreen]);
 
   // Fetch and display daily brief when user taps the suggestion chip
   const fetchAndShowDailyBrief = async () => {
@@ -8046,6 +8068,7 @@ function AppContent() {
       setDrawerNavigation(drawerProps.navigation);
     }
 
+    console.log('[Troy] Sidebar rendering, conversations:', troyConversations.length);
     const conversationGroups = groupConversationsByDate(troyConversations);
     const isGoldUser = hasGoldAccess;
 
