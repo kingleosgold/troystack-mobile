@@ -3730,12 +3730,18 @@ function AppContent() {
   useEffect(() => {
     (async () => {
       try {
-        await TrackPlayer.setupPlayer({ autoHandleInterruptions: true });
+        await TrackPlayer.setupPlayer({
+          autoHandleInterruptions: true,
+          iosCategory: 'playback',
+          iosCategoryMode: 'spokenAudio',
+          iosCategoryOptions: ['allowBluetooth', 'defaultToSpeaker'],
+        });
         await TrackPlayer.updateOptions({
           capabilities: [Capability.Play, Capability.Pause, Capability.Stop],
           compactCapabilities: [Capability.Play, Capability.Pause],
           android: { appKilledPlaybackBehavior: 'StopPlaybackAndRemoveNotification' },
         });
+        await TrackPlayer.setVolume(1.0);
         setTrackPlayerReady(true);
         console.log('[Audio] TrackPlayer initialized');
       } catch (e) {
@@ -4761,7 +4767,9 @@ function AppContent() {
       const uri = recording.getURI();
       console.log('[Voice] STOP: URI:', uri);
 
+      // Reset audio session from recording → playback and let iOS settle
       await resetAudioMode();
+      await new Promise(r => setTimeout(r, 300));
 
       const formData = new FormData();
       formData.append('audio', { uri, type: 'audio/m4a', name: 'recording.m4a' });
@@ -4860,7 +4868,6 @@ function AppContent() {
         artist: 'TroyStack',
         artwork: Image.resolveAssetSource(require('./assets/icon.png')).uri,
       });
-      await TrackPlayer.setVolume(1.0);
       await TrackPlayer.play();
       console.log('[Audio] Playing via TrackPlayer');
 
