@@ -3752,10 +3752,12 @@ function AppContent() {
 
     // Remote control event handlers (lock screen + Dynamic Island)
     const subs = [
-      TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
+      TrackPlayer.addEventListener(Event.PlaybackQueueEnded, async () => {
         setPlayingMessageId(null);
         setIsPaused(false);
-        TrackPlayer.reset().catch(() => {});
+        await TrackPlayer.reset().catch(() => {});
+        // Pre-release audio session so mic is ready immediately
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true }).catch(() => {});
       }),
       TrackPlayer.addEventListener(Event.RemotePause, () => { TrackPlayer.pause(); }),
       TrackPlayer.addEventListener(Event.RemotePlay, () => { TrackPlayer.play(); }),
@@ -4647,12 +4649,13 @@ function AppContent() {
         return;
       }
 
-      // Stop Troy if he's speaking — prevents feedback loop
-      if (playingMessageId) {
-        console.log('[Voice] START: Stopping Troy audio first');
-        await stopTroyAudio();
-        await new Promise(r => setTimeout(r, 200));
-      }
+      // Always release TrackPlayer's audio session before recording
+      console.log('[Voice] START: Releasing TrackPlayer session');
+      await TrackPlayer.stop().catch(() => {});
+      await TrackPlayer.reset().catch(() => {});
+      setPlayingMessageId(null);
+      setIsPaused(false);
+      await new Promise(r => setTimeout(r, 300));
 
       console.log('[Voice] START: Setting audio mode to recording');
       await Audio.setAudioModeAsync({
