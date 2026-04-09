@@ -4809,6 +4809,11 @@ function AppContent() {
       return;
     }
 
+    // Skip TTS for empty, error, or very short responses
+    if (!text || text.length < 20 || text === 'No response') {
+      return;
+    }
+
     try {
       // Re-initialize TrackPlayer (may have been destroyed after previous playback)
       await initTrackPlayer();
@@ -4933,9 +4938,29 @@ function AppContent() {
       troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
 
-      // Replace temp message with real one and add Troy's response (with preview if available)
+      // Handle API error responses (e.g. profanity filter, server error)
+      if (response.error && !response.message?.content) {
+        console.log('[Troy] API returned error:', response.error);
+        setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+        Alert.alert('Troy', response.error || "Couldn't respond. Try again.");
+        setTroyLoading(false);
+        troyAbortRef.current = null;
+        return;
+      }
+
+      // Replace temp message with real one and add Troy's response
+      const responseContent = response.message?.content || response.response || '';
+      if (!responseContent.trim()) {
+        console.log('[Troy] Empty response');
+        setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+        Alert.alert('Troy', "Couldn't respond. Try again.");
+        setTroyLoading(false);
+        troyAbortRef.current = null;
+        return;
+      }
+
       const assistantMsg = {
-        ...(response.message || { id: 'fallback-' + Date.now(), role: 'assistant', content: response.response || 'No response', created_at: new Date().toISOString() }),
+        ...(response.message || { id: 'fallback-' + Date.now(), role: 'assistant', content: responseContent, created_at: new Date().toISOString() }),
         preview: response.preview || null,
       };
       const realUserId = 'user-' + Date.now();
@@ -4969,6 +4994,7 @@ function AppContent() {
       }
     } catch (e) {
       troyAbortRef.current = null;
+      autoPlayNextResponseRef.current = false;
       if (e.name === 'AbortError') {
         console.log('[Troy] Generation stopped by user');
         return;
