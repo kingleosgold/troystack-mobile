@@ -517,22 +517,31 @@ function InlinePurchasingPowerCard({ data, onExpand }) {
 
 function InlineDealerCard({ data }) {
   if (!data) return null;
+  // Support new shape (data.dealers array) and legacy shape (single data.dealer/url)
+  const dealers = data.dealers || (data.dealer && data.url ? [{ dealer: data.dealer, url: data.url }] : []);
+  if (dealers.length === 0) return null;
+
   return (
-    <TouchableOpacity
-      onPress={() => Linking.openURL(data.url)}
-      style={{
-        ...INLINE_CARD_STYLE,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}
-    >
-      <View>
-        <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600' }}>{data.product}</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>Shop on {data.dealer}</Text>
-      </View>
-      <Text style={{ color: '#DAA520', fontSize: 16 }}>→</Text>
-    </TouchableOpacity>
+    <View style={INLINE_CARD_STYLE}>
+      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 8 }}>{data.product}</Text>
+      {dealers.map((d, i) => (
+        <TouchableOpacity
+          key={i}
+          onPress={() => Linking.openURL(d.url)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingVertical: 8,
+            borderTopWidth: i > 0 ? 0.5 : 0,
+            borderTopColor: 'rgba(255,255,255,0.06)',
+          }}
+        >
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Shop on {d.dealer}</Text>
+          <Text style={{ color: '#DAA520', fontSize: 16 }}>→</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
   );
 }
 
@@ -13847,6 +13856,34 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={i}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          style={{
+                            backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
+                            borderWidth: 1, borderColor: colors.border,
+                            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                          }}
+                        >
+                          <View>
+                            <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '600' }}>{link.label}</Text>
+                            <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>{link.sub}</Text>
+                          </View>
+                          <Text style={{ color: colors.gold, fontSize: 18 }}>→</Text>
+                        </TouchableOpacity>
+                      ))}
+
+                      {/* SD Bullion Quick Links */}
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginTop: 20, marginBottom: 4 }}>Shop SD Bullion</Text>
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        Competitive premiums and frequent deals.
+                      </Text>
+                      {[
+                        { label: 'Deals', sub: 'Current sales and specials', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com%2Fdeals' },
+                        { label: 'Silver Eagles', sub: 'American Silver Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com%2Fsilver%2Fus-mint-american-silver-eagle-coins%2Fsilver-american-eagles-1-ounce' },
+                        { label: 'Gold Eagles', sub: 'American Gold Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com%2Fgold%2Famerican-gold-eagle-coins' },
+                        { label: 'Browse All', sub: 'Full SD Bullion catalog', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com' },
+                      ].map((link, i) => (
+                        <TouchableOpacity
+                          key={`sd-${i}`}
                           onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,

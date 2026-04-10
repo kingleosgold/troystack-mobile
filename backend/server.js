@@ -5671,26 +5671,43 @@ function detectPreviewContent(troyResponse, contextData) {
     };
   }
 
-  // APMEX affiliate dealer links — Silver Eagles
+  // Affiliate dealer links — Silver Eagles (APMEX + SD Bullion)
   if (r.includes('silver eagle') || r.includes('american silver eagle') || r.includes('ase ')) {
     return {
       type: 'dealer_link',
       data: {
-        dealer: 'APMEX',
         product: 'Silver Eagles',
-        url: 'https://track.flexlinkspro.com/g.ashx?foid=156074.13444.1055589&trid=1546671.246173&foc=16&fot=9999&fos=6'
+        dealers: [
+          { dealer: 'APMEX', url: 'https://track.flexlinkspro.com/g.ashx?foid=156074.13444.1055589&trid=1546671.246173&foc=16&fot=9999&fos=6' },
+          { dealer: 'SD Bullion', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com%2Fsilver%2Fus-mint-american-silver-eagle-coins%2Fsilver-american-eagles-1-ounce' },
+        ],
       }
     };
   }
 
-  // APMEX affiliate dealer links — Gold Eagles
+  // Affiliate dealer links — Gold Eagles (APMEX + SD Bullion)
   if (r.includes('gold eagle') || r.includes('american gold eagle')) {
     return {
       type: 'dealer_link',
       data: {
-        dealer: 'APMEX',
         product: 'Gold Eagles',
-        url: 'https://track.flexlinkspro.com/g.ashx?foid=156074.13444.1055590&trid=1546671.246173&foc=16&fot=9999&fos=6'
+        dealers: [
+          { dealer: 'APMEX', url: 'https://track.flexlinkspro.com/g.ashx?foid=156074.13444.1055590&trid=1546671.246173&foc=16&fot=9999&fos=6' },
+          { dealer: 'SD Bullion', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com%2Fgold%2Famerican-gold-eagle-coins' },
+        ],
+      }
+    };
+  }
+
+  // SD Bullion mention by name
+  if (r.includes('sd bullion') || r.includes('sdbullion')) {
+    return {
+      type: 'dealer_link',
+      data: {
+        product: 'SD Bullion',
+        dealers: [
+          { dealer: 'SD Bullion', url: 'https://www.awin1.com/cread.php?awinmid=78598&awinaffid=2844460&ued=https%3A%2F%2Fsdbullion.com' },
+        ],
       }
     };
   }
