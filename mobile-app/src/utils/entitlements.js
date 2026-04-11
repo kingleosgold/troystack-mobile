@@ -1,5 +1,5 @@
 /**
- * Stack Tracker Pro - Entitlements Utility
+ * TroyStack - Entitlements Utility
  * RevenueCat entitlement checking functions
  */
 

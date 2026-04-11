@@ -1,5 +1,5 @@
 /**
- * Background Tasks for Stack Tracker Gold
+ * Background Tasks for TroyStack
  *
  * Handles background price fetching to keep the app and widget data fresh
  * even when the app is closed.

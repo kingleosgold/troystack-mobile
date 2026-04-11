@@ -1,5 +1,5 @@
 /**
- * Stack Tracker Pro - Privacy-First Backend API
+ * TroyStack - Privacy-First Backend API
  * 
  * This server handles AI receipt scanning WITHOUT storing any user data.
  * Images are processed in memory and immediately discarded.
@@ -2423,7 +2423,7 @@ app.get('/api/privacy', (req, res) => {
         technical: 'Full JSON/CSV export, complete local deletion, server backup deletion via API.'
       }
     ],
-    contact: 'privacy@stacktrackerpro.com'
+    contact: 'support@troystack.com'
   });
 });
 
@@ -2435,7 +2435,7 @@ app.get('/privacy', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy Policy - Stack Tracker Gold</title>
+  <title>Privacy Policy - TroyStack</title>
   <style>
     * {
       margin: 0;
@@ -2538,7 +2538,7 @@ app.get('/privacy', (req, res) => {
 <body>
   <div class="container">
     <h1>🪙 Privacy Policy</h1>
-    <p class="tagline">Stack Tracker Gold - Privacy-First Precious Metals Portfolio</p>
+    <p class="tagline">TroyStack - Privacy-First Precious Metals Portfolio</p>
     <p class="last-updated">Last Updated: February 17, 2026</p>
 
     <div class="summary">
@@ -2550,7 +2550,7 @@ app.get('/privacy', (req, res) => {
     <div class="principle">
       <h3><span class="icon">📱</span> Local-First Data Storage</h3>
       <p>
-        By default, all your portfolio data—your precious metals holdings, purchase history, and preferences—is stored on your device using encrypted local storage. You can use Stack Tracker Gold without an account, and your data stays entirely on your device.
+        By default, all your portfolio data—your precious metals holdings, purchase history, and preferences—is stored on your device using encrypted local storage. You can use TroyStack without an account, and your data stays entirely on your device.
       </p>
     </div>
 
@@ -2606,7 +2606,7 @@ app.get('/privacy', (req, res) => {
     <div class="principle">
       <h3><span class="icon">🔑</span> No Account Required</h3>
       <p>
-        You can use Stack Tracker Gold fully without creating an account (Guest Mode). No email, no password, no personal information required. Your data stays on your device, under your control. Accounts are only needed for optional cloud sync.
+        You can use TroyStack fully without creating an account (Guest Mode). No email, no password, no personal information required. Your data stays on your device, under your control. Accounts are only needed for optional cloud sync.
       </p>
     </div>
 
@@ -2671,7 +2671,7 @@ app.get('/privacy', (req, res) => {
     </p>
 
     <div class="footer">
-      <p>Questions about privacy? Contact us at <a href="mailto:stacktrackergold@gmail.com">stacktrackergold@gmail.com</a></p>
+      <p>Questions about privacy? Contact us at <a href="mailto:support@troystack.com">support@troystack.com</a></p>
       <p style="margin-top: 10px;">Built with privacy in mind. Your data, your control. 🔒</p>
     </div>
   </div>
@@ -2691,7 +2691,7 @@ app.get('/terms', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Terms of Use - Stack Tracker Gold</title>
+  <title>Terms of Use - TroyStack</title>
   <style>
     * {
       margin: 0;
@@ -2782,21 +2782,21 @@ app.get('/terms', (req, res) => {
 <body>
   <div class="container">
     <h1>📜 Terms of Use</h1>
-    <p class="tagline">Stack Tracker Gold - Privacy-First Precious Metals Portfolio</p>
+    <p class="tagline">TroyStack - Privacy-First Precious Metals Portfolio</p>
     <p class="last-updated">Last Updated: February 17, 2026</p>
 
     <div class="summary">
-      By using Stack Tracker Gold, you agree to these terms. Please read them carefully.
+      By using TroyStack, you agree to these terms. Please read them carefully.
     </div>
 
     <h2>1. Acceptance of Terms</h2>
     <p>
-      By downloading, installing, or using Stack Tracker Gold ("the App"), you agree to be bound by these Terms of Use. If you do not agree to these terms, please do not use the App.
+      By downloading, installing, or using TroyStack ("the App"), you agree to be bound by these Terms of Use. If you do not agree to these terms, please do not use the App.
     </p>
 
     <h2>2. Description of Service</h2>
     <p>
-      Stack Tracker Gold is a personal portfolio tracking application for precious metals enthusiasts. The App allows you to:
+      TroyStack is a personal portfolio tracking application for precious metals enthusiasts. The App allows you to:
     </p>
     <ul>
       <li>Track your gold, silver, platinum, and palladium holdings</li>
@@ -2848,7 +2848,7 @@ app.get('/terms', (req, res) => {
 
     <h2>7. Subscriptions and Payments</h2>
     <p>
-      Stack Tracker Gold offers a free tier and premium "Gold" subscriptions with the following pricing:
+      TroyStack offers a free tier and premium "Gold" subscriptions with the following pricing:
     </p>
     <ul>
       <li><strong>Gold Monthly:</strong> $9.99/month — auto-renews monthly</li>
@@ -2883,17 +2883,17 @@ app.get('/terms', (req, res) => {
       The App is provided <strong>"as is" and "as available"</strong> without warranties of any kind, whether express or implied. We do not guarantee the accuracy, completeness, or timeliness of any data, content, or features provided by the App.
     </p>
     <p>
-      <strong>Stack Tracker Gold is not a financial advisor, broker, or dealer.</strong> The App is for personal informational and tracking purposes only. It does not provide investment advice, tax guidance, or financial recommendations. Always verify important financial information independently and consult qualified professionals for financial decisions.
+      <strong>TroyStack is not a financial advisor, broker, or dealer.</strong> The App is for personal informational and tracking purposes only. It does not provide investment advice, tax guidance, or financial recommendations. Always verify important financial information independently and consult qualified professionals for financial decisions.
     </p>
 
     <h2>10. Limitation of Liability</h2>
     <p>
-      To the maximum extent permitted by law, Stack Tracker Gold and its developers shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the App, including but not limited to losses arising from reliance on AI-generated content, inaccurate spot prices, or data synchronization issues.
+      To the maximum extent permitted by law, TroyStack and its developers shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the App, including but not limited to losses arising from reliance on AI-generated content, inaccurate spot prices, or data synchronization issues.
     </p>
 
     <h2>11. Intellectual Property</h2>
     <p>
-      All content, features, and functionality of the App are owned by Stack Tracker Gold and are protected by copyright, trademark, and other intellectual property laws.
+      All content, features, and functionality of the App are owned by TroyStack and are protected by copyright, trademark, and other intellectual property laws.
     </p>
 
     <h2>12. Changes to Terms</h2>
@@ -2908,12 +2908,12 @@ app.get('/terms', (req, res) => {
 
     <h2>14. Contact Us</h2>
     <p>
-      If you have questions about these Terms of Use, please contact us at <a href="mailto:stacktrackergold@gmail.com">stacktrackergold@gmail.com</a>.
+      If you have questions about these Terms of Use, please contact us at <a href="mailto:support@troystack.com">support@troystack.com</a>.
     </p>
 
     <div class="footer">
-      <p>Questions? Contact us at <a href="mailto:stacktrackergold@gmail.com">stacktrackergold@gmail.com</a></p>
-      <p style="margin-top: 10px;">Stack Tracker Gold - Track your stack with confidence. 🪙</p>
+      <p>Questions? Contact us at <a href="mailto:support@troystack.com">support@troystack.com</a></p>
+      <p style="margin-top: 10px;">TroyStack - Track your stack with confidence. 🪙</p>
     </div>
   </div>
 </body>
@@ -4344,7 +4344,7 @@ app.post('/api/advisor/chat', async (req, res) => {
       .filter(Boolean)
       .join(', ');
 
-    const systemPrompt = `You are the Stack Advisor, an AI assistant for precious metals investors inside the Stack Tracker Gold app. You have access to the user's stack and current market data.
+    const systemPrompt = `You are the Stack Advisor, an AI assistant for precious metals investors inside the TroyStack app. You have access to the user's stack and current market data.
 
 FORMATTING:
 - Use **bold** for emphasis on key numbers, dollar amounts, percentages, and metal names.

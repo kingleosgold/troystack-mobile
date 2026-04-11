@@ -222,7 +222,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             {/* Logo Section */}
             <View style={styles.logoSection}>
               <Image source={AppIcon} style={styles.logoImage} />
-              <Text style={styles.logoTitle}>Stack Tracker Gold</Text>
+              <Text style={styles.logoTitle}>TroyStack</Text>
             </View>
 
             {/* Tab Selector */}

@@ -61,7 +61,7 @@ export default function AccountScreen({
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account and all synced data. This action cannot be undone.\n\nTo delete your account, please contact support@stacktrackerpro.com',
+      'This will permanently delete your account and all synced data. This action cannot be undone.\n\nTo delete your account, please contact support@troystack.com',
       [{ text: 'OK' }]
     );
   };

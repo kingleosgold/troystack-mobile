@@ -1,5 +1,5 @@
 /**
- * Stack Tracker Pro - Tutorial Component
+ * TroyStack - Tutorial Component
  * Supports both first-launch onboarding and version update tutorials.
  * Swipeable slides with dot pagination.
  *

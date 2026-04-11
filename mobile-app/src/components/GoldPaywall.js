@@ -1,5 +1,5 @@
 /**
- * Stack Tracker Pro - Subscription Paywall Component
+ * TroyStack - Subscription Paywall Component
  * Single Gold tier paywall with RevenueCat integration
  * Silver subscribers are grandfathered to Gold — no Silver tier shown.
  */
