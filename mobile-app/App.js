@@ -23,7 +23,6 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
-import TrackPlayer, { Capability, Event } from 'react-native-track-player';
 import Purchases from 'react-native-purchases';
 import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
@@ -2329,9 +2328,9 @@ function AppContent() {
   const [advisorQuestionsToday, setAdvisorQuestionsToday] = useState(0);
   const [playingMessageId, setPlayingMessageId] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
-  const [trackPlayerReady, setTrackPlayerReady] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const currentRecordingRef = useRef(null);
+  const currentSoundRef = useRef(null);
   const autoPlayNextResponseRef = useRef(false);
   const maxRecordTimerRef = useRef(null);
   const recordingStartTimeRef = useRef(null);
@@ -3739,48 +3738,9 @@ function AppContent() {
 
   useEffect(() => { authenticate(); }, []);
 
-  // Initialize TrackPlayer for TTS playback (lock screen + Dynamic Island)
-  // Initialize/re-initialize TrackPlayer with listeners (called on startup + before each play)
-  const initTrackPlayer = async () => {
-    try {
-      await TrackPlayer.setupPlayer({
-        autoHandleInterruptions: true,
-        iosCategory: 'playAndRecord',
-        iosCategoryMode: 'spokenAudio',
-        iosCategoryOptions: ['allowBluetooth', 'defaultToSpeaker'],
-      });
-    } catch (e) {
-      // Already initialized — that's fine
-    }
-    await TrackPlayer.updateOptions({
-      capabilities: [Capability.Play, Capability.Pause, Capability.Stop],
-      compactCapabilities: [Capability.Play, Capability.Pause],
-      android: { appKilledPlaybackBehavior: 'StopPlaybackAndRemoveNotification' },
-    });
-    // Register remote event handlers (re-registered after every destroy/re-init)
-    TrackPlayer.addEventListener(Event.PlaybackQueueEnded, async () => {
-      setPlayingMessageId(null);
-      setIsPaused(false);
-      await TrackPlayer.stop().catch(() => {});
-      await TrackPlayer.reset().catch(() => {});
-      console.log('[Audio] Playback ended, player reset');
-    });
-    TrackPlayer.addEventListener(Event.RemotePause, () => { TrackPlayer.pause(); });
-    TrackPlayer.addEventListener(Event.RemotePlay, () => { TrackPlayer.play(); });
-    TrackPlayer.addEventListener(Event.RemoteStop, async () => {
-      await TrackPlayer.stop().catch(() => {});
-      await TrackPlayer.reset().catch(() => {});
-      setPlayingMessageId(null);
-      setIsPaused(false);
-    });
-    await TrackPlayer.setVolume(1.0);
-    console.log('[Audio] TrackPlayer ready');
-  };
-
   useEffect(() => {
     // Set audio mode ONCE — playAndRecord handles both, never toggle again
     Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: true }).catch(() => {});
-    initTrackPlayer().then(() => setTrackPlayerReady(true));
   }, []);
 
   // Register for push notifications (for price alerts)
@@ -4633,10 +4593,13 @@ function AppContent() {
 
   // Stop Troy's TTS playback
   const stopTroyAudio = async () => {
-    try {
-      await TrackPlayer.stop();
-      await TrackPlayer.reset();
-    } catch {}
+    if (currentSoundRef.current) {
+      try {
+        await currentSoundRef.current.stopAsync();
+        await currentSoundRef.current.unloadAsync();
+      } catch {}
+      currentSoundRef.current = null;
+    }
     setPlayingMessageId(null);
     setIsPaused(false);
   };
@@ -4660,8 +4623,13 @@ function AppContent() {
 
       // Stop any active playback before recording
       console.log('[Voice] START: Stopping playback');
-      await TrackPlayer.stop().catch(() => {});
-      await TrackPlayer.reset().catch(() => {});
+      if (currentSoundRef.current) {
+        try {
+          await currentSoundRef.current.stopAsync();
+          await currentSoundRef.current.unloadAsync();
+        } catch {}
+        currentSoundRef.current = null;
+      }
       setPlayingMessageId(null);
       setIsPaused(false);
 
@@ -4827,58 +4795,50 @@ function AppContent() {
       return;
     }
 
+    // Unload any existing sound before starting a new one
+    if (currentSoundRef.current) {
+      try {
+        await currentSoundRef.current.stopAsync();
+        await currentSoundRef.current.unloadAsync();
+      } catch {}
+      currentSoundRef.current = null;
+    }
+
     try {
-      // Re-initialize TrackPlayer (may have been destroyed after previous playback)
-      await initTrackPlayer();
-      await TrackPlayer.reset();
-      setPlayingMessageId(messageId);
-
       const truncatedText = text.substring(0, 2000);
-      console.log('[Audio] Fetching TTS...');
-      const response = await fetch(`${API_BASE_URL}/v1/troy/speak`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: truncatedText, userId: supabaseUser?.id || 'anonymous' }),
+      const userId = supabaseUser?.id || 'anonymous';
+      const speakUrl = `${API_BASE_URL}/v1/troy/speak?text=${encodeURIComponent(truncatedText)}&userId=${encodeURIComponent(userId)}`;
+
+      console.log('[Audio] Streaming TTS via Audio.Sound...');
+      setPlayingMessageId(messageId);
+      setIsPaused(false);
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: speakUrl },
+        { shouldPlay: true, progressUpdateIntervalMillis: 500 }
+      );
+      currentSoundRef.current = sound;
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          sound.unloadAsync().catch(() => {});
+          if (currentSoundRef.current === sound) currentSoundRef.current = null;
+          setPlayingMessageId(null);
+          setIsPaused(false);
+        }
       });
-
-      if (response.status === 429) {
-        const err = await response.json().catch(() => ({}));
-        Alert.alert('Voice Limit', err.message || 'Daily voice limit reached. Upgrade to Gold for more.');
-        setPlayingMessageId(null);
-        return;
-      }
-      if (!response.ok) throw new Error(`TTS fetch failed: ${response.status}`);
-
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      console.log('[Audio] Received', bytes.length, 'bytes');
-
-      if (bytes.length < 100) throw new Error(`Audio too small (${bytes.length} bytes)`);
-
-      // Convert to base64 and write to cache file
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-      }
-      const fileUri = FileSystem.cacheDirectory + `troy-voice-${messageId}.mp3`;
-      await FileSystem.writeAsStringAsync(fileUri, btoa(binary), { encoding: FileSystem.EncodingType.Base64 });
-
-      // Play via TrackPlayer (enables lock screen controls + Dynamic Island)
-      await TrackPlayer.add({
-        id: messageId,
-        url: fileUri,
-        title: 'Troy',
-        artist: 'TroyStack',
-        artwork: Image.resolveAssetSource(require('./assets/icon.png')).uri,
-      });
-      await TrackPlayer.setVolume(1.0);
-      await TrackPlayer.play();
-      console.log('[Audio] Playing via TrackPlayer');
+      console.log('[Audio] Playing via Audio.Sound');
 
     } catch (error) {
-      console.log('[Audio] TTS error:', error.message);
+      const msg = error?.message || String(error);
+      console.log('[Audio] TTS error for message', messageId, ':', msg);
       setPlayingMessageId(null);
+      setIsPaused(false);
+      currentSoundRef.current = null;
+      const isNetwork = /network|fetch|connection|timeout|unreachable|load/i.test(msg);
+      if (isNetwork) {
+        Alert.alert('Voice Unavailable', 'Could not reach the voice service. Check your connection and try again.');
+      }
     }
   };
 
@@ -11678,13 +11638,20 @@ function AppContent() {
                   {/* Troy Voice — pause/resume/listen per message */}
                   {item.role === 'assistant' && (
                     <TouchableOpacity
-                      onPress={() => {
+                      onPress={async () => {
                         if (playingMessageId === item.id && !isPaused) {
-                          TrackPlayer.pause(); setIsPaused(true);
+                          if (currentSoundRef.current) {
+                            try { await currentSoundRef.current.pauseAsync(); } catch {}
+                          }
+                          setIsPaused(true);
                         } else if (playingMessageId === item.id && isPaused) {
-                          TrackPlayer.play(); setIsPaused(false);
+                          if (currentSoundRef.current) {
+                            try { await currentSoundRef.current.playAsync(); } catch {}
+                          }
+                          setIsPaused(false);
                         } else {
-                          setIsPaused(false); playTroyVoice(item.content, item.id);
+                          await stopTroyAudio();
+                          playTroyVoice(item.content, item.id);
                         }
                       }}
                       style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, paddingVertical: 4, paddingHorizontal: 8 }}
