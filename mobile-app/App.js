@@ -2311,7 +2311,6 @@ function AppContent() {
   }, [dealerMetal, showDealerPrices]);
 
   const [showTutorial, setShowTutorial] = useState(false);
-  const [showV20Tutorial, setShowV20Tutorial] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(null);
 
   // Screenshot Mode (dev only — for App Store screenshots)
@@ -3187,7 +3186,7 @@ function AppContent() {
 
   const loadData = async () => {
     try {
-      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedMidnightSnapshot, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, hasSeenV20Tutorial, storedAdvisorCount] = await Promise.all([
+      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedMidnightSnapshot, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, storedAdvisorCount] = await Promise.all([
         AsyncStorage.getItem('stack_silver'),
         AsyncStorage.getItem('stack_gold'),
         AsyncStorage.getItem('stack_platinum'),
@@ -3208,7 +3207,6 @@ function AppContent() {
         AsyncStorage.getItem('stack_last_gold_milestone_reached'),
         AsyncStorage.getItem('stack_guest_mode'),
         AsyncStorage.getItem('stack_hide_widget_values'),
-        AsyncStorage.getItem('has_seen_v2_0_tutorial'),
         AsyncStorage.getItem('stack_advisor_count'),
       ]);
 
@@ -3278,11 +3276,6 @@ function AppContent() {
       // Show tutorial if user hasn't seen it
       if (!hasSeenTutorial) {
         setShowTutorial(true);
-      }
-
-      // Show v2.0 tutorial if user hasn't seen it (and has seen the original)
-      if (hasSeenTutorial && !hasSeenV20Tutorial) {
-        setShowV20Tutorial(true);
       }
 
       // Load advisor daily question count (reset if from a different day)
@@ -4326,26 +4319,6 @@ function AppContent() {
       setShowTutorial(false);
     }
   };
-
-  // v2.0 Tutorial completion handler
-  const handleV20TutorialComplete = async () => {
-    try {
-      await AsyncStorage.setItem('has_seen_v2_0_tutorial', 'true');
-      setShowV20Tutorial(false);
-    } catch (error) {
-      if (__DEV__) console.error('Error saving v2.0 tutorial status:', error);
-      setShowV20Tutorial(false);
-    }
-  };
-
-  // v2.3 Tutorial slides
-  const v20TutorialSlides = [
-    { emoji: '', emojiComponent: <View style={{ marginBottom: 20 }}><Image source={TROY_AVATAR} style={{ width: 72, height: 72, borderRadius: 36 }} /></View>, title: 'TroyStack Rebrand', description: 'New name, new icon, new identity. Same powerful stack tracker you love.' },
-    { emoji: '🔔', title: 'Cleaner Notifications', description: 'Streamlined notification settings. Less noise, more signal.' },
-    { emoji: '☀️', title: "Troy's Daily Brief", description: 'One personalized morning briefing from Troy. Market moves, stack insights, and what it means for you.' },
-    { emoji: '', emojiComponent: <View style={{ marginBottom: 20 }}><GlobeIcon size={72} color="#D4A843" /></View>, title: 'troystack.com Is Live', description: 'Access your stack on the web at troystack.com. Plus troystack.ai is coming soon.' },
-    { emoji: '✅', title: "You're All Set!", description: 'Enjoy TroyStack v2.3. Built for stackers, by stackers.', highlight: 'Stack on! 🪙' },
-  ];
 
   // Troy — persistent conversation API helpers
   const troyAPI = {
@@ -8037,7 +8010,7 @@ function AppContent() {
       pdfDoc.setTitle('TroyStack Stack Ledger');
       pdfDoc.setAuthor('TroyStack');
       pdfDoc.setSubject(`Stack ledger (Ref: ${pin})`);
-      pdfDoc.setCreator('TroyStack v3.0.1');
+      pdfDoc.setCreator(`TroyStack v${appVersion}`);
       pdfDoc.setKeywords(['troystack', 'ledger', `ref-${pin}`]);
 
       const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -11080,17 +11053,6 @@ function AppContent() {
                   isLast={false}
                 />
                 <RowSeparator />
-                <SettingsRow
-                  label="What's New in v2.3"
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    AsyncStorage.removeItem('has_seen_v2_0_tutorial');
-                    setShowV20Tutorial(true);
-                  }}
-                  isFirst={false}
-                  isLast={false}
-                />
-                <RowSeparator />
                 {/* Version - triple-tap in __DEV__ to toggle screenshot mode */}
                 <TouchableOpacity
                   onPress={__DEV__ ? handleVersionTap : undefined}
@@ -11106,7 +11068,7 @@ function AppContent() {
                   }}>
                   <Text style={{ color: colors.text, fontSize: scaledFonts.normal }}>Version</Text>
                   <Text style={{ color: screenshotMode ? '#D4A843' : colors.muted, fontSize: scaledFonts.normal }}>
-                    2.1.0{screenshotMode ? ' 📸' : ''}
+                    {appVersion}{screenshotMode ? ' 📸' : ''}
                   </Text>
                 </TouchableOpacity>
                 <RowSeparator />
@@ -14386,13 +14348,6 @@ function AppContent() {
       <Tutorial
         visible={showTutorial}
         onComplete={handleTutorialComplete}
-      />
-
-      {/* v2.0 Update Tutorial */}
-      <Tutorial
-        visible={showV20Tutorial}
-        onComplete={handleV20TutorialComplete}
-        slides={v20TutorialSlides}
       />
 
       {/* Old custom drawer removed — replaced by React Navigation drawer */}
