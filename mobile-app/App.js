@@ -32,6 +32,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import PieChart from './src/components/PieChart';
+import ProgressBar from './src/components/ProgressBar';
 // LineChart removed — all charts now use ScrubChart
 import Svg, { Path, Circle, Line, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { Swipeable, GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -1165,21 +1166,6 @@ const FloatingInput = ({ label, value, onChangeText, placeholder, keyboardType, 
           returnKeyType="done"
           onSubmitEditing={Keyboard.dismiss}
         />
-      </View>
-    </View>
-  );
-};
-
-const ProgressBar = ({ value, max, color, label }) => {
-  const percentage = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  return (
-    <View style={{ marginBottom: 12 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-        <Text style={{ color: '#a1a1aa', fontSize: 12 }}>{label}</Text>
-        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{percentage.toFixed(0)}%</Text>
-      </View>
-      <View style={{ height: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4 }}>
-        <View style={{ height: 8, width: `${percentage}%`, backgroundColor: color, borderRadius: 4 }} />
       </View>
     </View>
   );
