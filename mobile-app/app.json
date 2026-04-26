@@ -2,7 +2,7 @@
   "expo": {
     "name": "TroyStack",
     "slug": "stack-tracker-pro",
-    "version": "3.0.2",
+    "version": "3.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

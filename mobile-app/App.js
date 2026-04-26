@@ -3595,7 +3595,7 @@ function AppContent() {
   useEffect(() => { authenticate(); }, []);
 
   useEffect(() => {
-    // Set audio mode ONCE — playAndRecord handles both, never toggle again
+    // Set audio mode ONCE at mount — interruptionModeIOS pauses other audio during Troy playback. Never toggle again.
     Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: InterruptionModeIOS.DoNotMix, shouldDuckAndroid: true, playThroughEarpieceAndroid: false }).catch(() => {});
   }, []);
 
