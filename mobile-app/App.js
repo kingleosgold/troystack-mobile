@@ -22,7 +22,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS } from 'expo-av';
 import Purchases from 'react-native-purchases';
 import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
@@ -3596,7 +3596,7 @@ function AppContent() {
 
   useEffect(() => {
     // Set audio mode ONCE — playAndRecord handles both, never toggle again
-    Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: true }).catch(() => {});
+    Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: InterruptionModeIOS.DoNotMix, shouldDuckAndroid: true, playThroughEarpieceAndroid: false }).catch(() => {});
   }, []);
 
   // Register for push notifications (for price alerts)
