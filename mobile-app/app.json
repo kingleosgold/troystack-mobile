@@ -2,7 +2,7 @@
   "expo": {
     "name": "TroyStack",
     "slug": "stack-tracker-pro",
-    "version": "3.0.4",
+    "version": "3.0.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -22,7 +22,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stacktrackerpro.app",
-      "buildNumber": "103",
+      "buildNumber": "104",
       "requireFullScreen": false,
       "usesAppleSignIn": true,
       "appleTeamId": "3BKELS5FG9",
