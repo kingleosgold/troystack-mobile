@@ -89,4 +89,4 @@ Thumbs.db
 # Misc
 *.pem
 .cache/
-app-js-recon.md
+*-recon.md
