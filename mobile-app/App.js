@@ -23,6 +23,7 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio, InterruptionModeIOS } from 'expo-av';
+import { setAudioModeAsync as setAudioModeAsyncV2 } from 'expo-audio';
 import Purchases from 'react-native-purchases';
 import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
@@ -3596,8 +3597,23 @@ function AppContent() {
   useEffect(() => { authenticate(); }, []);
 
   useEffect(() => {
-    // Set audio mode at mount: pure playback (allowsRecordingIOS: false) so audio routes to speaker, not earpiece. Recording flips allowsRecordingIOS true/false around start/stop boundaries.
-    Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: InterruptionModeIOS.DoNotMix, shouldDuckAndroid: true, playThroughEarpieceAndroid: false }).catch(() => {});
+    // Set audio mode at mount via expo-audio (eager iOS category control).
+    // expo-av's setAudioModeAsync was unable to set iosCategory at all;
+    // expo-audio applies setCategory directly to AVAudioSession on this call.
+    // Recording boundaries still toggle expo-av's allowsRecordingIOS for now —
+    // those will migrate to expo-audio in a follow-up PR.
+    // Keys map: allowsRecordingIOS→allowsRecording, playsInSilentModeIOS→playsInSilentMode,
+    // staysActiveInBackground→shouldPlayInBackground, interruptionModeIOS→interruptionMode (string union),
+    // playThroughEarpieceAndroid→shouldRouteThroughEarpiece. shouldDuckAndroid folds into interruptionMode.
+    setAudioModeAsyncV2({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
+    }).catch((e) => {
+      console.log('[Audio] setAudioModeAsync (expo-audio) failed:', e?.message);
+    });
   }, []);
 
   // Register for push notifications (for price alerts)
