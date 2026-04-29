@@ -111,7 +111,8 @@
         }
       ],
       "./plugins/withWidgetNativeModule.js",
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      "expo-audio"
     ],
     "extra": {
       "apiUrl": "https://api.stacktrackergold.com",
