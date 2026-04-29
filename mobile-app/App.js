@@ -23,6 +23,7 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio, InterruptionModeIOS } from 'expo-av';
+import TrackPlayer from 'react-native-track-player';
 import Purchases from 'react-native-purchases';
 import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
@@ -3596,8 +3597,32 @@ function AppContent() {
   useEffect(() => { authenticate(); }, []);
 
   useEffect(() => {
-    // Set audio mode at mount: pure playback (allowsRecordingIOS: false) so audio routes to speaker, not earpiece. Recording flips allowsRecordingIOS true/false around start/stop boundaries.
-    Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, interruptionModeIOS: InterruptionModeIOS.DoNotMix, shouldDuckAndroid: true, playThroughEarpieceAndroid: false }).catch(() => {});
+    // Configure iOS AVAudioSession category at the native level via TrackPlayer.
+    // expo-av 16.x does not expose iosCategory, so we use TrackPlayer purely as
+    // a session configuration utility. After setupPlayer runs once, Audio.Sound
+    // playback inherits the playAndRecord category with defaultToSpeaker.
+    // We do NOT use TrackPlayer for actual playback — expo-av handles that.
+    TrackPlayer.setupPlayer({
+      iosCategory: 'playAndRecord',
+      iosCategoryMode: 'spokenAudio',
+      iosCategoryOptions: ['allowBluetooth', 'defaultToSpeaker'],
+      autoHandleInterruptions: true,
+    }).catch((e) => {
+      // setupPlayer throws "player has already been initialized" on hot reload.
+      // That's fine — the category persists from the first call.
+      console.log('[Audio] TrackPlayer.setupPlayer:', e?.message);
+    });
+
+    // expo-av-level audio mode. allowsRecordingIOS toggled true/false around
+    // recording boundaries (see startVoiceRecording / stopVoiceRecording).
+    Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    }).catch(() => {});
   }, []);
 
   // Register for push notifications (for price alerts)
