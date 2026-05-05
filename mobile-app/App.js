@@ -4728,12 +4728,44 @@ function AppContent() {
       const userId = supabaseUser?.id || 'anonymous';
       const speakUrl = `${API_BASE_URL}/v1/troy/speak?text=${encodeURIComponent(truncatedText)}&userId=${encodeURIComponent(userId)}`;
 
-      console.log('[Audio] Streaming TTS via Audio.Sound...');
+      console.log('[Audio] Fetching TTS bytes...');
       setPlayingMessageId(messageId);
       setIsPaused(false);
 
+      // Fetch the audio bytes and write to a local file. AVPlayer (iOS's
+      // streaming backend) loads remote URIs but does not reliably render
+      // them to any output route — symptom: pill timer ticks, didJustFinish
+      // fires, no audio heard. AVAudioPlayer (iOS's local-file backend)
+      // does not have this failure mode. v3.0.0 used this pattern; the
+      // Audio.Sound migration switched to streaming and broke voice.
+      const response = await fetch(speakUrl);
+      if (!response.ok) {
+        throw new Error(`TTS fetch failed: ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+
+      // Convert to base64 for FileSystem.writeAsStringAsync
+      let binary = '';
+      const bytes = new Uint8Array(arrayBuffer);
+      const chunkSize = 0x8000; // process in 32KB chunks to avoid call-stack issues
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(
+          null,
+          bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+        );
+      }
+      // eslint-disable-next-line no-undef
+      const base64 = global.btoa ? global.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+
+      const fileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}.mp3`;
+      await FileSystem.writeAsStringAsync(fileUri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      console.log('[Audio] Loading local file:', fileUri);
+
       const { sound } = await Audio.Sound.createAsync(
-        { uri: speakUrl },
+        { uri: fileUri },
         { shouldPlay: true, progressUpdateIntervalMillis: 500 }
       );
       currentSoundRef.current = sound;
@@ -4744,9 +4776,11 @@ function AppContent() {
           if (currentSoundRef.current === sound) currentSoundRef.current = null;
           setPlayingMessageId(null);
           setIsPaused(false);
+          // Clean up the cached file after playback to avoid disk bloat
+          FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
         }
       });
-      console.log('[Audio] Playing via Audio.Sound');
+      console.log('[Audio] Playing local file via Audio.Sound');
 
     } catch (error) {
       const msg = error?.message || String(error);
