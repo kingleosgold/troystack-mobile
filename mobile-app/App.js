@@ -4726,6 +4726,12 @@ function AppContent() {
     // Unload any existing sound + clean its cache file before starting a new one
     await unloadCurrentTroySound();
 
+    // Track this invocation's cache file URI in a function-local variable so the
+    // catch block cleans up THIS invocation's file specifically — never reads
+    // currentSoundFileRef, which may have been replaced by a newer overlapping
+    // playTroyVoice call by the time this function's catch runs.
+    let invocationFileUri = null;
+
     try {
       const truncatedText = text.substring(0, 2000);
       const userId = supabaseUser?.id || 'anonymous';
@@ -4760,16 +4766,16 @@ function AppContent() {
       // eslint-disable-next-line no-undef
       const base64 = global.btoa ? global.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
 
-      const fileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}.mp3`;
-      await FileSystem.writeAsStringAsync(fileUri, base64, {
+      invocationFileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}.mp3`;
+      await FileSystem.writeAsStringAsync(invocationFileUri, base64, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      currentSoundFileRef.current = fileUri;
+      currentSoundFileRef.current = invocationFileUri;
 
-      console.log('[Audio] Loading local file:', fileUri);
+      console.log('[Audio] Loading local file:', invocationFileUri);
 
       const { sound } = await Audio.Sound.createAsync(
-        { uri: fileUri },
+        { uri: invocationFileUri },
         { shouldPlay: true, progressUpdateIntervalMillis: 500 }
       );
       currentSoundRef.current = sound;
@@ -4778,26 +4784,40 @@ function AppContent() {
         if (status.didJustFinish) {
           sound.unloadAsync().catch(() => {});
           if (currentSoundRef.current === sound) currentSoundRef.current = null;
-          if (currentSoundFileRef.current === fileUri) currentSoundFileRef.current = null;
+          // Only clear the global file ref if it still points at OUR file —
+          // a newer overlapping playback may have already taken over the ref.
+          if (currentSoundFileRef.current === invocationFileUri) currentSoundFileRef.current = null;
           setPlayingMessageId(null);
           setIsPaused(false);
-          // Clean up the cached file after playback to avoid disk bloat
-          FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
+          // Clean up THIS invocation's cached file (safe to do unconditionally —
+          // even if another playback has taken over the ref, we still want to
+          // delete the file that belonged to this completed playback).
+          FileSystem.deleteAsync(invocationFileUri, { idempotent: true }).catch(() => {});
         }
       });
       console.log('[Audio] Playing local file via Audio.Sound');
 
     } catch (error) {
-      // Clean up any partially-written cache file from this attempt
-      if (currentSoundFileRef.current) {
-        FileSystem.deleteAsync(currentSoundFileRef.current, { idempotent: true }).catch(() => {});
-        currentSoundFileRef.current = null;
+      // Clean up THIS invocation's cache file (if we got far enough to write one).
+      // Use the function-local invocationFileUri — never read currentSoundFileRef
+      // here, because an overlapping newer playTroyVoice call may have updated
+      // the global ref to point at a different (active) playback's file.
+      if (invocationFileUri) {
+        FileSystem.deleteAsync(invocationFileUri, { idempotent: true }).catch(() => {});
+        // Only clear the global ref if it still points at OUR file. If a newer
+        // playback has taken over, leave the global ref alone — it correctly
+        // points at the active playback.
+        if (currentSoundFileRef.current === invocationFileUri) {
+          currentSoundFileRef.current = null;
+        }
       }
       const msg = error?.message || String(error);
       console.log('[Audio] TTS error for message', messageId, ':', msg);
       setPlayingMessageId(null);
       setIsPaused(false);
-      currentSoundRef.current = null;
+      // Note: we deliberately do NOT unconditionally clear currentSoundRef.current
+      // here — same race risk as the file ref. The next playTroyVoice or
+      // stopTroyAudio call will clean up correctly via unloadCurrentTroySound.
       const isNetwork = /network|fetch|connection|timeout|unreachable|load/i.test(msg);
       if (isNetwork) {
         Alert.alert('Voice Unavailable', 'Could not reach the voice service. Check your connection and try again.');
