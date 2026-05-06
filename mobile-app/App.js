@@ -4766,7 +4766,7 @@ function AppContent() {
       // eslint-disable-next-line no-undef
       const base64 = global.btoa ? global.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
 
-      invocationFileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}.mp3`;
+      invocationFileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}-${Date.now()}.mp3`;
       await FileSystem.writeAsStringAsync(invocationFileUri, base64, {
         encoding: FileSystem.EncodingType.Base64,
       });
