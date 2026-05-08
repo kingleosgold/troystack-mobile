@@ -116,22 +116,16 @@ const updateWidgetBackground = async (priceData) => {
     const goldValue = totalGoldOzt * priceData.gold;
     const totalMeltValue = silverValue + goldValue;
 
-    // Load midnight snapshot for daily change calculation
-    const midnightSnapshotStr = await AsyncStorage.getItem('stack_midnight_snapshot');
-    let dailyChangeAmount = 0;
-    let dailyChangePercent = 0;
-
-    if (midnightSnapshotStr) {
-      try {
-        const midnight = JSON.parse(midnightSnapshotStr);
-        if (midnight.totalMeltValue && midnight.totalMeltValue > 0) {
-          dailyChangeAmount = totalMeltValue - midnight.totalMeltValue;
-          dailyChangePercent = (dailyChangeAmount / midnight.totalMeltValue) * 100;
-        }
-      } catch (e) {
-        if (__DEV__) console.log('[BackgroundFetch] Error parsing midnight snapshot');
-      }
-    }
+    // Daily change: derive from priceData.change.{metal}.percent on a yesterday-close basis.
+    // Mirrors the Dashboard "Today's change" headline (App.js compute block). Pre-today
+    // purchase filtering is unavailable in background context, so this uses all current items.
+    const silverPctChange = priceData.change?.silver?.percent || 0;
+    const goldPctChange = priceData.change?.gold?.percent || 0;
+    const silverPrevClose = silverPctChange !== 0 ? priceData.silver / (1 + silverPctChange / 100) : priceData.silver;
+    const goldPrevClose = goldPctChange !== 0 ? priceData.gold / (1 + goldPctChange / 100) : priceData.gold;
+    const yesterdayStackValue = (totalSilverOzt * silverPrevClose) + (totalGoldOzt * goldPrevClose);
+    const dailyChangeAmount = totalMeltValue - yesterdayStackValue;
+    const dailyChangePercent = yesterdayStackValue > 0 ? (dailyChangeAmount / yesterdayStackValue) * 100 : 0;
 
     // Prepare widget data
     const widgetData = {

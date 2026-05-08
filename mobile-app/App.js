@@ -2251,11 +2251,6 @@ function AppContent() {
   const [stackGroupBy, setStackGroupBy] = useState('all'); // 'all', 'metal', 'type', 'dealer'
   const [collapsedSections, setCollapsedSections] = useState(new Set());
 
-  // Daily Snapshot State - stores oz counts and spot prices at midnight
-  // This allows recalculating baseline when items are added/removed
-  const [midnightSnapshot, setMidnightSnapshot] = useState(null);
-  // Format: { silverOzt, goldOzt, silverSpot, goldSpot, date, timestamp }
-
   // Entitlements (__DEV__ is automatically false in production builds, so this never affects real users)
   const [hasGold, setHasGold] = useState(__DEV__ ? true : false);
   const [userTier, setUserTier] = useState(__DEV__ ? 'gold' : 'free'); // 'free' or 'gold'
@@ -2553,7 +2548,6 @@ function AppContent() {
     setPriceTimestamp(null);
     setSpotPricesLive(false);
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
-    setMidnightSnapshot(null);
     setTroyMessages([]);
     setTroyInputText('');
     setTroyConversations([]);
@@ -2888,8 +2882,13 @@ function AppContent() {
   const avgPlatinumCostPerOz = totalPlatinumOzt > 0 ? (platinumCostBasis / totalPlatinumOzt) : 0;
   const avgPalladiumCostPerOz = totalPalladiumOzt > 0 ? (palladiumCostBasis / totalPalladiumOzt) : 0;
 
-  // Daily change calculation - uses holdings owned BEFORE today × spot price changes
-  // Holdings purchased today should NOT affect Today's Change (user didn't own them at midnight)
+  // Daily change calculation — uses holdings owned BEFORE today × spot moves vs. yesterday's close.
+  // Holdings purchased today should NOT affect Today's Change (user didn't own them at yesterday's close).
+  // Source of truth: spotChange.{metal}.percent from /v1/prices, computed server-side as
+  // "current spot vs. last trading day's close" (calculateChanges in price-fetcher.js). The
+  // previous-close per metal is derived from current spot and percent: prev = current / (1 + pct/100).
+  // This shares one source of truth with the Live Spot cards and Troy's narrative — replacing
+  // the prior persisted-baseline approach that drifted across calendar days.
   const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
 
   // Filter to holdings that existed before today (purchased before today or no date = assume pre-existing)
@@ -2906,27 +2905,33 @@ function AppContent() {
     .filter(i => !i.datePurchased || i.datePurchased < todayStr)
     .reduce((sum, i) => sum + (i.ozt * i.quantity), 0);
 
-  // Midnight baseline = pre-today holdings × midnight spot prices
-  const midnightBaseline = midnightSnapshot
-    ? (preTodaySilverOzt * midnightSnapshot.silverSpot) + (preTodayGoldOzt * midnightSnapshot.goldSpot) + (preTodayPlatinumOzt * (midnightSnapshot.platinumSpot || platinumSpot)) + (preTodayPalladiumOzt * (midnightSnapshot.palladiumSpot || palladiumSpot))
-    : null;
+  // Per-metal yesterday-close, derived from current spot and the percent move.
+  // When percent is 0 (no change data yet, or genuinely flat), prevClose collapses
+  // to current spot and that metal contributes 0 to today's change.
+  const silverPctChange = spotChange?.silver?.percent || 0;
+  const goldPctChange = spotChange?.gold?.percent || 0;
+  const platinumPctChange = spotChange?.platinum?.percent || 0;
+  const palladiumPctChange = spotChange?.palladium?.percent || 0;
 
-  // Current value of pre-today holdings at live prices
-  const preTodayCurrentValue = (preTodaySilverOzt * silverSpot) + (preTodayGoldOzt * goldSpot) + (preTodayPlatinumOzt * platinumSpot) + (preTodayPalladiumOzt * palladiumSpot);
+  const silverPrevClose = silverPctChange !== 0 ? silverSpot / (1 + silverPctChange / 100) : silverSpot;
+  const goldPrevClose = goldPctChange !== 0 ? goldSpot / (1 + goldPctChange / 100) : goldSpot;
+  const platinumPrevClose = platinumPctChange !== 0 ? platinumSpot / (1 + platinumPctChange / 100) : platinumSpot;
+  const palladiumPrevClose = palladiumPctChange !== 0 ? palladiumSpot / (1 + palladiumPctChange / 100) : palladiumSpot;
 
-  const dailyChange = midnightBaseline !== null ? (preTodayCurrentValue - midnightBaseline) : 0;
-  const dailyChangePct = (midnightBaseline !== null && midnightBaseline > 0) ? ((dailyChange / midnightBaseline) * 100) : 0;
-  const isDailyChangePositive = dailyChange >= 0;
+  const yesterdayStackValue =
+    (preTodaySilverOzt * silverPrevClose) +
+    (preTodayGoldOzt * goldPrevClose) +
+    (preTodayPlatinumOzt * platinumPrevClose) +
+    (preTodayPalladiumOzt * palladiumPrevClose);
 
-  // Show daily change only if:
-  // 1. We have a midnight snapshot
-  // 2. The snapshot date is today
-  // 3. We have live prices (not stale defaults)
-  const isTodaySnapshot = midnightSnapshot?.date === new Date().toDateString();
-  const showDailyChange = midnightSnapshot !== null
-    && midnightBaseline > 0
-    && isTodaySnapshot
-    && spotPricesLive;
+  const preTodayCurrentValue =
+    (preTodaySilverOzt * silverSpot) +
+    (preTodayGoldOzt * goldSpot) +
+    (preTodayPlatinumOzt * platinumSpot) +
+    (preTodayPalladiumOzt * palladiumSpot);
+
+  const dailyChange = preTodayCurrentValue - yesterdayStackValue;
+  const dailyChangePct = yesterdayStackValue > 0 ? ((dailyChange / yesterdayStackValue) * 100) : 0;
 
   // Speculation
   const specSilverNum = parseFloat(specSilverPrice) || silverSpot;
@@ -3052,7 +3057,11 @@ function AppContent() {
 
   const loadData = async () => {
     try {
-      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedMidnightSnapshot, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, storedAdvisorCount] = await Promise.all([
+      // One-shot cleanup: remove deprecated midnightSnapshot baseline (May 2026).
+      // Safe to run repeatedly; can be removed in a future build once all clients have launched at least once.
+      AsyncStorage.removeItem('stack_midnight_snapshot').catch(() => {});
+
+      const [silver, gold, platinum, palladium, silverS, goldS, platinumS, palladiumS, timestamp, hasSeenTutorial, storedTheme, storedChangeDisplayMode, storedLargeText, storedSilverMilestone, storedGoldMilestone, storedLastSilverReached, storedLastGoldReached, storedGuestMode, storedHideWidgetValues, storedAdvisorCount] = await Promise.all([
         AsyncStorage.getItem('stack_silver'),
         AsyncStorage.getItem('stack_gold'),
         AsyncStorage.getItem('stack_platinum'),
@@ -3063,7 +3072,6 @@ function AppContent() {
         AsyncStorage.getItem('stack_palladium_spot'),
         AsyncStorage.getItem('stack_price_timestamp'),
         AsyncStorage.getItem('stack_has_seen_tutorial'),
-        AsyncStorage.getItem('stack_midnight_snapshot'),
         AsyncStorage.getItem('stack_theme_preference'),
         AsyncStorage.getItem('stack_spot_change_display_mode'),
         AsyncStorage.getItem('stack_large_text'),
@@ -3094,13 +3102,6 @@ function AppContent() {
       if (platinumS) setPlatinumSpot(parseFloat(platinumS) || 2100);
       if (palladiumS) setPalladiumSpot(parseFloat(palladiumS) || 1740);
       if (timestamp) setPriceTimestamp(timestamp);
-      if (storedMidnightSnapshot) {
-        try {
-          setMidnightSnapshot(JSON.parse(storedMidnightSnapshot));
-        } catch (e) {
-          if (__DEV__) console.error('Failed to parse midnight snapshot');
-        }
-      }
       if (storedTheme && ['system', 'light', 'dark'].includes(storedTheme)) {
         setThemePreference(storedTheme);
       }
@@ -4039,65 +4040,9 @@ function AppContent() {
     }
   }, [hasGold, hasLifetimeAccess]);
 
-  // Daily Snapshot: Check if it's a new day and update midnight snapshot
-  // Stores oz counts and spot prices so we can recalculate baseline when items change
-  useEffect(() => {
-    const checkAndUpdateMidnightSnapshot = async () => {
-      // IMPORTANT: Wait until data is loaded AND we have live spot prices from API
-      // This prevents saving wrong values before prices are fetched
-      if (!isAuthenticated || !dataLoaded || !spotPricesLive) {
-        if (__DEV__ && !spotPricesLive && dataLoaded) {
-          if (__DEV__) console.log('📸 Snapshot deferred: waiting for live spot prices...');
-        }
-        return;
-      }
-
-      // Only update if we have actual portfolio data (items loaded)
-      // If totalMeltValue is 0 with no items, that's valid - but if items exist, value should be > 0
-      const hasItems = silverItems.length > 0 || goldItems.length > 0 || platinumItems.length > 0 || palladiumItems.length > 0;
-      if (hasItems && totalMeltValue === 0) {
-        // Items exist but value is 0 - something is wrong, skip
-        if (__DEV__) console.log('📸 Snapshot skipped: items exist but value is 0');
-        return;
-      }
-
-      const today = new Date().toDateString(); // e.g., "Mon Dec 29 2025"
-
-      // If no snapshot or it's a new day, create new snapshot
-      if (!midnightSnapshot || midnightSnapshot.date !== today) {
-        // Use previous day's closing prices if available (from backend change data)
-        // This ensures "Today's Change" reflects actual movement since yesterday's close
-        // Fall back to current prices only if prevClose is not available
-        const baselineSilverSpot = spotChange.silver.prevClose ?? silverSpot;
-        const baselineGoldSpot = spotChange.gold.prevClose ?? goldSpot;
-        const baselinePlatinumSpot = spotChange.platinum?.prevClose ?? platinumSpot;
-        const baselinePalladiumSpot = spotChange.palladium?.prevClose ?? palladiumSpot;
-
-        const snapshot = {
-          silverOzt: totalSilverOzt,
-          goldOzt: totalGoldOzt,
-          platinumOzt: totalPlatinumOzt,
-          palladiumOzt: totalPalladiumOzt,
-          silverSpot: baselineSilverSpot,
-          goldSpot: baselineGoldSpot,
-          platinumSpot: baselinePlatinumSpot,
-          palladiumSpot: baselinePalladiumSpot,
-          date: today,
-          timestamp: new Date().toISOString(),
-        };
-
-        await AsyncStorage.setItem('stack_midnight_snapshot', JSON.stringify(snapshot));
-        setMidnightSnapshot(snapshot);
-
-        const snapshotValue = (totalSilverOzt * baselineSilverSpot) + (totalGoldOzt * baselineGoldSpot) + (totalPlatinumOzt * baselinePlatinumSpot) + (totalPalladiumOzt * baselinePalladiumSpot);
-        const usingPrevClose = spotChange.silver.prevClose != null;
-        if (__DEV__) console.log(`📸 Daily snapshot: ${totalSilverOzt.toFixed(2)}oz Ag @ $${baselineSilverSpot}, ${totalGoldOzt.toFixed(3)}oz Au @ $${baselineGoldSpot} = $${snapshotValue.toFixed(2)} (${usingPrevClose ? 'prev close' : 'current'})`);
-      }
-    };
-
-    // Check on app open and when prices are loaded
-    checkAndUpdateMidnightSnapshot();
-  }, [isAuthenticated, dataLoaded, spotPricesLive, midnightSnapshot, totalSilverOzt, totalGoldOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, totalMeltValue, silverItems.length, goldItems.length, platinumItems.length, palladiumItems.length, spotChange]);
+  // (Daily snapshot effect removed May 2026 — Today's Change now derives from
+  // spotChange.{metal}.percent on each render, sharing a single source of truth
+  // with the Live Spot cards and Troy's narrative. See compute block above.)
 
   // Auto-refresh spot prices every 1 minute (when app is active)
   // Track previous app state to detect foreground transitions
@@ -5338,23 +5283,13 @@ function AppContent() {
     }
 
     try {
-      // Calculate daily change (only for holdings owned before today)
-      let dailyChangeAmt = 0;
-      let dailyChangePct = 0;
-
-      if (midnightSnapshot && spotPricesLive) {
-        // Use pre-calculated values from main calculations (excludes today's purchases)
-        const widgetMidnightBaseline = midnightBaseline;
-        if (widgetMidnightBaseline && widgetMidnightBaseline > 0) {
-          dailyChangeAmt = preTodayCurrentValue - widgetMidnightBaseline;
-          dailyChangePct = (dailyChangeAmt / widgetMidnightBaseline) * 100;
-        }
-      }
-
+      // Daily change for the widget mirrors the Dashboard "Today's change" headline.
+      // Top-level dailyChange / dailyChangePct are computed from spotChange.{metal}.percent
+      // on a yesterday-close basis (see compute block earlier in AppContent).
       const widgetPayload = {
         portfolioValue: totalMeltValue,
-        dailyChangeAmount: dailyChangeAmt,
-        dailyChangePercent: dailyChangePct,
+        dailyChangeAmount: spotPricesLive ? dailyChange : 0,
+        dailyChangePercent: spotPricesLive ? dailyChangePct : 0,
         goldSpot: goldSpot,
         silverSpot: silverSpot,
         goldChangeAmount: spotChange?.gold?.amount || 0,
