@@ -4677,6 +4677,17 @@ function AppContent() {
     // playTroyVoice call by the time this function's catch runs.
     let invocationFileUri = null;
 
+    // [voice] diagnostic timing instrumentation (chore PR; remove after the
+    // bottleneck is identified). Manual Date.now() deltas — no console.time.
+    // Declared outside the try block so the catch path can log partial
+    // timings; null entries indicate which step threw.
+    const t0 = Date.now();
+    let tFetch = null;
+    let tArrayBuffer = null;
+    let tBase64 = null;
+    let tFileWrite = null;
+    let tCreateAsync = null;
+
     try {
       const truncatedText = text.substring(0, 2000);
       const userId = supabaseUser?.id || 'anonymous';
@@ -4693,10 +4704,12 @@ function AppContent() {
       // does not have this failure mode. v3.0.0 used this pattern; the
       // Audio.Sound migration switched to streaming and broke voice.
       const response = await fetch(speakUrl);
+      tFetch = Date.now();
       if (!response.ok) {
         throw new Error(`TTS fetch failed: ${response.status}`);
       }
       const arrayBuffer = await response.arrayBuffer();
+      tArrayBuffer = Date.now();
 
       // Convert to base64 for FileSystem.writeAsStringAsync
       let binary = '';
@@ -4710,12 +4723,14 @@ function AppContent() {
       }
       // eslint-disable-next-line no-undef
       const base64 = global.btoa ? global.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+      tBase64 = Date.now();
 
       invocationFileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}-${Date.now()}.mp3`;
       await FileSystem.writeAsStringAsync(invocationFileUri, base64, {
         encoding: FileSystem.EncodingType.Base64,
       });
       currentSoundFileRef.current = invocationFileUri;
+      tFileWrite = Date.now();
 
       console.log('[Audio] Loading local file:', invocationFileUri);
 
@@ -4724,6 +4739,7 @@ function AppContent() {
         { shouldPlay: true, progressUpdateIntervalMillis: 500 }
       );
       currentSoundRef.current = sound;
+      tCreateAsync = Date.now();
 
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
@@ -4742,7 +4758,29 @@ function AppContent() {
       });
       console.log('[Audio] Playing local file via Audio.Sound');
 
+      // [voice] diagnostic timing summary — remove after the bottleneck is identified.
+      console.log('[voice] timings:', {
+        'voice:fetch': tFetch - t0,
+        'voice:arrayBuffer': tArrayBuffer - tFetch,
+        'voice:base64': tBase64 - tArrayBuffer,
+        'voice:fileWrite': tFileWrite - tBase64,
+        'voice:createAsync': tCreateAsync - tFileWrite,
+        'voice:total': tCreateAsync - t0,
+      });
+
     } catch (error) {
+      // [voice] diagnostic timing summary on the error path — null entries
+      // indicate which step threw. Logged FIRST so a thrown cleanup-handler
+      // doesn't lose the timing signal.
+      console.log('[voice] timings (error path):', {
+        'voice:fetch': tFetch !== null ? tFetch - t0 : null,
+        'voice:arrayBuffer': (tFetch !== null && tArrayBuffer !== null) ? tArrayBuffer - tFetch : null,
+        'voice:base64': (tArrayBuffer !== null && tBase64 !== null) ? tBase64 - tArrayBuffer : null,
+        'voice:fileWrite': (tBase64 !== null && tFileWrite !== null) ? tFileWrite - tBase64 : null,
+        'voice:createAsync': (tFileWrite !== null && tCreateAsync !== null) ? tCreateAsync - tFileWrite : null,
+        'voice:elapsed': Date.now() - t0,
+      });
+
       // Clean up THIS invocation's cache file (if we got far enough to write one).
       // Use the function-local invocationFileUri — never read currentSoundFileRef
       // here, because an overlapping newer playTroyVoice call may have updated
