@@ -19,6 +19,7 @@ import Constants from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
@@ -4684,8 +4685,7 @@ function AppContent() {
     const t0 = Date.now();
     let tFetch = null;
     let tArrayBuffer = null;
-    let tBase64 = null;
-    let tFileWrite = null;
+    let tWrite = null;
     let tCreateAsync = null;
 
     try {
@@ -4711,26 +4711,18 @@ function AppContent() {
       const arrayBuffer = await response.arrayBuffer();
       tArrayBuffer = Date.now();
 
-      // Convert to base64 for FileSystem.writeAsStringAsync
-      let binary = '';
-      const bytes = new Uint8Array(arrayBuffer);
-      const chunkSize = 0x8000; // process in 32KB chunks to avoid call-stack issues
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(
-          null,
-          bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
-        );
-      }
-      // eslint-disable-next-line no-undef
-      const base64 = global.btoa ? global.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
-      tBase64 = Date.now();
-
-      invocationFileUri = `${FileSystem.cacheDirectory}troy-voice-${messageId}-${Date.now()}.mp3`;
-      await FileSystem.writeAsStringAsync(invocationFileUri, base64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Direct binary write via expo-file-system's modern File/Paths API.
+      // Replaces a base64 round-trip that was the dominant mobile-side latency:
+      // a 200KB JS-side encode (Hermes string concat is O(n²)-ish) followed by
+      // a 270KB bridge text serialization that the native side base64-decoded
+      // back to bytes before writing. file.write(Uint8Array) ships bytes
+      // straight to disk — no encoding, no bridge text round-trip.
+      // See mobile-app/voice-latency-analysis-recon.md §3-§4.
+      const file = new File(Paths.cache, `troy-voice-${messageId}-${Date.now()}.mp3`);
+      file.write(new Uint8Array(arrayBuffer));
+      invocationFileUri = file.uri;
       currentSoundFileRef.current = invocationFileUri;
-      tFileWrite = Date.now();
+      tWrite = Date.now();
 
       console.log('[Audio] Loading local file:', invocationFileUri);
 
@@ -4762,9 +4754,8 @@ function AppContent() {
       console.log('[voice] timings:', {
         'voice:fetch': tFetch - t0,
         'voice:arrayBuffer': tArrayBuffer - tFetch,
-        'voice:base64': tBase64 - tArrayBuffer,
-        'voice:fileWrite': tFileWrite - tBase64,
-        'voice:createAsync': tCreateAsync - tFileWrite,
+        'voice:write': tWrite - tArrayBuffer,
+        'voice:createAsync': tCreateAsync - tWrite,
         'voice:total': tCreateAsync - t0,
       });
 
@@ -4775,9 +4766,8 @@ function AppContent() {
       console.log('[voice] timings (error path):', {
         'voice:fetch': tFetch !== null ? tFetch - t0 : null,
         'voice:arrayBuffer': (tFetch !== null && tArrayBuffer !== null) ? tArrayBuffer - tFetch : null,
-        'voice:base64': (tArrayBuffer !== null && tBase64 !== null) ? tBase64 - tArrayBuffer : null,
-        'voice:fileWrite': (tBase64 !== null && tFileWrite !== null) ? tFileWrite - tBase64 : null,
-        'voice:createAsync': (tFileWrite !== null && tCreateAsync !== null) ? tCreateAsync - tFileWrite : null,
+        'voice:write': (tArrayBuffer !== null && tWrite !== null) ? tWrite - tArrayBuffer : null,
+        'voice:createAsync': (tWrite !== null && tCreateAsync !== null) ? tCreateAsync - tWrite : null,
         'voice:elapsed': Date.now() - t0,
       });
 
