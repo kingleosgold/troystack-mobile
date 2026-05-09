@@ -4680,7 +4680,7 @@ function AppContent() {
     try {
       const truncatedText = text.substring(0, 2000);
       const userId = supabaseUser?.id || 'anonymous';
-      const speakUrl = `${API_BASE_URL}/v1/troy/speak?text=${encodeURIComponent(truncatedText)}&userId=${encodeURIComponent(userId)}`;
+      const speakUrl = `${API_BASE_URL}/v1/troy/speak?text=${encodeURIComponent(truncatedText)}&userId=${encodeURIComponent(userId)}&stream=1`;
 
       console.log('[Audio] Fetching TTS bytes...');
       setPlayingMessageId(messageId);
