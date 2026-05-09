@@ -8753,23 +8753,6 @@ function AppContent() {
                   const effPalladiumOzt = demoData ? 3.0 : totalPalladiumOzt;
                   const portfolioPoints = goldPts.map((g, i) => (effGoldOzt * g) + (effSilverOzt * (silverPts[i] || 0)) + (effPlatinumOzt * (effSparklineData.platinum[i] || 0)) + (effPalladiumOzt * (effSparklineData.palladium[i] || 0)));
 
-                  // Anchor sparkline baseline to yesterday's stack value (matches the headline
-                  // percentage's anchor — see PR #19 / dashboard-charts-recon.md §6 Option A).
-                  // Per-metal yesterday-close derived from current spot and percent move; demo-aware.
-                  // Falls back to portfolioPoints[0] when derived value is invalid (NaN / 0).
-                  const silverPctEff = effSpotChange?.silver?.percent || 0;
-                  const goldPctEff = effSpotChange?.gold?.percent || 0;
-                  const platinumPctEff = effSpotChange?.platinum?.percent || 0;
-                  const palladiumPctEff = effSpotChange?.palladium?.percent || 0;
-                  const effYesterdayStackValue =
-                    (effSilverOzt * (silverPctEff !== 0 ? effSilverSpot / (1 + silverPctEff / 100) : effSilverSpot)) +
-                    (effGoldOzt * (goldPctEff !== 0 ? effGoldSpot / (1 + goldPctEff / 100) : effGoldSpot)) +
-                    (effPlatinumOzt * (platinumPctEff !== 0 ? effPlatinumSpot / (1 + platinumPctEff / 100) : effPlatinumSpot)) +
-                    (effPalladiumOzt * (palladiumPctEff !== 0 ? effPalladiumSpot / (1 + palladiumPctEff / 100) : effPalladiumSpot));
-                  const headlineBaseline = (Number.isFinite(effYesterdayStackValue) && effYesterdayStackValue > 0)
-                    ? effYesterdayStackValue
-                    : portfolioPoints[0];
-
                   // When closed, derive color from frozen data trend; when open, use live daily change
                   const isUp = effMarketsClosed
                     ? portfolioPoints[portfolioPoints.length - 1] >= portfolioPoints[0]
@@ -8785,7 +8768,7 @@ function AppContent() {
                       gradientId="portfolioGrad"
                       formatValue={(v) => `$${formatCurrency(v, 0)}`}
                       label="Stack"
-                      baselineValue={headlineBaseline}
+                      baselineValue={portfolioPoints[0]}
                       style={{ marginBottom: 4 }}
                     />
                   );
@@ -8923,14 +8906,6 @@ function AppContent() {
                   {metalMovers.map((m, idx) => {
                     const metalKey = m.label.toLowerCase();
                     const points = effSparklineData?.[metalKey] || [];
-                    // Anchor sparkline baseline to this metal's yesterday-close (matches the card
-                    // percentage's anchor). prev = current / (1 + pct/100); falls back to points[0]
-                    // when pct is 0 (Pt/Pd backend data gap → baseline collapses to current spot)
-                    // or the derived value is non-finite.
-                    const metalPrevClose = m.pct !== 0 ? m.spot / (1 + m.pct / 100) : m.spot;
-                    const cardBaseline = (Number.isFinite(metalPrevClose) && metalPrevClose > 0)
-                      ? metalPrevClose
-                      : (points[0] !== undefined ? points[0] : 0);
                     // When closed, derive color from frozen data trend; when open, use live change %
                     const isUp = effMarketsClosed
                       ? (points.length >= 2 ? points[points.length - 1] >= points[0] : true)
@@ -8972,7 +8947,7 @@ function AppContent() {
                             gradientId={`metalGrad_${m.symbol}`}
                             formatValue={(v) => `$${m.symbol === 'Ag' ? v.toFixed(2) : formatCurrency(v, 0)}`}
                             label={m.label}
-                            baselineValue={cardBaseline}
+                            baselineValue={points[0]}
                             style={{ alignItems: 'center', marginBottom: 6 }}
                           />
                         )}
