@@ -3619,71 +3619,45 @@ function AppContent() {
     });
   }, []);
 
-  // Warm up the iOS AVAudioSession at mount by playing a silent asset once.
-  // The first call to Audio.Sound.createAsync after app launch triggers
-  // synchronous session activation, AVPlayer allocation, and decoder init —
-  // a documented expo-av cold-start cost (expo/expo#5947). By the time the
-  // user navigates to Troy chat and taps Listen, this warm-up has finished
-  // and the real playTroyVoice call avoids that cost.
+  // Warm up the iOS AVAudioSession at mount by loading (and immediately
+  // unloading) a silent asset. The first call to Audio.Sound.createAsync
+  // after app launch triggers synchronous session activation, AVPlayer
+  // allocation, and decoder init — a documented expo-av cold-start cost
+  // (expo/expo#5947). By the time the user navigates to Troy chat and
+  // taps Listen, this warm-up has finished and the real playTroyVoice
+  // call avoids that cost.
+  //
+  // We deliberately do NOT call playAsync. createAsync alone exercises
+  // the cold-start paths we need; playing would request audio focus,
+  // which (with our doNotMix interruptionMode) would pause users'
+  // Spotify/Podcasts on every app launch and could interfere with a
+  // concurrent recording. Load-only warm-up has zero downside risk: at
+  // worst it doesn't fully warm the session and the first real play is
+  // still slow (same as today), at best it eliminates the cold-start
+  // cost without any side effects.
   //
   // Failure tolerance: any error here is swallowed silently. Warm-up is
   // best-effort — the app must never break because the silent asset is
   // missing or AVAudioSession transiently refuses activation.
   useEffect(() => {
-    // Mirrors the mount-time useEffect's setAudioModeAsyncV2 config above.
-    // NORMAL = doNotMix (our app interrupts Spotify/Podcasts when Troy speaks).
-    // WARMUP = mixWithOthers — temporarily allow mixing for the 200ms silent
-    // warm-up so we don't pause other apps' audio on every app launch (Codex
-    // finding on PR #24: doNotMix during warm-up paused users' Spotify).
-    // Assumption: the preceding mount-time useEffect at App.js:~L3611 runs
-    // BEFORE this one (React runs useEffects in component-defined order on
-    // mount). If that ever changes, the warm-up could briefly run with the
-    // wrong initial mode — the restore in success/error paths still pegs us
-    // back to doNotMix, so the worst case is a 200ms mixing window.
-    const NORMAL_AUDIO_MODE = {
-      allowsRecording: false,
-      playsInSilentMode: true,
-      shouldPlayInBackground: true,
-      interruptionMode: 'doNotMix',
-      shouldRouteThroughEarpiece: false,
-    };
-    const WARMUP_AUDIO_MODE = { ...NORMAL_AUDIO_MODE, interruptionMode: 'mixWithOthers' };
-
     const warmUpAudioSession = async () => {
       let sound = null;
       try {
-        // Switch to mixWithOthers BEFORE play so iOS doesn't pause other apps.
-        await setAudioModeAsyncV2(WARMUP_AUDIO_MODE).catch(() => {});
-
         const result = await Audio.Sound.createAsync(
           require('./assets/silent.mp3'),
           { shouldPlay: false }
         );
         sound = result.sound;
-        await sound.setVolumeAsync(0);
-        // Register cleanup BEFORE playAsync — the asset is short enough
-        // that didJustFinish could fire before a post-play callback registration.
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            sound.unloadAsync().catch(() => {});
-            // Restore doNotMix now that warm-up finished — Troy must still
-            // interrupt other apps when he actually speaks.
-            setAudioModeAsyncV2(NORMAL_AUDIO_MODE).catch(() => {});
-          }
-        });
-        await sound.playAsync();
+        // Immediately unload — we don't need the Sound handle after the
+        // cold-start paths are exercised.
+        await sound.unloadAsync();
       } catch (e) {
         // Silently swallow — warm-up failure must never affect the app.
-        // If the Sound was allocated before the failure (e.g. setVolumeAsync
-        // or playAsync rejected), unload it here — didJustFinish will never
-        // fire on a Sound that never started, so without this it would leak
-        // until the JS context tears down.
+        // If createAsync succeeded but unloadAsync rejected, still try
+        // to free the Sound handle so it doesn't leak.
         if (sound) {
           sound.unloadAsync().catch(() => {});
         }
-        // Restore doNotMix on failure too — otherwise a failed warm-up would
-        // leave the app in mixWithOthers mode for the rest of the session.
-        setAudioModeAsyncV2(NORMAL_AUDIO_MODE).catch(() => {});
       }
     };
     warmUpAudioSession();
