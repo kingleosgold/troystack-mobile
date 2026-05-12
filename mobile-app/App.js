@@ -3630,9 +3630,31 @@ function AppContent() {
   // best-effort — the app must never break because the silent asset is
   // missing or AVAudioSession transiently refuses activation.
   useEffect(() => {
+    // Mirrors the mount-time useEffect's setAudioModeAsyncV2 config above.
+    // NORMAL = doNotMix (our app interrupts Spotify/Podcasts when Troy speaks).
+    // WARMUP = mixWithOthers — temporarily allow mixing for the 200ms silent
+    // warm-up so we don't pause other apps' audio on every app launch (Codex
+    // finding on PR #24: doNotMix during warm-up paused users' Spotify).
+    // Assumption: the preceding mount-time useEffect at App.js:~L3611 runs
+    // BEFORE this one (React runs useEffects in component-defined order on
+    // mount). If that ever changes, the warm-up could briefly run with the
+    // wrong initial mode — the restore in success/error paths still pegs us
+    // back to doNotMix, so the worst case is a 200ms mixing window.
+    const NORMAL_AUDIO_MODE = {
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
+    };
+    const WARMUP_AUDIO_MODE = { ...NORMAL_AUDIO_MODE, interruptionMode: 'mixWithOthers' };
+
     const warmUpAudioSession = async () => {
       let sound = null;
       try {
+        // Switch to mixWithOthers BEFORE play so iOS doesn't pause other apps.
+        await setAudioModeAsyncV2(WARMUP_AUDIO_MODE).catch(() => {});
+
         const result = await Audio.Sound.createAsync(
           require('./assets/silent.mp3'),
           { shouldPlay: false }
@@ -3644,6 +3666,9 @@ function AppContent() {
         sound.setOnPlaybackStatusUpdate((status) => {
           if (status.isLoaded && status.didJustFinish) {
             sound.unloadAsync().catch(() => {});
+            // Restore doNotMix now that warm-up finished — Troy must still
+            // interrupt other apps when he actually speaks.
+            setAudioModeAsyncV2(NORMAL_AUDIO_MODE).catch(() => {});
           }
         });
         await sound.playAsync();
@@ -3656,6 +3681,9 @@ function AppContent() {
         if (sound) {
           sound.unloadAsync().catch(() => {});
         }
+        // Restore doNotMix on failure too — otherwise a failed warm-up would
+        // leave the app in mixWithOthers mode for the rest of the session.
+        setAudioModeAsyncV2(NORMAL_AUDIO_MODE).catch(() => {});
       }
     };
     warmUpAudioSession();
