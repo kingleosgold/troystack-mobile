@@ -3619,6 +3619,39 @@ function AppContent() {
     });
   }, []);
 
+  // Warm up the iOS AVAudioSession at mount by playing a silent asset once.
+  // The first call to Audio.Sound.createAsync after app launch triggers
+  // synchronous session activation, AVPlayer allocation, and decoder init —
+  // a documented expo-av cold-start cost (expo/expo#5947). By the time the
+  // user navigates to Troy chat and taps Listen, this warm-up has finished
+  // and the real playTroyVoice call avoids that cost.
+  //
+  // Failure tolerance: any error here is swallowed silently. Warm-up is
+  // best-effort — the app must never break because the silent asset is
+  // missing or AVAudioSession transiently refuses activation.
+  useEffect(() => {
+    const warmUpAudioSession = async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require('./assets/silent.mp3'),
+          { shouldPlay: false }
+        );
+        await sound.setVolumeAsync(0);
+        // Register cleanup BEFORE playAsync — the asset is short enough
+        // that didJustFinish could fire before a post-play callback registration.
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.isLoaded && status.didJustFinish) {
+            sound.unloadAsync().catch(() => {});
+          }
+        });
+        await sound.playAsync();
+      } catch (e) {
+        // Silently swallow — warm-up failure must never affect the app.
+      }
+    };
+    warmUpAudioSession();
+  }, []);
+
   // Register for push notifications (for price alerts)
   const registerForPushNotifications = async () => {
     if (__DEV__) console.log('📱 [Push] registerForPushNotifications() called');
