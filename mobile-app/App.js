@@ -3631,11 +3631,13 @@ function AppContent() {
   // missing or AVAudioSession transiently refuses activation.
   useEffect(() => {
     const warmUpAudioSession = async () => {
+      let sound = null;
       try {
-        const { sound } = await Audio.Sound.createAsync(
+        const result = await Audio.Sound.createAsync(
           require('./assets/silent.mp3'),
           { shouldPlay: false }
         );
+        sound = result.sound;
         await sound.setVolumeAsync(0);
         // Register cleanup BEFORE playAsync — the asset is short enough
         // that didJustFinish could fire before a post-play callback registration.
@@ -3647,6 +3649,13 @@ function AppContent() {
         await sound.playAsync();
       } catch (e) {
         // Silently swallow — warm-up failure must never affect the app.
+        // If the Sound was allocated before the failure (e.g. setVolumeAsync
+        // or playAsync rejected), unload it here — didJustFinish will never
+        // fire on a Sound that never started, so without this it would leak
+        // until the JS context tears down.
+        if (sound) {
+          sound.unloadAsync().catch(() => {});
+        }
       }
     };
     warmUpAudioSession();
