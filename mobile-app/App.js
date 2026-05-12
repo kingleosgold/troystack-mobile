@@ -3619,6 +3619,50 @@ function AppContent() {
     });
   }, []);
 
+  // Warm up the iOS AVAudioSession at mount by loading (and immediately
+  // unloading) a silent asset. The first call to Audio.Sound.createAsync
+  // after app launch triggers synchronous session activation, AVPlayer
+  // allocation, and decoder init — a documented expo-av cold-start cost
+  // (expo/expo#5947). By the time the user navigates to Troy chat and
+  // taps Listen, this warm-up has finished and the real playTroyVoice
+  // call avoids that cost.
+  //
+  // We deliberately do NOT call playAsync. createAsync alone exercises
+  // the cold-start paths we need; playing would request audio focus,
+  // which (with our doNotMix interruptionMode) would pause users'
+  // Spotify/Podcasts on every app launch and could interfere with a
+  // concurrent recording. Load-only warm-up has zero downside risk: at
+  // worst it doesn't fully warm the session and the first real play is
+  // still slow (same as today), at best it eliminates the cold-start
+  // cost without any side effects.
+  //
+  // Failure tolerance: any error here is swallowed silently. Warm-up is
+  // best-effort — the app must never break because the silent asset is
+  // missing or AVAudioSession transiently refuses activation.
+  useEffect(() => {
+    const warmUpAudioSession = async () => {
+      let sound = null;
+      try {
+        const result = await Audio.Sound.createAsync(
+          require('./assets/silent.mp3'),
+          { shouldPlay: false }
+        );
+        sound = result.sound;
+        // Immediately unload — we don't need the Sound handle after the
+        // cold-start paths are exercised.
+        await sound.unloadAsync();
+      } catch (e) {
+        // Silently swallow — warm-up failure must never affect the app.
+        // If createAsync succeeded but unloadAsync rejected, still try
+        // to free the Sound handle so it doesn't leak.
+        if (sound) {
+          sound.unloadAsync().catch(() => {});
+        }
+      }
+    };
+    warmUpAudioSession();
+  }, []);
+
   // Register for push notifications (for price alerts)
   const registerForPushNotifications = async () => {
     if (__DEV__) console.log('📱 [Push] registerForPushNotifications() called');
