@@ -51,6 +51,136 @@ import Reanimated, {
 const Drawer = createDrawerNavigator();
 
 // ============================================
+// VOICE TIMING DIAGNOSTIC BUFFER
+// ============================================
+// Captures last N playTroyVoice timing summaries (from PR #22's instrumentation)
+// for in-app display via the "Voice Timings" debug screen. Module scope so it
+// persists across re-renders but resets on app reload. Jon's on Windows with no
+// Mac Console.app access — this is the visibility layer for the timing data.
+
+const voiceTimingHistory = [];
+const VOICE_TIMING_HISTORY_MAX = 10;
+
+const recordVoiceTiming = (timings) => {
+  voiceTimingHistory.push({
+    timestamp: Date.now(),
+    ...timings,
+  });
+  if (voiceTimingHistory.length > VOICE_TIMING_HISTORY_MAX) {
+    voiceTimingHistory.shift();
+  }
+};
+
+const getVoiceTimingHistory = () => [...voiceTimingHistory]; // defensive copy
+const clearVoiceTimingHistory = () => {
+  voiceTimingHistory.length = 0;
+};
+
+const VoiceTimingsScreen = () => {
+  const [entries, setEntries] = useState(getVoiceTimingHistory());
+
+  // Poll every 1s so new entries appear without manual refresh.
+  // Cheap: just reads a module-level array.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setEntries(getVoiceTimingHistory());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleClear = () => {
+    clearVoiceTimingHistory();
+    setEntries([]);
+  };
+
+  // Color-code total time: green <5s, yellow 5-15s, red >15s.
+  const colorForTotal = (totalMs) => {
+    if (totalMs == null) return '#71717a';
+    if (totalMs < 5000) return '#10b981';
+    if (totalMs < 15000) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  // Identify the dominant step in the dataset (average per step across all entries).
+  let slowestStepNote = null;
+  if (entries.length > 0) {
+    const steps = ['voice:fetch', 'voice:arrayBuffer', 'voice:write', 'voice:createAsync'];
+    const sums = {};
+    const counts = {};
+    for (const e of entries) {
+      for (const s of steps) {
+        const v = e[s];
+        if (typeof v === 'number') {
+          sums[s] = (sums[s] || 0) + v;
+          counts[s] = (counts[s] || 0) + 1;
+        }
+      }
+    }
+    let topStep = null;
+    let topAvg = -1;
+    for (const s of steps) {
+      if (counts[s]) {
+        const avg = sums[s] / counts[s];
+        if (avg > topAvg) {
+          topAvg = avg;
+          topStep = s;
+        }
+      }
+    }
+    if (topStep) {
+      slowestStepNote = `Slowest step (avg over ${entries.length} entries): ${topStep} ≈ ${Math.round(topAvg)}ms`;
+    }
+  }
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.1)' }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Voice Timings</Text>
+        <TouchableOpacity onPress={handleClear} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+          <Text style={{ color: '#a1a1aa', fontSize: 13, fontWeight: '600' }}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+        {entries.length === 0 ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <Text style={{ color: '#71717a', fontSize: 14 }}>No timings captured yet.</Text>
+            <Text style={{ color: '#52525b', fontSize: 12, marginTop: 6, textAlign: 'center' }}>Tap "Listen" on a Troy reply to capture a timing entry.</Text>
+          </View>
+        ) : (
+          entries.slice().reverse().map((e, idx) => {
+            const ts = new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const total = e['voice:total'] ?? e['voice:elapsed'];
+            const totalColor = colorForTotal(total);
+            const isErrorPath = e['voice:total'] == null && e['voice:elapsed'] != null;
+            return (
+              <View key={`${e.timestamp}-${idx}`} style={{ marginBottom: 12, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: '#a1a1aa', fontSize: 12 }}>{ts}{isErrorPath ? '  (error path)' : ''}</Text>
+                  <Text style={{ color: totalColor, fontSize: 14, fontWeight: '700' }}>
+                    {isErrorPath ? 'voice:elapsed' : 'voice:total'}: {total != null ? `${total}ms` : '—'}
+                  </Text>
+                </View>
+                {['voice:fetch', 'voice:arrayBuffer', 'voice:write', 'voice:createAsync'].map((k) => (
+                  <Text key={k} style={{ color: '#d4d4d8', fontSize: 12, fontFamily: 'Courier' }}>
+                    {k}: {e[k] != null ? `${e[k]}ms` : '—'}
+                  </Text>
+                ))}
+              </View>
+            );
+          })
+        )}
+        {slowestStepNote && (
+          <Text style={{ color: '#71717a', fontSize: 12, marginTop: 8, marginBottom: 24, textAlign: 'center' }}>
+            {slowestStepNote}
+          </Text>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+// ============================================
 // PREVIEW CONTEXT + BOTTOM SHEET
 // ============================================
 
@@ -4795,25 +4925,29 @@ function AppContent() {
       console.log('[Audio] Playing local file via Audio.Sound');
 
       // [voice] diagnostic timing summary — remove after the bottleneck is identified.
-      console.log('[voice] timings:', {
+      const successTimings = {
         'voice:fetch': tFetch - t0,
         'voice:arrayBuffer': tArrayBuffer - tFetch,
         'voice:write': tWrite - tArrayBuffer,
         'voice:createAsync': tCreateAsync - tWrite,
         'voice:total': tCreateAsync - t0,
-      });
+      };
+      console.log('[voice] timings:', successTimings);
+      recordVoiceTiming(successTimings);
 
     } catch (error) {
       // [voice] diagnostic timing summary on the error path — null entries
       // indicate which step threw. Logged FIRST so a thrown cleanup-handler
       // doesn't lose the timing signal.
-      console.log('[voice] timings (error path):', {
+      const errorTimings = {
         'voice:fetch': tFetch !== null ? tFetch - t0 : null,
         'voice:arrayBuffer': (tFetch !== null && tArrayBuffer !== null) ? tArrayBuffer - tFetch : null,
         'voice:write': (tArrayBuffer !== null && tWrite !== null) ? tWrite - tArrayBuffer : null,
         'voice:createAsync': (tWrite !== null && tCreateAsync !== null) ? tCreateAsync - tWrite : null,
         'voice:elapsed': Date.now() - t0,
-      });
+      };
+      console.log('[voice] timings (error path):', errorTimings);
+      recordVoiceTiming(errorTimings);
 
       // Clean up THIS invocation's cache file (if we got far enough to write one).
       // Use the function-local invocationFileUri — never read currentSoundFileRef
@@ -8458,6 +8592,17 @@ function AppContent() {
             <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Settings</Text>
           </TouchableOpacity>
 
+          {/* Debug: voice timing panel (reads PR #22 instrumentation in-app) */}
+          <TouchableOpacity
+            onPress={() => sidebarNavigate('VoiceTimings')}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+          >
+            <View style={{ width: 18, alignItems: 'center' }}>
+              <Text style={{ color: '#71717a', fontSize: 14 }}>⏱</Text>
+            </View>
+            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
+          </TouchableOpacity>
+
           {/* Subscription badge */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -8678,7 +8823,7 @@ function AppContent() {
       )}
 
       {/* Main Content — ScrollView excluded on Troy tab (Troy uses FlatList) */}
-      {currentScreen !== 'TroyChat' && (
+      {currentScreen !== 'TroyChat' && currentScreen !== 'VoiceTimings' && (
       <ScrollView
         ref={scrollRef}
         style={styles.content}
@@ -11489,6 +11634,9 @@ function AppContent() {
 
       </ScrollView>
       )}
+
+      {/* Voice Timings — debug panel (rendered outside ScrollView) */}
+      {currentScreen === 'VoiceTimings' && <VoiceTimingsScreen />}
 
       {/* Troy Tab — Inline Chat (rendered outside ScrollView) */}
       {currentScreen === 'TroyChat' && (
