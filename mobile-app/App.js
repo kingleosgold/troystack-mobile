@@ -223,6 +223,19 @@ function usePreview() {
 // Preview content components
 const PREVIEW_METAL_COLORS = { gold: '#D4A843', silver: '#C0C0C0', platinum: '#7BB3D4', palladium: '#6BBF8A' };
 
+function formatBriefGeneratedAt(generatedAt) {
+  if (!generatedAt) return '';
+  const d = new Date(generatedAt);
+  if (isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${time} ET`;
+}
+
 function PreviewChart({ data, chartType }) {
   if (!data) return <Text style={{ color: '#52525b', padding: 24 }}>No chart data available</Text>;
 
@@ -341,11 +354,19 @@ function PreviewPortfolio({ data }) {
 }
 
 function PreviewDailyBrief({ data }) {
+  const briefDate = data?.date
+    ? new Date(data.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
+  const generatedAtLabel = formatBriefGeneratedAt(data?.generated_at);
+  let headerText = 'Daily Brief';
+  if (briefDate) headerText += ` · ${briefDate}`;
+  if (generatedAtLabel) headerText += ` · as of ${generatedAtLabel}`;
+
   return (
     <View style={{ padding: 24 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
         <Text style={{ fontSize: 20 }}>☀️</Text>
-        <Text style={{ color: '#C9A84C', fontSize: 18, fontWeight: '700' }}>Daily Brief</Text>
+        <Text style={{ color: '#C9A84C', fontSize: 18, fontWeight: '700' }}>{headerText}</Text>
       </View>
       {data?.brief_text ? (
         <Text style={{ color: '#d4d4d8', fontSize: 15, lineHeight: 22 }}>{data.brief_text}</Text>
@@ -9036,7 +9057,7 @@ function AppContent() {
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>
                         Your Daily Brief · {dailyBrief && dailyBrief.date && !dailyBrief.is_current
                           ? new Date(dailyBrief.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-                          : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                          : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}{formatBriefGeneratedAt(dailyBrief?.generated_at) ? ` · as of ${formatBriefGeneratedAt(dailyBrief?.generated_at)}` : ''}
                       </Text>
                     </View>
                     {dailyBriefLoading ? (
