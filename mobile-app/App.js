@@ -2302,6 +2302,15 @@ function AppContent() {
   // Once-only guard for app:dashboard_mount (currentScreen can re-enter Dashboard).
   const dashboardMountedRef = useRef(false);
 
+  // Diagnostic mirrors for the three fetch helpers that swallow errors
+  // internally. We can't observe success from promise resolution alone, so
+  // these refs shadow the relevant state and are read synchronously after
+  // each await to derive an honest `ok` for lifecycle events. Write-only
+  // mirrors — never read inside render, never a hook dep.
+  const priceSourceRef = useRef('cached');
+  const lastIntelligenceFetchRef = useRef({ count: 0, fetchedAt: 0 });
+  const lastBriefStateRef = useRef(null);
+
   // Safe area insets for proper spacing around system UI (navigation bar, notch, etc.)
   const insets = useSafeAreaInsets();
 
@@ -2805,6 +2814,7 @@ function AppContent() {
     setPlatinumSpot(2100);
     setPalladiumSpot(1740);
     setPriceSource('cached');
+    priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
     setSpotPricesLive(false);
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
@@ -2814,12 +2824,14 @@ function AppContent() {
     setActiveConversationId(null);
     setAdvisorQuestionsToday(0);
     setDailyBrief(null);
+    lastBriefStateRef.current = null;
     setBriefExpanded(false);
     setPortfolioIntel(null);
     setPortfolioIntelExpanded(false);
     setCostBasisIntelExpanded(false);
     setPurchaseStatsIntelExpanded(false);
     setIntelligenceBriefs([]);
+    lastIntelligenceFetchRef.current = { count: 0, fetchedAt: 0 };
     setPriceAlerts([]);
     setAnalyticsSnapshots([]);
     setAnalyticsRange('1M');
@@ -3452,9 +3464,20 @@ function AppContent() {
         logLifecycleEvent('app:setTimeout_100ms_fired');
         logLifecycleEvent('app:initial_spot_fetch_start');
         const _spotStart = Date.now();
+        // fetchSpotPrices swallows errors internally, so promise resolution
+        // alone is not a reliable success signal. Derive `ok` from the
+        // post-call priceSourceRef: non-'cached' (and not loading) = success.
         fetchSpotPrices().then(() => {
-          logLifecycleEvent('app:initial_spot_fetch_end', { ok: true, durationMs: Date.now() - _spotStart });
+          const src = priceSourceRef.current;
+          const ok = src !== 'cached' && src !== 'loading...' && src !== null;
+          logLifecycleEvent('app:initial_spot_fetch_end', {
+            ok,
+            durationMs: Date.now() - _spotStart,
+            priceSource: src,
+          });
         }).catch(err => {
+          // Defense in depth: unreachable in practice since fetchSpotPrices
+          // catches its own errors, but kept in case that ever changes.
           logLifecycleEvent('app:initial_spot_fetch_end', { ok: false, durationMs: Date.now() - _spotStart, error: err?.message || String(err) });
           if (__DEV__ && err?.name !== 'AbortError') console.error('fetchSpotPrices failed:', err?.message);
         });
@@ -6583,7 +6606,10 @@ function AppContent() {
   // ============================================
 
   const fetchSpotPrices = async (silent = false) => {
-    if (!silent) setPriceSource('loading...');
+    if (!silent) {
+      setPriceSource('loading...');
+      priceSourceRef.current = 'loading...';
+    }
     try {
       if (__DEV__) console.log('📡 Fetching spot prices from:', `${API_BASE_URL}/v1/prices`);
 
@@ -6624,6 +6650,7 @@ function AppContent() {
           await AsyncStorage.setItem('stack_palladium_spot', palladiumPrice.toString());
         }
         setPriceSource(raw.source || 'live');
+        priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
@@ -6656,6 +6683,7 @@ function AppContent() {
       } else {
         if (__DEV__) console.log('⚠️  API returned no prices data');
         setPriceSource('cached');
+        priceSourceRef.current = 'cached';
       }
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -6665,6 +6693,7 @@ function AppContent() {
       if (__DEV__) console.error('❌ Error fetching spot prices:', error.message);
       if (__DEV__) console.error('   Error details:', error);
       setPriceSource('cached');
+      priceSourceRef.current = 'cached';
     }
   };
 
@@ -6718,9 +6747,11 @@ function AppContent() {
       if (__DEV__) console.log(`📰 [Brief] Response:`, JSON.stringify(data).slice(0, 200));
       if (data.brief) {
         setDailyBrief(data.brief);
+        lastBriefStateRef.current = data.brief;
       } else {
         if (__DEV__) console.log(`📰 [Brief] No brief returned (brief=${!!data.brief}, error=${data.error})`);
         setDailyBrief(null);
+        lastBriefStateRef.current = null;
       }
     } catch (error) {
       if (__DEV__) console.error('📰 [Brief] Fetch error:', error.message);
@@ -6802,6 +6833,7 @@ function AppContent() {
   };
 
   const fetchIntelligenceBriefs = async () => {
+    let _recordCount = 0;
     try {
       setIntelligenceLoading(true);
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -6827,8 +6859,10 @@ function AppContent() {
           !b.summary?.toLowerCase().includes('this is a test')
         );
         setIntelligenceBriefs(filtered);
+        _recordCount = filtered.length;
       }
       setIntelligenceLastFetched(new Date());
+      lastIntelligenceFetchRef.current = { count: _recordCount, fetchedAt: Date.now() };
     } catch (error) {
       if (__DEV__) console.error('Intelligence fetch error:', error);
     } finally {
@@ -6918,13 +6952,19 @@ function AppContent() {
       if (!intelligenceLastFetched) {
         logLifecycleEvent('app:dashboard_fetch_intelligence_start');
         const _t = Date.now();
-        const p = fetchIntelligenceBriefs();
-        Promise.resolve(p).then((res) => {
-          const recordCount = Array.isArray(res?.briefs) ? res.briefs.length : (Array.isArray(res) ? res.length : undefined);
-          logLifecycleEvent('app:dashboard_fetch_intelligence_end', recordCount != null
-            ? { ok: true, durationMs: Date.now() - _t, recordCount }
-            : { ok: true, durationMs: Date.now() - _t });
+        // fetchIntelligenceBriefs swallows errors internally. Derive ok from
+        // the post-call ref: a fresher fetchedAt (> _t) means the success path
+        // ran; recordCount > 0 means the API returned usable articles.
+        fetchIntelligenceBriefs().then(() => {
+          const post = lastIntelligenceFetchRef.current;
+          const ok = post.fetchedAt > _t && post.count > 0;
+          logLifecycleEvent('app:dashboard_fetch_intelligence_end', {
+            ok,
+            durationMs: Date.now() - _t,
+            recordCount: post.count,
+          });
         }).catch((err) => {
+          // Defense in depth: helper currently catches its own errors.
           logLifecycleEvent('app:dashboard_fetch_intelligence_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
         });
       }
@@ -6937,10 +6977,21 @@ function AppContent() {
     if (currentScreen === 'Dashboard' && supabaseUser && (!dailyBrief || !dailyBrief.is_current)) {
       logLifecycleEvent('app:dashboard_fetch_brief_start');
       const _t = Date.now();
-      const p = fetchDailyBrief();
-      Promise.resolve(p).then((res) => {
-        logLifecycleEvent('app:dashboard_fetch_brief_end', { ok: true, durationMs: Date.now() - _t });
+      // fetchDailyBrief swallows errors internally. Derive ok from the
+      // post-call ref: non-null = the success path set a real brief; null
+      // can mean either "API said no brief today" or "error during fetch".
+      // We treat non-null as ok=true; null we can't distinguish so leave ok
+      // false but surface enough metadata for the operator to interpret.
+      fetchDailyBrief().then(() => {
+        const briefState = lastBriefStateRef.current;
+        logLifecycleEvent('app:dashboard_fetch_brief_end', {
+          ok: briefState !== null,
+          durationMs: Date.now() - _t,
+          isCurrent: briefState?.is_current ?? null,
+          briefDate: briefState?.date ?? null,
+        });
       }).catch((err) => {
+        // Defense in depth: helper currently catches its own errors.
         logLifecycleEvent('app:dashboard_fetch_brief_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
       });
     }
