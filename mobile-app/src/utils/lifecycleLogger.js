@@ -61,15 +61,23 @@ export function logLifecycleEvent(label, payload) {
   if (payload !== undefined) event.payload = payload;
   buffer.push(event);
   if (buffer.length > MAX_EVENTS) buffer.splice(0, buffer.length - MAX_EVENTS);
-  // Fire-and-forget hydrate so an early call before hydration completes
-  // doesn't lose the on-disk history once it arrives.
+
+  // Race fix: do NOT schedule a write until hydration has merged the prior
+  // session's on-disk events into the in-memory buffer. Without this gate,
+  // an early write could persist a pre-merge buffer and overwrite the prior
+  // session's history before we get a chance to read and concat it — making
+  // cross-session comparison (the whole point of this diagnostic) impossible.
+  //
+  // Pre-hydration: events accumulate in memory. hydrate() is idempotent via
+  // hydrationPromise, so multiple early calls share the same merge. Each
+  // call's hydrate().then() schedules a write, but scheduleWrite() has its
+  // own writeTimer guard so only the first one fires; by then the buffer
+  // contains [merged disk events..., ...pre-hydration in-memory events].
   if (!hydrated) {
     hydrate().then(() => {
-      // After hydration merge: keep the older on-disk events that aren't
-      // already in our in-memory buffer (by timestamp identity).
-      // Simpler: just ensure scheduleWrite persists current state.
       scheduleWrite();
     });
+    return;
   }
   scheduleWrite();
 }
