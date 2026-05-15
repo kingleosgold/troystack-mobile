@@ -31,6 +31,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
+import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import PieChart from './src/components/PieChart';
@@ -49,6 +50,126 @@ import Reanimated, {
   runOnJS,
 } from 'react-native-reanimated';
 const Drawer = createDrawerNavigator();
+
+// Fire the very-first lifecycle event at module load — before any component
+// mounts. This timestamp marks JS bundle evaluation start for this process.
+logLifecycleEvent('app:module_load');
+
+// ============================================
+// LIFECYCLE LOG DIAGNOSTIC SCREEN
+// ============================================
+// Visibility for the rapid-relaunch zero-state bug. Renders the persisted
+// lifecycle event buffer with absolute timestamps and per-event deltas so
+// gaps in the JS event loop are visually obvious. Bad-launch sequence vs
+// good-launch sequence should differ in either order of events, missing
+// events, or gap durations between them.
+
+const LifecycleLogScreen = () => {
+  const [entries, setEntries] = useState([]);
+
+  // Poll every 1s — entries can be added asynchronously from many sites.
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      getLifecycleLog().then(log => {
+        if (alive) setEntries(log);
+      }).catch(() => {});
+    };
+    refresh();
+    const interval = setInterval(refresh, 1000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  const handleClear = () => {
+    clearLifecycleLog().finally(() => setEntries([]));
+  };
+
+  const formatAbs = (ts) => {
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const mmm = String(d.getMilliseconds()).padStart(3, '0');
+    return `${hh}:${mm}:${ss}.${mmm}`;
+  };
+
+  const formatDelta = (deltaMs) => {
+    if (deltaMs == null) return '';
+    if (deltaMs < 1000) return `+${deltaMs}ms`;
+    return `+${(deltaMs / 1000).toFixed(1)}s`;
+  };
+
+  const isErrorEvent = (e) => {
+    if (typeof e.label === 'string' && e.label.toLowerCase().includes('error')) return true;
+    if (e.payload && e.payload.ok === false) return true;
+    return false;
+  };
+
+  // Build display rows newest-first. Each row carries the delta from the
+  // PREVIOUS event chronologically (so reading top-to-bottom shows "gap
+  // since previous"), and a session-separator flag when the delta exceeds
+  // 30s (indicates a relaunch boundary).
+  const rows = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const prev = i > 0 ? entries[i - 1] : null;
+    const delta = prev ? e.ts - prev.ts : null;
+    rows.push({
+      ...e,
+      delta,
+      sessionBreak: delta != null && delta > 30000,
+    });
+  }
+  const displayRows = rows.slice().reverse();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.1)' }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Lifecycle Log</Text>
+        <TouchableOpacity onPress={handleClear} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+          <Text style={{ color: '#a1a1aa', fontSize: 13, fontWeight: '600' }}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+        {displayRows.length === 0 ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <Text style={{ color: '#71717a', fontSize: 14 }}>No lifecycle events captured yet.</Text>
+            <Text style={{ color: '#52525b', fontSize: 12, marginTop: 6, textAlign: 'center' }}>Force-quit and relaunch the app to capture a startup sequence.</Text>
+          </View>
+        ) : (
+          displayRows.map((r, idx) => {
+            const isError = isErrorEvent(r);
+            const labelColor = isError ? '#ef4444' : '#d4d4d8';
+            return (
+              <React.Fragment key={`${r.ts}-${idx}`}>
+                {r.sessionBreak && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                    <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '600', paddingHorizontal: 8, letterSpacing: 0.5 }}>── new session ──</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                  </View>
+                )}
+                <View style={{ marginBottom: 8, padding: 10, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ color: '#a1a1aa', fontSize: 11, fontFamily: 'Courier' }}>{formatAbs(r.ts)}</Text>
+                    <Text style={{ color: '#71717a', fontSize: 11, fontFamily: 'Courier' }}>{formatDelta(r.delta)}</Text>
+                  </View>
+                  <Text style={{ color: labelColor, fontSize: 13, fontFamily: 'Courier', fontWeight: '600' }}>{r.label}</Text>
+                  {r.payload !== undefined && (
+                    <Text style={{ color: '#71717a', fontSize: 11, fontFamily: 'Courier', marginTop: 2 }} numberOfLines={4}>
+                      {JSON.stringify(r.payload)}
+                    </Text>
+                  )}
+                </View>
+              </React.Fragment>
+            );
+          })
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
 
 // ============================================
 // VOICE TIMING DIAGNOSTIC BUFFER
@@ -2173,6 +2294,14 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
 
 // Main app content (wrapped by ErrorBoundary below)
 function AppContent() {
+  // Fire app:root_mount as the very first effect in the main app shell.
+  useEffect(() => {
+    logLifecycleEvent('app:root_mount');
+  }, []);
+
+  // Once-only guard for app:dashboard_mount (currentScreen can re-enter Dashboard).
+  const dashboardMountedRef = useRef(false);
+
   // Safe area insets for proper spacing around system UI (navigation bar, notch, etc.)
   const insets = useSafeAreaInsets();
 
@@ -3119,6 +3248,10 @@ function AppContent() {
   // ============================================
 
   const authenticate = async () => {
+    logLifecycleEvent('app:authenticate_start');
+    let _authMethod = 'skipped';
+    let _authOk = false;
+    let _authError;
     try {
       // Minimum version check — fail open
       try {
@@ -3137,6 +3270,8 @@ function AppContent() {
               message: versionData.message,
               storeUrl: platformData.store_url
             });
+            _authError = 'force_update_required';
+            logLifecycleEvent('app:authenticate_end', { ok: false, method: 'skipped', error: _authError });
             return; // Stop all further initialization — app is blocked
           }
         }
@@ -3158,21 +3293,30 @@ function AppContent() {
             fallbackLabel: 'Use Passcode',
           });
           shouldAuthenticate = result?.success === true;
+          _authMethod = 'biometric';
         } else {
           // No biometric hardware or not enrolled - allow access
           shouldAuthenticate = true;
+          _authMethod = 'skipped';
         }
       } catch (authError) {
         if (__DEV__) console.error('Biometric auth error (non-fatal):', authError?.message || authError);
         // If biometric fails, allow access anyway
         shouldAuthenticate = true;
+        _authMethod = 'failed';
+        _authError = authError?.message || String(authError);
       }
+
+      _authOk = shouldAuthenticate;
+      logLifecycleEvent('app:authenticate_end', _authError ? { ok: _authOk, method: _authMethod, error: _authError } : { ok: _authOk, method: _authMethod });
 
       // Only update state and load data if authentication succeeded or was skipped
       if (shouldAuthenticate) {
         setIsAuthenticated(true);
         // Wrap loadData in setTimeout to ensure state update completes first
+        logLifecycleEvent('app:setTimeout_50ms_scheduled');
         setTimeout(() => {
+          logLifecycleEvent('app:setTimeout_50ms_fired');
           loadData().catch(err => {
             if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
             setIsLoading(false); // Still hide loading even if data fails
@@ -3181,12 +3325,16 @@ function AppContent() {
       }
     } catch (e) {
       if (__DEV__) console.error('authenticate outer catch:', e?.message || e);
+      logLifecycleEvent('app:authenticate_end', { ok: true, method: 'failed', error: e?.message || String(e) });
       setIsAuthenticated(true);
       setIsLoading(false);
     }
   };
 
   const loadData = async () => {
+    logLifecycleEvent('app:load_data_start');
+    const _loadDataStart = Date.now();
+    let _silverCount = 0, _goldCount = 0, _platinumCount = 0, _palladiumCount = 0;
     try {
       // One-shot cleanup: remove deprecated midnightSnapshot baseline (May 2026).
       // Safe to run repeatedly; can be removed in a future build once all clients have launched at least once.
@@ -3217,16 +3365,16 @@ function AppContent() {
 
       // Safely parse JSON data with fallbacks
       if (silver) {
-        try { setSilverItems(JSON.parse(silver)); } catch (e) { if (__DEV__) console.error('Failed to parse silver data'); }
+        try { const arr = JSON.parse(silver); setSilverItems(arr); if (Array.isArray(arr)) _silverCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse silver data'); }
       }
       if (gold) {
-        try { setGoldItems(JSON.parse(gold)); } catch (e) { if (__DEV__) console.error('Failed to parse gold data'); }
+        try { const arr = JSON.parse(gold); setGoldItems(arr); if (Array.isArray(arr)) _goldCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse gold data'); }
       }
       if (platinum) {
-        try { setPlatinumItems(JSON.parse(platinum)); } catch (e) { if (__DEV__) console.error('Failed to parse platinum data'); }
+        try { const arr = JSON.parse(platinum); setPlatinumItems(arr); if (Array.isArray(arr)) _platinumCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse platinum data'); }
       }
       if (palladium) {
-        try { setPalladiumItems(JSON.parse(palladium)); } catch (e) { if (__DEV__) console.error('Failed to parse palladium data'); }
+        try { const arr = JSON.parse(palladium); setPalladiumItems(arr); if (Array.isArray(arr)) _palladiumCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse palladium data'); }
       }
       if (silverS) setSilverSpot(parseFloat(silverS) || 30);
       if (goldS) setGoldSpot(parseFloat(goldS) || 2600);
@@ -3290,14 +3438,38 @@ function AppContent() {
       // Mark data as loaded BEFORE fetching prices - this prevents the save useEffect from overwriting
       setDataLoaded(true);
 
+      logLifecycleEvent('app:load_data_end', {
+        silverCount: _silverCount,
+        goldCount: _goldCount,
+        platinumCount: _platinumCount,
+        palladiumCount: _palladiumCount,
+        durationMs: Date.now() - _loadDataStart,
+      });
+
       // Delay fetchSpotPrices to not block the main thread
+      logLifecycleEvent('app:setTimeout_100ms_scheduled');
       setTimeout(() => {
-        fetchSpotPrices().catch(err => {
+        logLifecycleEvent('app:setTimeout_100ms_fired');
+        logLifecycleEvent('app:initial_spot_fetch_start');
+        const _spotStart = Date.now();
+        fetchSpotPrices().then(() => {
+          logLifecycleEvent('app:initial_spot_fetch_end', { ok: true, durationMs: Date.now() - _spotStart });
+        }).catch(err => {
+          logLifecycleEvent('app:initial_spot_fetch_end', { ok: false, durationMs: Date.now() - _spotStart, error: err?.message || String(err) });
           if (__DEV__ && err?.name !== 'AbortError') console.error('fetchSpotPrices failed:', err?.message);
         });
       }, 100);
     } catch (error) {
       if (__DEV__) console.error('Error loading data:', error?.message || error);
+      logLifecycleEvent('app:load_data_end', {
+        ok: false,
+        silverCount: _silverCount,
+        goldCount: _goldCount,
+        platinumCount: _platinumCount,
+        palladiumCount: _palladiumCount,
+        durationMs: Date.now() - _loadDataStart,
+        error: error?.message || String(error),
+      });
       // Still mark as loaded on error to prevent infinite loop, but data won't be overwritten
       setDataLoaded(true);
     } finally {
@@ -3771,6 +3943,7 @@ function AppContent() {
   // missing or AVAudioSession transiently refuses activation.
   useEffect(() => {
     const warmUpAudioSession = async () => {
+      logLifecycleEvent('app:audio_warmup_start');
       let sound = null;
       try {
         const result = await Audio.Sound.createAsync(
@@ -3781,6 +3954,7 @@ function AppContent() {
         // Immediately unload — we don't need the Sound handle after the
         // cold-start paths are exercised.
         await sound.unloadAsync();
+        logLifecycleEvent('app:audio_warmup_end', { ok: true });
       } catch (e) {
         // Silently swallow — warm-up failure must never affect the app.
         // If createAsync succeeded but unloadAsync rejected, still try
@@ -3788,6 +3962,7 @@ function AppContent() {
         if (sound) {
           sound.unloadAsync().catch(() => {});
         }
+        logLifecycleEvent('app:audio_warmup_end', { ok: false, error: e?.message || String(e) });
       }
     };
     warmUpAudioSession();
@@ -6736,7 +6911,23 @@ function AppContent() {
   // Fetch intelligence + vault data when switching to Today tab
   useEffect(() => {
     if (currentScreen === 'Dashboard') {
-      if (!intelligenceLastFetched) fetchIntelligenceBriefs();
+      if (!dashboardMountedRef.current) {
+        dashboardMountedRef.current = true;
+        logLifecycleEvent('app:dashboard_mount');
+      }
+      if (!intelligenceLastFetched) {
+        logLifecycleEvent('app:dashboard_fetch_intelligence_start');
+        const _t = Date.now();
+        const p = fetchIntelligenceBriefs();
+        Promise.resolve(p).then((res) => {
+          const recordCount = Array.isArray(res?.briefs) ? res.briefs.length : (Array.isArray(res) ? res.length : undefined);
+          logLifecycleEvent('app:dashboard_fetch_intelligence_end', recordCount != null
+            ? { ok: true, durationMs: Date.now() - _t, recordCount }
+            : { ok: true, durationMs: Date.now() - _t });
+        }).catch((err) => {
+          logLifecycleEvent('app:dashboard_fetch_intelligence_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+        });
+      }
       if (!vaultLastFetched) fetchVaultData();
     }
   }, [currentScreen]);
@@ -6744,17 +6935,29 @@ function AppContent() {
   // Fetch daily brief when tab or user changes
   useEffect(() => {
     if (currentScreen === 'Dashboard' && supabaseUser && (!dailyBrief || !dailyBrief.is_current)) {
-      fetchDailyBrief();
+      logLifecycleEvent('app:dashboard_fetch_brief_start');
+      const _t = Date.now();
+      const p = fetchDailyBrief();
+      Promise.resolve(p).then((res) => {
+        logLifecycleEvent('app:dashboard_fetch_brief_end', { ok: true, durationMs: Date.now() - _t });
+      }).catch((err) => {
+        logLifecycleEvent('app:dashboard_fetch_brief_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+      });
     }
   }, [currentScreen, supabaseUser]);
 
   // Fetch Stack Signal daily synthesis for Today tab teaser
   useEffect(() => {
     if (currentScreen === 'Dashboard' && !stackSignalDaily) {
+      logLifecycleEvent('app:dashboard_fetch_signal_start');
+      const _t = Date.now();
       stackSignalAPI.fetchDaily().then(res => {
         const daily = res?.signal || (res?.id ? res : null);
         if (daily) setStackSignalDaily(daily);
-      }).catch(() => {});
+        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok: true, durationMs: Date.now() - _t, recordCount: daily ? 1 : 0 });
+      }).catch((err) => {
+        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+      });
     }
   }, [currentScreen]);
 
@@ -8603,6 +8806,17 @@ function AppContent() {
             <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
           </TouchableOpacity>
 
+          {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
+          <TouchableOpacity
+            onPress={() => sidebarNavigate('LifecycleLog')}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+          >
+            <View style={{ width: 18, alignItems: 'center' }}>
+              <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
+            </View>
+            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
+          </TouchableOpacity>
+
           {/* Subscription badge */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -8823,7 +9037,7 @@ function AppContent() {
       )}
 
       {/* Main Content — ScrollView excluded on Troy tab (Troy uses FlatList) */}
-      {currentScreen !== 'TroyChat' && currentScreen !== 'VoiceTimings' && (
+      {currentScreen !== 'TroyChat' && currentScreen !== 'VoiceTimings' && currentScreen !== 'LifecycleLog' && (
       <ScrollView
         ref={scrollRef}
         style={styles.content}
@@ -11637,6 +11851,9 @@ function AppContent() {
 
       {/* Voice Timings — debug panel (rendered outside ScrollView) */}
       {currentScreen === 'VoiceTimings' && <VoiceTimingsScreen />}
+
+      {/* Lifecycle Log — debug panel (rendered outside ScrollView) */}
+      {currentScreen === 'LifecycleLog' && <LifecycleLogScreen />}
 
       {/* Troy Tab — Inline Chat (rendered outside ScrollView) */}
       {currentScreen === 'TroyChat' && (
