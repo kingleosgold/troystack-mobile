@@ -19,13 +19,30 @@ let buffer = [];
 let hydrated = false;
 let hydrationPromise = null;
 let writeTimer = null;
+// Generation counter: incremented on every clearLifecycleLog() call. Hydrate
+// captures the value at IIFE start and re-checks it before assigning the
+// merged buffer; if a clear happened in between, the merge is discarded so
+// the cleared state wins. Without this, an orphan hydrate that started
+// before clear() would resolve later and repopulate buffer with the very
+// events the user just cleared.
+let clearGeneration = 0;
 
 async function hydrate() {
   if (hydrated) return;
   if (hydrationPromise) return hydrationPromise;
   hydrationPromise = (async () => {
+    // Snapshot the clear-generation at the start so we can detect a clear
+    // that lands while AsyncStorage.getItem is in flight. If the user
+    // clears mid-hydrate, their intent must win over our stale merge.
+    const myGeneration = clearGeneration;
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      if (myGeneration !== clearGeneration) {
+        // Clear happened mid-flight. Discard the read entirely —
+        // clearLifecycleLog() has already set hydrated=true and emptied
+        // the buffer; merging back in would silently undo the clear.
+        return;
+      }
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
@@ -40,7 +57,13 @@ async function hydrate() {
     } catch (e) {
       // Corrupt or unreadable — start fresh. Never throw from the logger.
     } finally {
-      hydrated = true;
+      // Only assert hydrated=true if no clear raced us. If a clear did
+      // happen mid-flight, clearLifecycleLog() already set hydrated=true
+      // itself; assigning again here is technically idempotent but the
+      // guard makes the ownership of that flag unambiguous.
+      if (myGeneration === clearGeneration) {
+        hydrated = true;
+      }
       hydrationPromise = null;
     }
   })();
@@ -88,6 +111,9 @@ export async function getLifecycleLog() {
 }
 
 export async function clearLifecycleLog() {
+  // Invalidate any hydrate() that may have started before this clear —
+  // see the generation comment near `let clearGeneration` above.
+  clearGeneration += 1;
   buffer = [];
   hydrated = true;
   if (writeTimer) {
