@@ -7003,9 +7003,17 @@ function AppContent() {
       logLifecycleEvent('app:dashboard_fetch_signal_start');
       const _t = Date.now();
       stackSignalAPI.fetchDaily().then(res => {
+        // Match the daily-shape predicate used by openStackSignal (L4584)
+        // and fetchStackSignalData (L4601): a real signal arrives either
+        // as { signal: {...} } or as a flat object with an .id. Anything
+        // else — including HTTP 4xx/5xx error envelopes like { error: ... }
+        // — fails this test and counts as not-ok. stackSignalAPI.fetchDaily
+        // does not check res.ok, so we cannot rely on promise rejection
+        // alone to surface backend failures here.
         const daily = res?.signal || (res?.id ? res : null);
         if (daily) setStackSignalDaily(daily);
-        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok: true, durationMs: Date.now() - _t, recordCount: daily ? 1 : 0 });
+        const ok = daily !== null;
+        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok, durationMs: Date.now() - _t, recordCount: ok ? 1 : 0 });
       }).catch((err) => {
         logLifecycleEvent('app:dashboard_fetch_signal_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
       });
