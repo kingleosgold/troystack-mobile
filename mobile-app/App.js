@@ -141,15 +141,14 @@ const LifecycleLogScreen = () => {
           displayRows.map((r, idx) => {
             const isError = isErrorEvent(r);
             const labelColor = isError ? '#ef4444' : '#d4d4d8';
+            // r.sessionBreak is true on the first event of a new session
+            // chronologically (B, where prev-event A is from a prior session
+            // separated by a >30s gap). In newest-first order B appears
+            // ABOVE A, so the boundary marker must render AFTER B (between
+            // B and A) — putting events above the divider on the newer side
+            // and events below on the older side.
             return (
               <React.Fragment key={`${r.ts}-${idx}`}>
-                {r.sessionBreak && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
-                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
-                    <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '600', paddingHorizontal: 8, letterSpacing: 0.5 }}>── new session ──</Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
-                  </View>
-                )}
                 <View style={{ marginBottom: 8, padding: 10, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
                     <Text style={{ color: '#a1a1aa', fontSize: 11, fontFamily: 'Courier' }}>{formatAbs(r.ts)}</Text>
@@ -162,6 +161,13 @@ const LifecycleLogScreen = () => {
                     </Text>
                   )}
                 </View>
+                {r.sessionBreak && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                    <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '600', paddingHorizontal: 8, letterSpacing: 0.5 }}>── new session ──</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                  </View>
+                )}
               </React.Fragment>
             );
           })
