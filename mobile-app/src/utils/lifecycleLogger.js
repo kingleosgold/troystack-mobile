@@ -2,6 +2,24 @@
 // to AsyncStorage so we can diagnose force-quit / rapid-relaunch bugs.
 // Plain module: no React state. Safe to call from anywhere.
 //
+// CONCURRENCY MODEL — PLATFORM DEPENDENCY
+//
+// This module relies on AsyncStorage maintaining FIFO ordering for setItem/removeItem
+// calls within the JS-thread call sequence. The standard @react-native-async-storage/
+// async-storage v1.x backends (iOS SQLite, Android Room) provide this ordering. If we
+// ever swap to a backend with concurrent-writer semantics (e.g. MMKV with parallel
+// writers) the clearLifecycleLog() vs in-flight logLifecycleEvent() write path can
+// reorder, and a pre-clear setItem could land after clear's setItem('[]'), restoring
+// cleared events to disk.
+//
+// Mitigation if that ever happens: add a JS-side promise chain so each setItem awaits
+// the prior one, OR add a clear-mutex that awaits any in-flight write before clear's
+// own setItem fires. See PR #28 review discussion for details.
+//
+// This is a diagnostic tool, not production-critical state. The blast radius of the
+// race (if ever triggered) is "Clear occasionally leaves phantom events; tap Clear
+// again." Acceptable for the use case.
+//
 // Concurrency model:
 //   - Eager hydration at module import (readyPromise). Pre-hydration
 //     events queue in pendingEvents and merge into buffer on resolve.
