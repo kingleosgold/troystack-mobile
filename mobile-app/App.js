@@ -3343,7 +3343,7 @@ function AppContent() {
       }
     } catch (e) {
       if (__DEV__) console.error('authenticate outer catch:', e?.message || e);
-      logLifecycleEvent('app:authenticate_end', { ok: true, method: 'failed', error: e?.message || String(e) });
+      logLifecycleEvent('app:authenticate_end', { ok: false, method: 'failed', error: e?.message || String(e) });
       setIsAuthenticated(true);
       setIsLoading(false);
     }
@@ -6959,11 +6959,15 @@ function AppContent() {
         logLifecycleEvent('app:dashboard_fetch_intelligence_start');
         const _t = Date.now();
         // fetchIntelligenceBriefs swallows errors internally. Derive ok from
-        // the post-call ref: a fresher fetchedAt (> _t) means the success path
-        // ran; recordCount > 0 means the API returned usable articles.
+        // the post-call ref: a fresher fetchedAt (> _t) proves the success
+        // path ran. recordCount is reported for visibility but does NOT gate
+        // ok — a successful empty response (quiet news day, all articles
+        // filtered as test placeholders) is still a successful fetch, and
+        // conflating it with a network failure would mask real failures
+        // behind data-availability noise.
         fetchIntelligenceBriefs().then(() => {
           const post = lastIntelligenceFetchRef.current;
-          const ok = post.fetchedAt > _t && post.count > 0;
+          const ok = post.fetchedAt > _t;
           logLifecycleEvent('app:dashboard_fetch_intelligence_end', {
             ok,
             durationMs: Date.now() - _t,
