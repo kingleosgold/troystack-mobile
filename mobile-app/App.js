@@ -31,6 +31,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
+import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import PieChart from './src/components/PieChart';
@@ -49,6 +50,132 @@ import Reanimated, {
   runOnJS,
 } from 'react-native-reanimated';
 const Drawer = createDrawerNavigator();
+
+// Fire the very-first lifecycle event at module load — before any component
+// mounts. This timestamp marks JS bundle evaluation start for this process.
+logLifecycleEvent('app:module_load');
+
+// ============================================
+// LIFECYCLE LOG DIAGNOSTIC SCREEN
+// ============================================
+// Visibility for the rapid-relaunch zero-state bug. Renders the persisted
+// lifecycle event buffer with absolute timestamps and per-event deltas so
+// gaps in the JS event loop are visually obvious. Bad-launch sequence vs
+// good-launch sequence should differ in either order of events, missing
+// events, or gap durations between them.
+
+const LifecycleLogScreen = () => {
+  const [entries, setEntries] = useState([]);
+
+  // Poll every 1s — entries can be added asynchronously from many sites.
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      getLifecycleLog().then(log => {
+        if (alive) setEntries(log);
+      }).catch(() => {});
+    };
+    refresh();
+    const interval = setInterval(refresh, 1000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  const handleClear = () => {
+    clearLifecycleLog().finally(() => setEntries([]));
+  };
+
+  const formatAbs = (ts) => {
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const mmm = String(d.getMilliseconds()).padStart(3, '0');
+    return `${hh}:${mm}:${ss}.${mmm}`;
+  };
+
+  const formatDelta = (deltaMs) => {
+    if (deltaMs == null) return '';
+    if (deltaMs < 1000) return `+${deltaMs}ms`;
+    return `+${(deltaMs / 1000).toFixed(1)}s`;
+  };
+
+  const isErrorEvent = (e) => {
+    if (typeof e.label === 'string' && e.label.toLowerCase().includes('error')) return true;
+    if (e.payload && e.payload.ok === false) return true;
+    return false;
+  };
+
+  // Build display rows newest-first. Each row carries the delta from the
+  // PREVIOUS event chronologically (so reading top-to-bottom shows "gap
+  // since previous"), and a session-separator flag when the delta exceeds
+  // 30s (indicates a relaunch boundary).
+  const rows = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const prev = i > 0 ? entries[i - 1] : null;
+    const delta = prev ? e.ts - prev.ts : null;
+    rows.push({
+      ...e,
+      delta,
+      sessionBreak: delta != null && delta > 30000,
+    });
+  }
+  const displayRows = rows.slice().reverse();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.1)' }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Lifecycle Log</Text>
+        <TouchableOpacity onPress={handleClear} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+          <Text style={{ color: '#a1a1aa', fontSize: 13, fontWeight: '600' }}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+        {displayRows.length === 0 ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <Text style={{ color: '#71717a', fontSize: 14 }}>No lifecycle events captured yet.</Text>
+            <Text style={{ color: '#52525b', fontSize: 12, marginTop: 6, textAlign: 'center' }}>Force-quit and relaunch the app to capture a startup sequence.</Text>
+          </View>
+        ) : (
+          displayRows.map((r, idx) => {
+            const isError = isErrorEvent(r);
+            const labelColor = isError ? '#ef4444' : '#d4d4d8';
+            // r.sessionBreak is true on the first event of a new session
+            // chronologically (B, where prev-event A is from a prior session
+            // separated by a >30s gap). In newest-first order B appears
+            // ABOVE A, so the boundary marker must render AFTER B (between
+            // B and A) — putting events above the divider on the newer side
+            // and events below on the older side.
+            return (
+              <React.Fragment key={`${r.ts}-${idx}`}>
+                <View style={{ marginBottom: 8, padding: 10, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ color: '#a1a1aa', fontSize: 11, fontFamily: 'Courier' }}>{formatAbs(r.ts)}</Text>
+                    <Text style={{ color: '#71717a', fontSize: 11, fontFamily: 'Courier' }}>{formatDelta(r.delta)}</Text>
+                  </View>
+                  <Text style={{ color: labelColor, fontSize: 13, fontFamily: 'Courier', fontWeight: '600' }}>{r.label}</Text>
+                  {r.payload !== undefined && (
+                    <Text style={{ color: '#71717a', fontSize: 11, fontFamily: 'Courier', marginTop: 2 }} numberOfLines={4}>
+                      {JSON.stringify(r.payload)}
+                    </Text>
+                  )}
+                </View>
+                {r.sessionBreak && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                    <Text style={{ color: '#C9A84C', fontSize: 11, fontWeight: '600', paddingHorizontal: 8, letterSpacing: 0.5 }}>── new session ──</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(212,168,67,0.3)' }} />
+                  </View>
+                )}
+              </React.Fragment>
+            );
+          })
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
 
 // ============================================
 // VOICE TIMING DIAGNOSTIC BUFFER
@@ -2194,6 +2321,23 @@ const ScrubChart = ({ data, color, fillColor, width, height, range, decimalPlace
 
 // Main app content (wrapped by ErrorBoundary below)
 function AppContent() {
+  // Fire app:root_mount as the very first effect in the main app shell.
+  useEffect(() => {
+    logLifecycleEvent('app:root_mount');
+  }, []);
+
+  // Once-only guard for app:dashboard_mount (currentScreen can re-enter Dashboard).
+  const dashboardMountedRef = useRef(false);
+
+  // Diagnostic mirrors for the three fetch helpers that swallow errors
+  // internally. We can't observe success from promise resolution alone, so
+  // these refs shadow the relevant state and are read synchronously after
+  // each await to derive an honest `ok` for lifecycle events. Write-only
+  // mirrors — never read inside render, never a hook dep.
+  const priceSourceRef = useRef('cached');
+  const lastIntelligenceFetchRef = useRef({ count: 0, fetchedAt: 0 });
+  const lastBriefStateRef = useRef(null);
+
   // Safe area insets for proper spacing around system UI (navigation bar, notch, etc.)
   const insets = useSafeAreaInsets();
 
@@ -2697,6 +2841,7 @@ function AppContent() {
     setPlatinumSpot(2100);
     setPalladiumSpot(1740);
     setPriceSource('cached');
+    priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
     setSpotPricesLive(false);
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
@@ -2706,12 +2851,14 @@ function AppContent() {
     setActiveConversationId(null);
     setAdvisorQuestionsToday(0);
     setDailyBrief(null);
+    lastBriefStateRef.current = null;
     setBriefExpanded(false);
     setPortfolioIntel(null);
     setPortfolioIntelExpanded(false);
     setCostBasisIntelExpanded(false);
     setPurchaseStatsIntelExpanded(false);
     setIntelligenceBriefs([]);
+    lastIntelligenceFetchRef.current = { count: 0, fetchedAt: 0 };
     setPriceAlerts([]);
     setAnalyticsSnapshots([]);
     setAnalyticsRange('1M');
@@ -3140,6 +3287,10 @@ function AppContent() {
   // ============================================
 
   const authenticate = async () => {
+    logLifecycleEvent('app:authenticate_start');
+    let _authMethod = 'skipped';
+    let _authOk = false;
+    let _authError;
     try {
       // Minimum version check — fail open
       try {
@@ -3158,6 +3309,8 @@ function AppContent() {
               message: versionData.message,
               storeUrl: platformData.store_url
             });
+            _authError = 'force_update_required';
+            logLifecycleEvent('app:authenticate_end', { ok: false, method: 'skipped', error: _authError });
             return; // Stop all further initialization — app is blocked
           }
         }
@@ -3179,21 +3332,30 @@ function AppContent() {
             fallbackLabel: 'Use Passcode',
           });
           shouldAuthenticate = result?.success === true;
+          _authMethod = 'biometric';
         } else {
           // No biometric hardware or not enrolled - allow access
           shouldAuthenticate = true;
+          _authMethod = 'skipped';
         }
       } catch (authError) {
         if (__DEV__) console.error('Biometric auth error (non-fatal):', authError?.message || authError);
         // If biometric fails, allow access anyway
         shouldAuthenticate = true;
+        _authMethod = 'failed';
+        _authError = authError?.message || String(authError);
       }
+
+      _authOk = shouldAuthenticate;
+      logLifecycleEvent('app:authenticate_end', _authError ? { ok: _authOk, method: _authMethod, error: _authError } : { ok: _authOk, method: _authMethod });
 
       // Only update state and load data if authentication succeeded or was skipped
       if (shouldAuthenticate) {
         setIsAuthenticated(true);
         // Wrap loadData in setTimeout to ensure state update completes first
+        logLifecycleEvent('app:setTimeout_50ms_scheduled');
         setTimeout(() => {
+          logLifecycleEvent('app:setTimeout_50ms_fired');
           loadData().catch(err => {
             if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
             setIsLoading(false); // Still hide loading even if data fails
@@ -3202,12 +3364,16 @@ function AppContent() {
       }
     } catch (e) {
       if (__DEV__) console.error('authenticate outer catch:', e?.message || e);
+      logLifecycleEvent('app:authenticate_end', { ok: false, method: 'failed', error: e?.message || String(e) });
       setIsAuthenticated(true);
       setIsLoading(false);
     }
   };
 
   const loadData = async () => {
+    logLifecycleEvent('app:load_data_start');
+    const _loadDataStart = Date.now();
+    let _silverCount = 0, _goldCount = 0, _platinumCount = 0, _palladiumCount = 0;
     try {
       // One-shot cleanup: remove deprecated midnightSnapshot baseline (May 2026).
       // Safe to run repeatedly; can be removed in a future build once all clients have launched at least once.
@@ -3238,16 +3404,16 @@ function AppContent() {
 
       // Safely parse JSON data with fallbacks
       if (silver) {
-        try { setSilverItems(JSON.parse(silver)); } catch (e) { if (__DEV__) console.error('Failed to parse silver data'); }
+        try { const arr = JSON.parse(silver); setSilverItems(arr); if (Array.isArray(arr)) _silverCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse silver data'); }
       }
       if (gold) {
-        try { setGoldItems(JSON.parse(gold)); } catch (e) { if (__DEV__) console.error('Failed to parse gold data'); }
+        try { const arr = JSON.parse(gold); setGoldItems(arr); if (Array.isArray(arr)) _goldCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse gold data'); }
       }
       if (platinum) {
-        try { setPlatinumItems(JSON.parse(platinum)); } catch (e) { if (__DEV__) console.error('Failed to parse platinum data'); }
+        try { const arr = JSON.parse(platinum); setPlatinumItems(arr); if (Array.isArray(arr)) _platinumCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse platinum data'); }
       }
       if (palladium) {
-        try { setPalladiumItems(JSON.parse(palladium)); } catch (e) { if (__DEV__) console.error('Failed to parse palladium data'); }
+        try { const arr = JSON.parse(palladium); setPalladiumItems(arr); if (Array.isArray(arr)) _palladiumCount = arr.length; } catch (e) { if (__DEV__) console.error('Failed to parse palladium data'); }
       }
       if (silverS) setSilverSpot(parseFloat(silverS) || 30);
       if (goldS) setGoldSpot(parseFloat(goldS) || 2600);
@@ -3311,14 +3477,49 @@ function AppContent() {
       // Mark data as loaded BEFORE fetching prices - this prevents the save useEffect from overwriting
       setDataLoaded(true);
 
+      logLifecycleEvent('app:load_data_end', {
+        silverCount: _silverCount,
+        goldCount: _goldCount,
+        platinumCount: _platinumCount,
+        palladiumCount: _palladiumCount,
+        durationMs: Date.now() - _loadDataStart,
+      });
+
       // Delay fetchSpotPrices to not block the main thread
+      logLifecycleEvent('app:setTimeout_100ms_scheduled');
       setTimeout(() => {
-        fetchSpotPrices().catch(err => {
+        logLifecycleEvent('app:setTimeout_100ms_fired');
+        logLifecycleEvent('app:initial_spot_fetch_start');
+        const _spotStart = Date.now();
+        // fetchSpotPrices swallows errors internally, so promise resolution
+        // alone is not a reliable success signal. Derive `ok` from the
+        // post-call priceSourceRef: non-'cached' (and not loading) = success.
+        fetchSpotPrices().then(() => {
+          const src = priceSourceRef.current;
+          const ok = src !== 'cached' && src !== 'loading...' && src !== null;
+          logLifecycleEvent('app:initial_spot_fetch_end', {
+            ok,
+            durationMs: Date.now() - _spotStart,
+            priceSource: src,
+          });
+        }).catch(err => {
+          // Defense in depth: unreachable in practice since fetchSpotPrices
+          // catches its own errors, but kept in case that ever changes.
+          logLifecycleEvent('app:initial_spot_fetch_end', { ok: false, durationMs: Date.now() - _spotStart, error: err?.message || String(err) });
           if (__DEV__ && err?.name !== 'AbortError') console.error('fetchSpotPrices failed:', err?.message);
         });
       }, 100);
     } catch (error) {
       if (__DEV__) console.error('Error loading data:', error?.message || error);
+      logLifecycleEvent('app:load_data_end', {
+        ok: false,
+        silverCount: _silverCount,
+        goldCount: _goldCount,
+        platinumCount: _platinumCount,
+        palladiumCount: _palladiumCount,
+        durationMs: Date.now() - _loadDataStart,
+        error: error?.message || String(error),
+      });
       // Still mark as loaded on error to prevent infinite loop, but data won't be overwritten
       setDataLoaded(true);
     } finally {
@@ -3792,6 +3993,7 @@ function AppContent() {
   // missing or AVAudioSession transiently refuses activation.
   useEffect(() => {
     const warmUpAudioSession = async () => {
+      logLifecycleEvent('app:audio_warmup_start');
       let sound = null;
       try {
         const result = await Audio.Sound.createAsync(
@@ -3802,6 +4004,7 @@ function AppContent() {
         // Immediately unload — we don't need the Sound handle after the
         // cold-start paths are exercised.
         await sound.unloadAsync();
+        logLifecycleEvent('app:audio_warmup_end', { ok: true });
       } catch (e) {
         // Silently swallow — warm-up failure must never affect the app.
         // If createAsync succeeded but unloadAsync rejected, still try
@@ -3809,6 +4012,7 @@ function AppContent() {
         if (sound) {
           sound.unloadAsync().catch(() => {});
         }
+        logLifecycleEvent('app:audio_warmup_end', { ok: false, error: e?.message || String(e) });
       }
     };
     warmUpAudioSession();
@@ -6429,7 +6633,10 @@ function AppContent() {
   // ============================================
 
   const fetchSpotPrices = async (silent = false) => {
-    if (!silent) setPriceSource('loading...');
+    if (!silent) {
+      setPriceSource('loading...');
+      priceSourceRef.current = 'loading...';
+    }
     try {
       if (__DEV__) console.log('📡 Fetching spot prices from:', `${API_BASE_URL}/v1/prices`);
 
@@ -6470,6 +6677,7 @@ function AppContent() {
           await AsyncStorage.setItem('stack_palladium_spot', palladiumPrice.toString());
         }
         setPriceSource(raw.source || 'live');
+        priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
@@ -6502,6 +6710,7 @@ function AppContent() {
       } else {
         if (__DEV__) console.log('⚠️  API returned no prices data');
         setPriceSource('cached');
+        priceSourceRef.current = 'cached';
       }
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -6511,6 +6720,7 @@ function AppContent() {
       if (__DEV__) console.error('❌ Error fetching spot prices:', error.message);
       if (__DEV__) console.error('   Error details:', error);
       setPriceSource('cached');
+      priceSourceRef.current = 'cached';
     }
   };
 
@@ -6564,9 +6774,11 @@ function AppContent() {
       if (__DEV__) console.log(`📰 [Brief] Response:`, JSON.stringify(data).slice(0, 200));
       if (data.brief) {
         setDailyBrief(data.brief);
+        lastBriefStateRef.current = data.brief;
       } else {
         if (__DEV__) console.log(`📰 [Brief] No brief returned (brief=${!!data.brief}, error=${data.error})`);
         setDailyBrief(null);
+        lastBriefStateRef.current = null;
       }
     } catch (error) {
       if (__DEV__) console.error('📰 [Brief] Fetch error:', error.message);
@@ -6648,6 +6860,7 @@ function AppContent() {
   };
 
   const fetchIntelligenceBriefs = async () => {
+    let _recordCount = 0;
     try {
       setIntelligenceLoading(true);
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -6673,8 +6886,10 @@ function AppContent() {
           !b.summary?.toLowerCase().includes('this is a test')
         );
         setIntelligenceBriefs(filtered);
+        _recordCount = filtered.length;
       }
       setIntelligenceLastFetched(new Date());
+      lastIntelligenceFetchRef.current = { count: _recordCount, fetchedAt: Date.now() };
     } catch (error) {
       if (__DEV__) console.error('Intelligence fetch error:', error);
     } finally {
@@ -6757,7 +6972,33 @@ function AppContent() {
   // Fetch intelligence + vault data when switching to Today tab
   useEffect(() => {
     if (currentScreen === 'Dashboard') {
-      if (!intelligenceLastFetched) fetchIntelligenceBriefs();
+      if (!dashboardMountedRef.current) {
+        dashboardMountedRef.current = true;
+        logLifecycleEvent('app:dashboard_mount');
+      }
+      if (!intelligenceLastFetched) {
+        logLifecycleEvent('app:dashboard_fetch_intelligence_start');
+        const _t = Date.now();
+        // fetchIntelligenceBriefs swallows errors internally. Derive ok from
+        // the post-call ref: a fresher fetchedAt (> _t) proves the success
+        // path ran. recordCount is reported for visibility but does NOT gate
+        // ok — a successful empty response (quiet news day, all articles
+        // filtered as test placeholders) is still a successful fetch, and
+        // conflating it with a network failure would mask real failures
+        // behind data-availability noise.
+        fetchIntelligenceBriefs().then(() => {
+          const post = lastIntelligenceFetchRef.current;
+          const ok = post.fetchedAt > _t;
+          logLifecycleEvent('app:dashboard_fetch_intelligence_end', {
+            ok,
+            durationMs: Date.now() - _t,
+            recordCount: post.count,
+          });
+        }).catch((err) => {
+          // Defense in depth: helper currently catches its own errors.
+          logLifecycleEvent('app:dashboard_fetch_intelligence_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+        });
+      }
       if (!vaultLastFetched) fetchVaultData();
     }
   }, [currentScreen]);
@@ -6765,17 +7006,48 @@ function AppContent() {
   // Fetch daily brief when tab or user changes
   useEffect(() => {
     if (currentScreen === 'Dashboard' && supabaseUser && (!dailyBrief || !dailyBrief.is_current)) {
-      fetchDailyBrief();
+      logLifecycleEvent('app:dashboard_fetch_brief_start');
+      const _t = Date.now();
+      // fetchDailyBrief swallows errors internally. Derive ok from the
+      // post-call ref: non-null = the success path set a real brief; null
+      // can mean either "API said no brief today" or "error during fetch".
+      // We treat non-null as ok=true; null we can't distinguish so leave ok
+      // false but surface enough metadata for the operator to interpret.
+      fetchDailyBrief().then(() => {
+        const briefState = lastBriefStateRef.current;
+        logLifecycleEvent('app:dashboard_fetch_brief_end', {
+          ok: briefState !== null,
+          durationMs: Date.now() - _t,
+          isCurrent: briefState?.is_current ?? null,
+          briefDate: briefState?.date ?? null,
+        });
+      }).catch((err) => {
+        // Defense in depth: helper currently catches its own errors.
+        logLifecycleEvent('app:dashboard_fetch_brief_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+      });
     }
   }, [currentScreen, supabaseUser]);
 
   // Fetch Stack Signal daily synthesis for Today tab teaser
   useEffect(() => {
     if (currentScreen === 'Dashboard' && !stackSignalDaily) {
+      logLifecycleEvent('app:dashboard_fetch_signal_start');
+      const _t = Date.now();
       stackSignalAPI.fetchDaily().then(res => {
+        // Match the daily-shape predicate used by openStackSignal (L4584)
+        // and fetchStackSignalData (L4601): a real signal arrives either
+        // as { signal: {...} } or as a flat object with an .id. Anything
+        // else — including HTTP 4xx/5xx error envelopes like { error: ... }
+        // — fails this test and counts as not-ok. stackSignalAPI.fetchDaily
+        // does not check res.ok, so we cannot rely on promise rejection
+        // alone to surface backend failures here.
         const daily = res?.signal || (res?.id ? res : null);
         if (daily) setStackSignalDaily(daily);
-      }).catch(() => {});
+        const ok = daily !== null;
+        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok, durationMs: Date.now() - _t, recordCount: ok ? 1 : 0 });
+      }).catch((err) => {
+        logLifecycleEvent('app:dashboard_fetch_signal_end', { ok: false, durationMs: Date.now() - _t, error: err?.message || String(err) });
+      });
     }
   }, [currentScreen]);
 
@@ -8624,6 +8896,17 @@ function AppContent() {
             <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
           </TouchableOpacity>
 
+          {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
+          <TouchableOpacity
+            onPress={() => sidebarNavigate('LifecycleLog')}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+          >
+            <View style={{ width: 18, alignItems: 'center' }}>
+              <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
+            </View>
+            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
+          </TouchableOpacity>
+
           {/* Subscription badge */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -8844,7 +9127,7 @@ function AppContent() {
       )}
 
       {/* Main Content — ScrollView excluded on Troy tab (Troy uses FlatList) */}
-      {currentScreen !== 'TroyChat' && currentScreen !== 'VoiceTimings' && (
+      {currentScreen !== 'TroyChat' && currentScreen !== 'VoiceTimings' && currentScreen !== 'LifecycleLog' && (
       <ScrollView
         ref={scrollRef}
         style={styles.content}
@@ -11658,6 +11941,9 @@ function AppContent() {
 
       {/* Voice Timings — debug panel (rendered outside ScrollView) */}
       {currentScreen === 'VoiceTimings' && <VoiceTimingsScreen />}
+
+      {/* Lifecycle Log — debug panel (rendered outside ScrollView) */}
+      {currentScreen === 'LifecycleLog' && <LifecycleLogScreen />}
 
       {/* Troy Tab — Inline Chat (rendered outside ScrollView) */}
       {currentScreen === 'TroyChat' && (

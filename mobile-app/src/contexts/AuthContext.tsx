@@ -13,6 +13,7 @@ import * as AuthSession from 'expo-auth-session';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
+import { logLifecycleEvent } from '../utils/lifecycleLogger';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -87,6 +88,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      logLifecycleEvent('app:supabase_session_restored', { hasSession: !!session });
     });
 
     // Listen for auth changes
