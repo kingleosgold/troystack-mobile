@@ -138,8 +138,8 @@
       }
     },
     "privacy": "unlisted",
-    "description": "Privacy-first precious metals portfolio tracker. Track your gold and silver holdings with AI-powered receipt scanning. Your data stays on your device - we can't access it.",
-    "githubUrl": "https://github.com/kingleosgold/stack-tracker-pro",
+    "description": "Privacy-first precious metals portfolio tracker. Track your gold and silver holdings with AI-powered receipt scanning.",
+    "githubUrl": "https://github.com/kingleosgold/troystack-mobile",
     "owner": "kingleosgold",
     "runtimeVersion": {
       "policy": "appVersion"
