@@ -11,7 +11,7 @@
 - After each build, update LAST SUBMITTED BUILD to whatever EAS set it to.
 
 ## Project Overview
-Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfolios (gold, silver, platinum, palladium). Built with React Native/Expo, Node.js backend on Railway, RevenueCat for subscriptions.
+Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfolios (gold, silver, platinum, palladium). Built with React Native/Expo, RevenueCat for subscriptions.
 
 ## CRITICAL: Build Workflow (READ FIRST!)
 
@@ -39,7 +39,6 @@ Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfo
 - JavaScript/React code changes
 - Bug fixes in App.js
 - UI changes
-- Backend changes (backend deploys to Railway separately)
 
 ## Tech Stack
 
@@ -49,12 +48,6 @@ Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfo
 - **Main file**: `App.js` (monolithic, ~2500+ lines)
 - **State**: React useState + AsyncStorage for persistence
 - **Subscriptions**: RevenueCat
-
-### Backend
-- **Framework**: Node.js/Express
-- **Location**: `/backend`
-- **Hosted**: Railway (auto-deploys from GitHub main branch)
-- **URL**: stack-tracker-pro-production.up.railway.app
 
 ### Key Services
 - **RevenueCat**: Subscription management (Gold Monthly $9.99, Yearly $79.99, Lifetime $149.99)
@@ -91,11 +84,6 @@ mobile-app/
 │   └── components/
 │       └── GoldPaywall.js  # Subscription paywall
 └── assets/             # Icons, images
-
-backend/
-├── server.js           # Express API server
-├── package.json
-└── data/              # Historical price cache
 ```
 
 ## Known Issues & Quirks
@@ -141,12 +129,6 @@ backend/
 
 ## Deployment Checklist
 
-### Backend Changes:
-1. Edit files in `/backend`
-2. `git add . && git commit -m "message" && git push`
-3. Railway auto-deploys (2-3 minutes)
-4. Check Railway logs for errors
-
 ### Mobile App (TestFlight):
 1. Make sure all JS changes are tested in dev build first
 2. Bump version in app.json if needed
@@ -172,11 +154,6 @@ npx expo start                    # Start dev server (use with dev build)
 # Building
 eas build --profile development --platform ios    # Dev build (testing)
 eas build --profile production --platform ios     # Production build
-
-# Backend
-cd backend
-npm start                         # Local testing
-git push origin main              # Deploy to Railway
 ```
 
 ## Monetization Strategy

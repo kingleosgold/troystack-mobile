@@ -245,7 +245,7 @@ const PRICE_ALERT_CHECK_TASK = 'price-alert-check-task';
 TaskManager.defineTask(PRICE_ALERT_CHECK_TASK, async () => {
   try {
     // 1. Fetch current spot prices
-    const response = await fetch('https://stack-tracker-pro-production.up.railway.app/api/spot-prices');
+    const response = await fetch('<API_URL>/api/spot-prices');
     const data = await response.json();
     const prices = { gold: data.gold, silver: data.silver };
     

@@ -16,7 +16,6 @@
       "Bash(ls:*)",
       "Bash(dir \"C:\\\\Users\\\\Jon\\\\Developer\\\\stack-tracker-pro\\\\backend\\\\*.js\")",
       "Bash(railway:*)",
-      "WebFetch(domain:stack-tracker-pro-production.up.railway.app)",
       "Bash(node:*)",
       "WebSearch",
       "WebFetch(domain:github.com)",
