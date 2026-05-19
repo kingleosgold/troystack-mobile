@@ -307,21 +307,6 @@ Required permissions with justifications:
 - [ ] Data persists only in AsyncStorage (local)
 - [ ] App works offline (cached prices)
 
-### **API Endpoints Test**
-```bash
-# Test production API is working
-curl https://stack-tracker-pro-production.up.railway.app/api/health
-curl https://stack-tracker-pro-production.up.railway.app/api/spot-prices
-curl 'https://stack-tracker-pro-production.up.railway.app/api/historical-spot?date=2023-09-15&metal=gold'
-```
-
-Expected responses:
-- Health: `{"status":"ok","privacy":"first","historicalDataLoaded":true}`
-- Spot prices: `{"gold":4530,"silver":77,...}`
-- Historical: `{"price":1920,"source":"exact"}`
-
----
-
 ## 📱 Local Testing
 
 ### **iOS Simulator**
@@ -359,7 +344,6 @@ npx expo start
 
 ### **API not reachable in production build**
 - Check `app.json` → `extra.apiUrl` is set correctly
-- Test: `curl https://stack-tracker-pro-production.up.railway.app/api/health`
 
 ### **App rejected: Missing privacy policy**
 - Create a simple privacy policy page
@@ -368,7 +352,6 @@ npx expo start
 
 ### **Receipt scanning not working**
 - Verify Camera permission granted
-- Check Railway backend has ANTHROPIC_API_KEY env var
 - Test scan endpoint manually
 
 ---
@@ -388,11 +371,6 @@ npx expo start
 ### **Google Resources**
 - Play Console: https://play.google.com/console
 - Review Guidelines: https://play.google.com/about/developer-content-policy/
-
-### **Railway (Backend)**
-- Dashboard: https://railway.app
-- Deployment logs: Check for errors
-- Environment variables: Verify ANTHROPIC_API_KEY is set
 
 ---
 
@@ -437,7 +415,6 @@ eas submit --platform android --latest
 - ✅ Bundle IDs: `com.stacktrackerpro.app`
 - ✅ Version: `1.0.0`
 - ✅ Privacy descriptions: All required permissions
-- ✅ API endpoint: Production Railway URL
 - ✅ Build profiles: Development, Preview, Production
 - ✅ Auto-increment build numbers
 - ✅ App Store compliance ready
@@ -457,6 +434,6 @@ eas submit --platform android --latest
 
 Stack Tracker Pro is configured and ready for production builds. Follow this guide step-by-step, and you'll have your app in the App Store and Play Store.
 
-**Questions?** Review the Expo documentation or check Railway logs if API issues occur.
+**Questions?** Review the Expo documentation.
 
 **Good luck with your launch! 🚀**
