@@ -317,7 +317,7 @@ sidebarNavItems = [
 
 ### RevenueCat
 - **Apple API Key:** `appl_WDKPrWsOHfWzfJhxOGluQYsniLW` (public, in App.js)
-- **Products:** `stacktracker_gold_monthly` ($9.99), `stacktracker_gold_yearly` ($79.99), `stacktracker_lifetime` ($149.99)
+- **Products:** `stacktracker_gold_monthly` ($4.99), `stacktracker_gold_yearly` ($39.99), `stacktracker_lifetime` ($149.99)
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
 - **Config:** `mobile-app/src/utils/entitlements.js`

@@ -50,7 +50,7 @@ Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfo
 - **Subscriptions**: RevenueCat
 
 ### Key Services
-- **RevenueCat**: Subscription management (Gold Monthly $9.99, Yearly $79.99, Lifetime $149.99)
+- **RevenueCat**: Subscription management (Gold Monthly $4.99, Yearly $39.99, Lifetime $149.99)
 - **MetalPriceAPI**: Live spot prices (primary)
 - **GoldAPI**: Fallback for spot prices
 - **Claude Vision API**: Receipt OCR scanning
@@ -63,7 +63,7 @@ Stack Tracker Pro is a privacy-first iOS app for tracking precious metals portfo
 - Basic analytics
 - CSV export
 
-### Gold/Lifetime Tier ($9.99/mo, $79.99/yr, $149.99 lifetime)
+### Gold/Lifetime Tier ($4.99/mo, $39.99/yr, $149.99 lifetime)
 - AI Intelligence Feed
 - COMEX Vault Watch
 - AI Stack Advisor (coming soon)
@@ -115,8 +115,8 @@ mobile-app/
 ## RevenueCat Setup
 
 ### Products:
-- `stacktracker_gold_monthly` - $9.99/month
-- `stacktracker_gold_yearly` - $79.99/year (save 33%)
+- `stacktracker_gold_monthly` - $4.99/month
+- `stacktracker_gold_yearly` - $39.99/year (save 33%)
 - `stacktracker_lifetime` - $149.99 one-time
 
 ### Entitlements:
