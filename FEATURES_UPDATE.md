@@ -135,7 +135,7 @@ This update adds significant new features to Stack Tracker Pro, including multi-
 |---|---|---|---|
 | **Monthly** | $4.99/mo | Perfect for trying out Gold tier | New users |
 | **Yearly** | $39.99/yr | Save 33% compared to monthly | **MOST POPULAR** |
-| **Lifetime** | $79.99 | Pay once, use forever - Best value! | Serious stackers |
+| **Lifetime** | $149.99 | Pay once, use forever - Best value! | Serious stackers |
 
 ### What's Included in Gold
 - ✅ Unlimited holdings (free tier: 25 items max)
@@ -263,7 +263,7 @@ This update adds significant new features to Stack Tracker Pro, including multi-
 **Pricing Display**:
 - Monthly: $4.99/mo - "Perfect for trying out Gold tier"
 - Yearly: $39.99/yr - "Save 33% compared to monthly" [MOST POPULAR]
-- Lifetime: $79.99 - "Pay once, use forever - Best value!"
+- Lifetime: $149.99 - "Pay once, use forever - Best value!"
 
 **Coming Soon Message** (if offerings not loaded):
 "Gold memberships are being activated. Your developer account is being set up with Apple and Google. Try again in 24 hours, or leave your email to be notified when it's ready!"
@@ -302,7 +302,7 @@ This update adds significant new features to Stack Tracker Pro, including multi-
 ### Test Pricing Display
 1. Open app → Holdings → "+ Add Purchase" (when not Gold)
 2. Scroll to see paywall trigger (add 26+ items)
-3. **Expected**: Paywall shows $79.99 for Lifetime
+3. **Expected**: Paywall shows $149.99 for Lifetime
 4. **Expected**: Description says "Pay once, use forever - Best value!"
 
 ---
@@ -318,7 +318,7 @@ This update adds significant new features to Stack Tracker Pro, including multi-
 ### For Developers
 - **Backend Changes**: Deploy updated `server.js` with new receipt scanning prompt
 - **Mobile App**: Deploy updated app with new features
-- **RevenueCat**: Manually update Lifetime pricing in RevenueCat dashboard to $79.99
+- **RevenueCat**: Manually update Lifetime pricing in RevenueCat dashboard to $149.99
 - **Dependencies**: New dependency `xlsx` added to mobile-app package.json
 
 ---
@@ -415,7 +415,7 @@ A: Currently no. The scan count is tied to your device. If you upgrade to Gold, 
 A: You can manually add the missing 2 items. AI scanning is a convenience feature - you can always add items manually.
 
 **Q: Why did Lifetime price increase?**
-A: The app now includes significantly more features (multi-item scanning, spreadsheet import, unlimited scans for Gold). The $79.99 lifetime price better reflects the value provided.
+A: The app now includes significantly more features (multi-item scanning, spreadsheet import, unlimited scans for Gold). The $149.99 lifetime price better reflects the value provided.
 
 **Q: Do scan limits apply to manual entry?**
 A: No! Manual entry is always unlimited, even on free tier. Scan limits only apply to AI-powered receipt scanning and spreadsheet imports.

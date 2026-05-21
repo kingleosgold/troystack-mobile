@@ -197,13 +197,13 @@ Your privacy policy should emphasize:
 
 The app supports a freemium model with in-app purchases:
 
-| Feature | Free | Stacker ($4.99/mo) | Whale ($9.99/mo) |
-|---------|------|-------------------|------------------|
-| Manual entry | 10 items | Unlimited | Unlimited |
-| Receipt scanning | ❌ | 5/month | Unlimited |
-| Price alerts | 1 | 5 | Unlimited |
-| CSV export | ❌ | ✅ | ✅ |
-| Cloud sync | ❌ | ❌ | ✅ (E2E encrypted) |
+| Feature | Free | TroyStack Gold Monthly ($4.99/mo) | TroyStack Gold Yearly ($39.99/yr) | Lifetime Gold Pass ($149.99 one-time) |
+|---------|------|-----------------------------------|-----------------------------------|--------------------------------------|
+| Manual entry | 10 items | Unlimited | Unlimited | Unlimited |
+| Receipt scanning | ❌ | Unlimited | Unlimited | Unlimited |
+| Price alerts | 1 | Unlimited | Unlimited | Unlimited |
+| CSV export | ❌ | ✅ | ✅ | ✅ |
+| Cloud sync | ❌ | ✅ (E2E encrypted) | ✅ (E2E encrypted) | ✅ (E2E encrypted) |
 
 To implement, add `expo-in-app-purchases` and create products in App Store Connect / Google Play Console.
 
