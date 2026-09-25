@@ -10556,14 +10556,12 @@ function AppContent() {
               </View>
 
               {/* ===== DEALER PRICE COMPARISON BUTTON ===== */}
+              {/* Open to every user. The dealer links carry affiliate tracking, and the
+                  sidebar entry was never gated, so the paywall here only blocked clicks. */}
               <TouchableOpacity
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  if (!hasGoldAccess) {
-                    setShowPaywallModal(true);
-                  } else {
-                    setCurrentScreen('CompareDealers');
-                  }
+                  setCurrentScreen('CompareDealers');
                 }}
                 style={{
                   flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -10584,11 +10582,6 @@ function AppContent() {
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>Find the lowest premiums on popular products</Text>
                   </View>
                 </View>
-                {!hasGoldAccess && (
-                  <View style={{ backgroundColor: 'rgba(212,168,67,0.2)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 }}>
-                    <Text style={{ color: colors.gold, fontSize: 11, fontWeight: '700' }}>GOLD</Text>
-                  </View>
-                )}
                 <Text style={{ color: colors.muted, fontSize: 18, marginLeft: 8 }}>{'\u203A'}</Text>
               </TouchableOpacity>
 
