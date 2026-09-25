@@ -49,7 +49,6 @@ const GOLD_FEATURES = [
   { icon: '📰', text: 'Daily Market Brief' },
   { icon: '🧠', text: 'Portfolio Intelligence' },
   { icon: '📸', text: 'Unlimited Receipt Scanning' },
-  { icon: '🔍', text: 'Dealer Price Comparison' },
   { icon: '📊', text: 'Advanced Analytics' },
   { icon: '🏦', text: 'COMEX Vault Watch' },
 ];
