@@ -22,10 +22,26 @@ import * as Haptics from 'expo-haptics';
 import { restorePurchases } from '../utils/entitlements';
 import TroyCoinIcon from './TroyCoinIcon';
 
-const PRIVACY_URL = 'https://api.stacktrackergold.com/privacy';
-const TERMS_URL = 'https://api.stacktrackergold.com/terms';
+const PRIVACY_URL = 'https://troystack.com/privacy';
+const TERMS_URL = 'https://troystack.com/terms';
 
 const GOLD_COLOR = '#fbbf24';
+
+// Length of a free intro offer this user is eligible for, such as "7 Days",
+// or null. RevenueCat advises plain pricing when eligibility is unknown, so
+// anything short of ELIGIBLE shows no trial wording.
+const freeTrialLength = (product, eligibility) => {
+  const intro = product?.introPrice;
+  const ELIGIBLE = Purchases.INTRO_ELIGIBILITY_STATUS?.INTRO_ELIGIBILITY_STATUS_ELIGIBLE ?? 2;
+  if (!intro || intro.price !== 0) return null;
+  if (eligibility?.[product.identifier]?.status !== ELIGIBLE) return null;
+  const n = (intro.periodNumberOfUnits || 0) * (intro.cycles || 1);
+  const unit = String(intro.periodUnit || '').toUpperCase();
+  const days = unit === 'DAY' ? n : unit === 'WEEK' ? n * 7 : 0;
+  if (days > 0) return `${days} Day${days === 1 ? '' : 's'}`;
+  if (unit === 'MONTH' && n > 0) return `${n} Month${n === 1 ? '' : 's'}`;
+  return null;
+};
 
 const GOLD_FEATURES = [
   { icon: 'troy', text: 'Unlimited Troy AI Chat' },
@@ -44,6 +60,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
   const [purchasing, setPurchasing] = useState(null);
   const [restoring, setRestoring] = useState(false);
   const [billingCycle, setBillingCycle] = useState('yearly'); // 'monthly' or 'yearly'
+  const [introEligibility, setIntroEligibility] = useState({});
 
   useEffect(() => {
     if (visible) {
@@ -58,6 +75,14 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
 
       if (offerings.current) {
         setOffering(offerings.current);
+        try {
+          const ids = [offerings.current.annual, offerings.current.monthly]
+            .filter(Boolean)
+            .map((pkg) => pkg.product.identifier);
+          setIntroEligibility(ids.length ? (await Purchases.checkTrialOrIntroductoryPriceEligibility(ids)) || {} : {});
+        } catch (e) {
+          setIntroEligibility({});
+        }
       } else {
         if (__DEV__) console.log('No offerings available');
         setOffering(null);
@@ -82,7 +107,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
           'Welcome to Gold!',
-          'Your subscription is now active. Enjoy the full Stack Tracker experience!',
+          'Your subscription is now active. Enjoy the full TroyStack experience!',
           [{ text: 'Start Stacking', onPress: () => {
             onPurchaseSuccess?.();
             onClose();
@@ -136,6 +161,8 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
     if (!pkg) return null;
 
     const isPurchasing = purchasing === pkg.identifier;
+    const trial = freeTrialLength(pkg.product, introEligibility);
+    const per = billingCycle === 'yearly' ? 'yr' : 'mo';
 
     return (
       <View style={[styles.tierCard, { borderColor: GOLD_COLOR, borderWidth: 2 }]}>
@@ -184,11 +211,11 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
             onPress={() => handlePurchase(pkg)}
             disabled={loading}
           >
-            <Text style={styles.tierCTAText}>Try Gold Free for 7 Days</Text>
+            <Text style={styles.tierCTAText}>{trial ? `Try Gold Free for ${trial}` : 'Upgrade to Gold'}</Text>
           </TouchableOpacity>
         )}
         <Text style={{ color: '#71717a', fontSize: 11, textAlign: 'center', marginTop: 6 }}>
-          Then {pkg.product.priceString}/{billingCycle === 'yearly' ? 'yr' : 'mo'} · Cancel anytime
+          {trial ? 'Then ' : ''}{pkg.product.priceString}/{per} · Cancel anytime
         </Text>
       </View>
     );

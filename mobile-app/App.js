@@ -1058,6 +1058,10 @@ const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'https://api.stacktr
 const appVersion = Constants.expoConfig?.version || Constants.manifest?.version || '0.0.0';
 const TROY_AVATAR = require('./assets/troy-avatar.png');
 
+// The screen the app opens on and returns to. The dashboard shows the stack's
+// value and today's prices at a glance, and Troy is one tap away from it.
+const HOME_SCREEN = 'Dashboard';
+
 const useSwipeBack = (onClose) => {
   const startX = useRef(0);
   return PanResponder.create({
@@ -2404,8 +2408,8 @@ function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState('TroyChat');
-  const [previousScreen, setPreviousScreen] = useState('TroyChat');
+  const [currentScreen, setCurrentScreen] = useState(HOME_SCREEN);
+  const [previousScreen, setPreviousScreen] = useState(HOME_SCREEN);
   const [metalTab, setMetalTab] = useState('both'); // Changed from 'silver' to 'both'
 
   // Spot Prices - Updated defaults for Dec 2025
@@ -2536,7 +2540,7 @@ function AppContent() {
   const exportSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const advancedSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const stackSignalSwipe = useRef(useSwipeBack(() => setShowStackSignal(false))).current;
-  const dealerPricesSwipe = useRef(useSwipeBack(() => setCurrentScreen('TroyChat'))).current;
+  const dealerPricesSwipe = useRef(useSwipeBack(() => setCurrentScreen(HOME_SCREEN))).current;
 
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [importData, setImportData] = useState([]);
@@ -4885,6 +4889,16 @@ function AppContent() {
     setTroyMessages([]);
   };
 
+  // Home entry into Troy. Starts a fresh conversation and switches to the chat;
+  // the effect below sends once that state has rendered. Sending in the same
+  // tick would reuse the previous conversation id captured by this closure.
+  const [pendingTroyPrompt, setPendingTroyPrompt] = useState(null);
+  const askTroyFromHome = (text) => {
+    startNewConversation();
+    setPendingTroyPrompt(text || null);
+    setCurrentScreen('TroyChat');
+  };
+
   const deleteConversation = async (conversationId) => {
     try {
       await troyAPI.deleteConversation(conversationId);
@@ -5509,6 +5523,13 @@ function AppContent() {
 
     setTroyLoading(false);
   };
+
+  useEffect(() => {
+    if (currentScreen !== 'TroyChat' || !pendingTroyPrompt || activeConversationId || troyLoading) return;
+    const text = pendingTroyPrompt;
+    setPendingTroyPrompt(null);
+    sendTroyMessage(text);
+  }, [currentScreen, pendingTroyPrompt, activeConversationId, troyLoading]);
 
   // closeTroyChat removed — Troy is always available as home screen
 
@@ -6701,7 +6722,7 @@ function AppContent() {
    * Conditions:
    * - Max 3 prompts per year
    * - At least 30 days between prompts
-   * - Triggered after 10th holding OR 7 days of use
+   * - Triggered after 3rd holding OR 7 days of use
    */
   const checkAndRequestReview = async (trigger = 'holdings') => {
     try {
@@ -6738,7 +6759,7 @@ function AppContent() {
       // Check trigger conditions
       if (trigger === 'holdings') {
         const totalHoldings = silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length;
-        if (totalHoldings < 10) {
+        if (totalHoldings < 3) {
           return; // Not enough holdings yet
         }
         if (__DEV__) console.log(`📱 Triggering review prompt: ${totalHoldings} holdings`);
@@ -8844,8 +8865,8 @@ function AppContent() {
 
   // Sidebar nav items with custom icon components
   const sidebarNavItems = [
-    { key: 'TroyChat', label: 'Troy', subtitle: 'Home', iconType: 'troy' },
-    { key: 'Dashboard', label: 'Dashboard', iconType: 'today' },
+    { key: 'Dashboard', label: 'Dashboard', subtitle: 'Home', iconType: 'today' },
+    { key: 'TroyChat', label: 'Troy', subtitle: 'Ask anything', iconType: 'troy' },
     { key: 'MyStack', label: 'My Stack', iconType: 'holdings' },
     { key: 'Analytics', label: 'Analytics', iconType: 'analytics' },
     { key: 'StackSignal', label: 'Stack Signal', iconType: 'signal' },
@@ -9199,6 +9220,9 @@ function AppContent() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           {currentScreen === 'TroyChat' ? (
             <>
+              <TouchableOpacity onPress={() => setCurrentScreen(HOME_SCREEN)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 8 }}>
+                <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => drawerNavigation?.dispatch(DrawerActions.openDrawer())} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
                 <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2630'}</Text>
               </TouchableOpacity>
@@ -9223,11 +9247,17 @@ function AppContent() {
             </>
           ) : (
             <>
-              <TouchableOpacity onPress={() => setCurrentScreen('TroyChat')} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
-                <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
-              </TouchableOpacity>
+              {currentScreen === HOME_SCREEN ? (
+                <TouchableOpacity onPress={() => drawerNavigation?.dispatch(DrawerActions.openDrawer())} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
+                  <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2630'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={() => setCurrentScreen(HOME_SCREEN)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
+                  <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
+                </TouchableOpacity>
+              )}
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700' }}>
-                {currentScreen === 'Dashboard' ? 'Dashboard' : currentScreen === 'MyStack' ? 'My Stack' : currentScreen === 'Analytics' ? 'Analytics' : currentScreen === 'StackSignal' ? 'Stack Signal' : currentScreen === 'Settings' ? 'Settings' : currentScreen === 'CompareDealers' ? 'Compare Dealers' : currentScreen}
+                {currentScreen === HOME_SCREEN ? 'TroyStack' : currentScreen === 'Dashboard' ? 'Dashboard' : currentScreen === 'MyStack' ? 'My Stack' : currentScreen === 'Analytics' ? 'Analytics' : currentScreen === 'StackSignal' ? 'Stack Signal' : currentScreen === 'Settings' ? 'Settings' : currentScreen === 'CompareDealers' ? 'Compare Dealers' : currentScreen}
               </Text>
             </>
           )}
@@ -9411,6 +9441,9 @@ function AppContent() {
             general: 'Market',
           };
 
+          const holdingsCount = silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length;
+          const isEmptyStack = !demoData && holdingsCount === 0;
+
           const todayCardBg = isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
           const todayCardBorder = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
 
@@ -9431,6 +9464,36 @@ function AppContent() {
 
                 <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '500', marginBottom: 4, marginTop: 4 }}>Today, {dateStr}</Text>
 
+                {isEmptyStack ? (
+                  <View style={{ marginTop: 4 }}>
+                    <Text style={{ color: colors.text, fontSize: scaledFonts.xlarge, fontWeight: '700', marginBottom: 6 }}>Start your stack</Text>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.45, marginBottom: 16 }}>
+                      Add what you own and TroyStack values it at live spot prices.
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); handleAddPurchase(); }}
+                        style={{ flex: 1, backgroundColor: '#D4A843', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                      >
+                        <Text style={{ color: '#000', fontWeight: '700', fontSize: scaledFonts.normal }}>Add a holding</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          Alert.alert('Scan Receipt', 'Choose a source', [
+                            { text: 'Take Photo', onPress: () => performScan('camera') },
+                            { text: 'Choose from Library', onPress: () => performScan('gallery') },
+                            { text: 'Cancel', style: 'cancel' },
+                          ]);
+                        }}
+                        style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(212,168,67,0.5)', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                      >
+                        <Text style={{ color: '#D4A843', fontWeight: '700', fontSize: scaledFonts.normal }}>Scan a receipt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                <>
                 <Text style={{ color: colors.text, fontSize: scaledFonts.huge, fontWeight: '700', marginBottom: 2 }}>${formatCurrency(effTotalMeltValue, 0)}</Text>
 
                 {effSparklineData && effSparklineData.gold.length >= 2 && effTotalMeltValue > 0 && (() => {
@@ -9481,6 +9544,46 @@ function AppContent() {
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
                   <Image source={TROY_AVATAR} style={{ width: 14, height: 14, borderRadius: 7 }} />
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{aiSummary}</Text>
+                </View>
+                </>
+                )}
+              </View>
+
+              {/* ===== ASK TROY ===== */}
+              <View style={{
+                backgroundColor: todayCardBg,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: todayCardBorder,
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); askTroyFromHome(null); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12 }}
+                >
+                  <Image source={TROY_AVATAR} style={{ width: 24, height: 24, borderRadius: 12 }} />
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, flex: 1 }}>Ask Troy about your stack or the market</Text>
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                  {(isEmptyStack ? [
+                    { label: 'What moved metals today?', text: 'What moved gold and silver today?' },
+                    { label: 'Gold/silver ratio', text: 'What is the gold to silver ratio telling us right now?' },
+                    { label: 'Junk silver value', text: "What is pre-1965 junk silver worth at today's spot price?" },
+                  ] : [
+                    { label: "How's my stack?", text: "How's my stack performing?" },
+                    { label: 'Gold/silver ratio', text: 'Analyze my gold-to-silver ratio' },
+                    { label: 'Purchasing power', text: 'What can my stack buy in real terms? Show me purchasing power.' },
+                  ]).map((chip) => (
+                    <TouchableOpacity
+                      key={chip.label}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); askTroyFromHome(chip.text); }}
+                      style={{ backgroundColor: 'rgba(212,168,67,0.08)', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(212,168,67,0.2)' }}
+                    >
+                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.small }}>{chip.label}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
 
@@ -14643,7 +14746,7 @@ function AppContent() {
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9998 }}>
           <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' }}>
-              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCurrentScreen('TroyChat'); }} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCurrentScreen(HOME_SCREEN); }} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Text style={{ color: '#C9A84C', fontSize: 28, fontWeight: '300' }}>{'\u2039'}</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>Compare Dealer Prices</Text>
