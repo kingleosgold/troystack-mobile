@@ -2535,6 +2535,9 @@ function AppContent() {
   const silenceTimerRef = useRef(null);
   const silenceStartRef = useRef(null);
   const troyAbortRef = useRef(null);
+  // Bumped whenever the chat switches conversation (new chat, load one), so a
+  // send or load still in flight from before drops its result.
+  const troySessionRef = useRef(0);
   const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
@@ -4888,18 +4891,28 @@ function AppContent() {
   };
 
   const loadConversation = async (conversationId) => {
+    const session = ++troySessionRef.current;
     setTroyLoading(true);
     try {
       const data = await troyAPI.getConversation(conversationId);
+      if (troySessionRef.current !== session) return;
       setActiveConversationId(conversationId);
       setTroyMessages(data.messages || []);
     } catch (e) {
       console.error('Failed to load conversation:', e);
     }
-    setTroyLoading(false);
+    if (troySessionRef.current === session) setTroyLoading(false);
   };
 
   const startNewConversation = () => {
+    // Drop any send or load still in flight so it can't refill this chat.
+    troySessionRef.current += 1;
+    if (troyAbortRef.current) {
+      troyAbortRef.current.abort();
+      troyAbortRef.current = null;
+    }
+    autoPlayNextResponseRef.current = false;
+    setTroyLoading(false);
     setActiveConversationId(null);
     setTroyMessages([]);
   };
@@ -5426,6 +5439,7 @@ function AppContent() {
 
     if (!messageText) setTroyInputText('');
 
+    const session = troySessionRef.current;
     let convId = activeConversationId;
 
     // If no active conversation, create one first
@@ -5433,6 +5447,7 @@ function AppContent() {
       if (__DEV__) console.log('💬 [Troy] No active conversation, creating one...');
       try {
         const newConv = await troyAPI.createConversation();
+        if (troySessionRef.current !== session) return;
         if (__DEV__) console.log('💬 [Troy] Created conversation:', newConv?.id, 'error:', newConv?.error);
         convId = newConv.id;
         setActiveConversationId(convId);
@@ -5467,6 +5482,7 @@ function AppContent() {
     try {
       troyAbortRef.current = new AbortController();
       const response = await troyAPI.sendMessage(convId, text, troyAbortRef.current.signal);
+      if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
 
@@ -5525,6 +5541,7 @@ function AppContent() {
         playTroyVoice(assistantMsg.content, assistantMsg.id);
       }
     } catch (e) {
+      if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       autoPlayNextResponseRef.current = false;
       if (e.name === 'AbortError') {
@@ -6739,7 +6756,9 @@ function AppContent() {
    * - At least 30 days between prompts
    * - Triggered after 3rd holding OR 7 days of use
    */
-  const checkAndRequestReview = async (trigger = 'holdings') => {
+  // holdingsCount: the count after the add that triggered this. The caller
+  // runs in the same render as the add, so state here still has the old count.
+  const checkAndRequestReview = async (trigger = 'holdings', holdingsCount = null) => {
     try {
       // Check if store review is available
       const isAvailable = await StoreReview.isAvailableAsync();
@@ -6773,7 +6792,7 @@ function AppContent() {
 
       // Check trigger conditions
       if (trigger === 'holdings') {
-        const totalHoldings = silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length;
+        const totalHoldings = holdingsCount ?? (silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length);
         if (totalHoldings < 3) {
           return; // Not enough holdings yet
         }
@@ -8426,7 +8445,7 @@ function AppContent() {
       setter(prev => prev.map(i => i.id === editingItem.id ? item : i));
     } else {
       setter(prev => [...prev, item]);
-      checkAndRequestReview('holdings');
+      checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
     }
 
     // Sync to Supabase if signed in
