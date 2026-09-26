@@ -2492,6 +2492,21 @@ function AppContent() {
   const [versionTapCount, setVersionTapCount] = useState(0);
   const versionTapTimer = useRef(null);
 
+  // Diagnostics (Voice Timings, Lifecycle Log) stay out of the drawer unless
+  // turned on with a long press on Settings > Version. Saved per device.
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem('stack_show_diagnostics')
+      .then((v) => { if (v === 'true') setShowDiagnostics(true); })
+      .catch(() => {});
+  }, []);
+  const toggleDiagnostics = () => {
+    const next = !showDiagnostics;
+    setShowDiagnostics(next);
+    AsyncStorage.setItem('stack_show_diagnostics', next ? 'true' : 'false').catch(() => {});
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
   // Troy state
   const [troyConversations, setTroyConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
@@ -6964,10 +6979,13 @@ function AppContent() {
       if (data.brief) {
         setDailyBrief(data.brief);
         lastBriefStateRef.current = data.brief;
-      } else {
+      } else if (response.ok) {
         if (__DEV__) console.log(`📰 [Brief] No brief returned (brief=${!!data.brief}, error=${data.error})`);
         setDailyBrief(null);
         lastBriefStateRef.current = null;
+      } else if (__DEV__) {
+        // Refused or failed (429, 500): keep whatever brief is showing.
+        console.log(`📰 [Brief] HTTP ${response.status}, keeping the current brief`);
       }
     } catch (error) {
       if (__DEV__) console.error('📰 [Brief] Fetch error:', error.message);
@@ -7260,7 +7278,10 @@ function AppContent() {
     if (supabaseUser) {
       console.log('[Troy] Fetching conversations...');
       troyAPI.listConversations().then(result => {
-        const convos = result?.conversations || (Array.isArray(result) ? result : []);
+        // A refused or failed call comes back as { error }. Keep the list on
+        // screen rather than showing "No conversations yet".
+        const convos = Array.isArray(result?.conversations) ? result.conversations : (Array.isArray(result) ? result : null);
+        if (!convos) return;
         console.log('[Troy] Fetched conversations:', convos.length);
         setTroyConversations(convos);
       }).catch(() => {});
@@ -9074,27 +9095,32 @@ function AppContent() {
             <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Settings</Text>
           </TouchableOpacity>
 
-          {/* Debug: voice timing panel (reads PR #22 instrumentation in-app) */}
-          <TouchableOpacity
-            onPress={() => sidebarNavigate('VoiceTimings')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
-          >
-            <View style={{ width: 18, alignItems: 'center' }}>
-              <Text style={{ color: '#71717a', fontSize: 14 }}>⏱</Text>
-            </View>
-            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
-          </TouchableOpacity>
+          {/* Debug panels, only with diagnostics on (long press Settings > Version) */}
+          {showDiagnostics && (
+            <>
+              {/* Debug: voice timing panel (reads PR #22 instrumentation in-app) */}
+              <TouchableOpacity
+                onPress={() => sidebarNavigate('VoiceTimings')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+              >
+                <View style={{ width: 18, alignItems: 'center' }}>
+                  <Text style={{ color: '#71717a', fontSize: 14 }}>⏱</Text>
+                </View>
+                <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
+              </TouchableOpacity>
 
-          {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
-          <TouchableOpacity
-            onPress={() => sidebarNavigate('LifecycleLog')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
-          >
-            <View style={{ width: 18, alignItems: 'center' }}>
-              <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
-            </View>
-            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
-          </TouchableOpacity>
+              {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
+              <TouchableOpacity
+                onPress={() => sidebarNavigate('LifecycleLog')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+              >
+                <View style={{ width: 18, alignItems: 'center' }}>
+                  <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
+                </View>
+                <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           {/* Subscription badge */}
           <View style={{
@@ -9118,7 +9144,7 @@ function AppContent() {
         </View>
       </SafeAreaView>
     );
-  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation]);
+  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics]);
   if (showResetPasswordScreen) {
     return (
       <View style={[styles.container, { backgroundColor: '#09090b' }]}>
@@ -11783,9 +11809,12 @@ function AppContent() {
                   isLast={false}
                 />
                 <RowSeparator />
-                {/* Version - triple-tap in __DEV__ to toggle screenshot mode */}
+                {/* Version - triple-tap in __DEV__ to toggle screenshot mode,
+                    long press in any build to show or hide diagnostics */}
                 <TouchableOpacity
                   onPress={__DEV__ ? handleVersionTap : undefined}
+                  onLongPress={toggleDiagnostics}
+                  delayLongPress={800}
                   activeOpacity={__DEV__ ? 0.7 : 1}
                   style={{
                     flexDirection: 'row',
