@@ -6980,10 +6980,12 @@ function AppContent() {
   // TODAY TAB - INTELLIGENCE FEED
   // ============================================
 
+  // Resolves true only when this call returned a brief. A refused or failed
+  // call keeps the brief on screen but still resolves false.
   const fetchDailyBrief = async () => {
     if (!supabaseUser) {
       if (__DEV__) console.log(`📰 [Brief] Skipped: supabaseUser=${!!supabaseUser}`);
-      return;
+      return false;
     }
     try {
       setDailyBriefLoading(true);
@@ -6998,6 +7000,7 @@ function AppContent() {
       if (data.brief) {
         setDailyBrief(data.brief);
         lastBriefStateRef.current = data.brief;
+        return true;
       } else if (response.ok) {
         if (__DEV__) console.log(`📰 [Brief] No brief returned (brief=${!!data.brief}, error=${data.error})`);
         setDailyBrief(null);
@@ -7006,8 +7009,10 @@ function AppContent() {
         // Refused or failed (429, 500): keep whatever brief is showing.
         console.log(`📰 [Brief] HTTP ${response.status}, keeping the current brief`);
       }
+      return false;
     } catch (error) {
       if (__DEV__) console.error('📰 [Brief] Fetch error:', error.message);
+      return false;
     } finally {
       setDailyBriefLoading(false);
     }
@@ -7234,15 +7239,14 @@ function AppContent() {
     if (currentScreen === 'Dashboard' && supabaseUser && (!dailyBrief || !dailyBrief.is_current)) {
       logLifecycleEvent('app:dashboard_fetch_brief_start');
       const _t = Date.now();
-      // fetchDailyBrief swallows errors internally. Derive ok from the
-      // post-call ref: non-null = the success path set a real brief; null
-      // can mean either "API said no brief today" or "error during fetch".
-      // We treat non-null as ok=true; null we can't distinguish so leave ok
-      // false but surface enough metadata for the operator to interpret.
-      fetchDailyBrief().then(() => {
-        const briefState = lastBriefStateRef.current;
+      // fetchDailyBrief swallows errors internally and resolves true only
+      // when this call returned a brief. false can mean "API said no brief
+      // today" or a refused or failed call; a failed call keeps the older
+      // brief on screen, so read its metadata only on a true.
+      fetchDailyBrief().then((gotBrief) => {
+        const briefState = gotBrief ? lastBriefStateRef.current : null;
         logLifecycleEvent('app:dashboard_fetch_brief_end', {
-          ok: briefState !== null,
+          ok: gotBrief === true,
           durationMs: Date.now() - _t,
           isCurrent: briefState?.is_current ?? null,
           briefDate: briefState?.date ?? null,
