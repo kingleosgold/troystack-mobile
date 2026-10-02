@@ -1058,6 +1058,10 @@ const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'https://api.stacktr
 const appVersion = Constants.expoConfig?.version || Constants.manifest?.version || '0.0.0';
 const TROY_AVATAR = require('./assets/troy-avatar.png');
 
+// The screen the app opens on and returns to. The dashboard shows the stack's
+// value and today's prices at a glance, and Troy is one tap away from it.
+const HOME_SCREEN = 'Dashboard';
+
 const useSwipeBack = (onClose) => {
   const startX = useRef(0);
   return PanResponder.create({
@@ -2404,8 +2408,8 @@ function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState('TroyChat');
-  const [previousScreen, setPreviousScreen] = useState('TroyChat');
+  const [currentScreen, setCurrentScreen] = useState(HOME_SCREEN);
+  const [previousScreen, setPreviousScreen] = useState(HOME_SCREEN);
   const [metalTab, setMetalTab] = useState('both'); // Changed from 'silver' to 'both'
 
   // Spot Prices - Updated defaults for Dec 2025
@@ -2488,6 +2492,21 @@ function AppContent() {
   const [versionTapCount, setVersionTapCount] = useState(0);
   const versionTapTimer = useRef(null);
 
+  // Diagnostics (Voice Timings, Lifecycle Log) stay out of the drawer unless
+  // turned on with a long press on Settings > Version. Saved per device.
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem('stack_show_diagnostics')
+      .then((v) => { if (v === 'true') setShowDiagnostics(true); })
+      .catch(() => {});
+  }, []);
+  const toggleDiagnostics = () => {
+    const next = !showDiagnostics;
+    setShowDiagnostics(next);
+    AsyncStorage.setItem('stack_show_diagnostics', next ? 'true' : 'false').catch(() => {});
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
   // Troy state
   const [troyConversations, setTroyConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
@@ -2516,6 +2535,9 @@ function AppContent() {
   const silenceTimerRef = useRef(null);
   const silenceStartRef = useRef(null);
   const troyAbortRef = useRef(null);
+  // Bumped whenever the chat switches conversation (new chat, load one), so a
+  // send or load still in flight from before drops its result.
+  const troySessionRef = useRef(0);
   const messageAnimsRef = useRef(new Map());
   const troyFlatListRef = useRef(null);
   // Swipe-back gesture responders for full-screen pages
@@ -2536,7 +2558,7 @@ function AppContent() {
   const exportSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const advancedSwipe = useRef(useSwipeBack(() => setSettingsSubPage(null))).current;
   const stackSignalSwipe = useRef(useSwipeBack(() => setShowStackSignal(false))).current;
-  const dealerPricesSwipe = useRef(useSwipeBack(() => setCurrentScreen('TroyChat'))).current;
+  const dealerPricesSwipe = useRef(useSwipeBack(() => setCurrentScreen(HOME_SCREEN))).current;
 
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [importData, setImportData] = useState([]);
@@ -4869,20 +4891,40 @@ function AppContent() {
   };
 
   const loadConversation = async (conversationId) => {
+    const session = ++troySessionRef.current;
     setTroyLoading(true);
     try {
       const data = await troyAPI.getConversation(conversationId);
+      if (troySessionRef.current !== session) return;
       setActiveConversationId(conversationId);
       setTroyMessages(data.messages || []);
     } catch (e) {
       console.error('Failed to load conversation:', e);
     }
-    setTroyLoading(false);
+    if (troySessionRef.current === session) setTroyLoading(false);
   };
 
   const startNewConversation = () => {
+    // Drop any send or load still in flight so it can't refill this chat.
+    troySessionRef.current += 1;
+    if (troyAbortRef.current) {
+      troyAbortRef.current.abort();
+      troyAbortRef.current = null;
+    }
+    autoPlayNextResponseRef.current = false;
+    setTroyLoading(false);
     setActiveConversationId(null);
     setTroyMessages([]);
+  };
+
+  // Home entry into Troy. Starts a fresh conversation and switches to the chat;
+  // the effect below sends once that state has rendered. Sending in the same
+  // tick would reuse the previous conversation id captured by this closure.
+  const [pendingTroyPrompt, setPendingTroyPrompt] = useState(null);
+  const askTroyFromHome = (text) => {
+    startNewConversation();
+    setPendingTroyPrompt(text || null);
+    setCurrentScreen('TroyChat');
   };
 
   const deleteConversation = async (conversationId) => {
@@ -5397,6 +5439,7 @@ function AppContent() {
 
     if (!messageText) setTroyInputText('');
 
+    const session = troySessionRef.current;
     let convId = activeConversationId;
 
     // If no active conversation, create one first
@@ -5404,6 +5447,7 @@ function AppContent() {
       if (__DEV__) console.log('💬 [Troy] No active conversation, creating one...');
       try {
         const newConv = await troyAPI.createConversation();
+        if (troySessionRef.current !== session) return;
         if (__DEV__) console.log('💬 [Troy] Created conversation:', newConv?.id, 'error:', newConv?.error);
         convId = newConv.id;
         setActiveConversationId(convId);
@@ -5438,6 +5482,7 @@ function AppContent() {
     try {
       troyAbortRef.current = new AbortController();
       const response = await troyAPI.sendMessage(convId, text, troyAbortRef.current.signal);
+      if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
 
@@ -5496,6 +5541,7 @@ function AppContent() {
         playTroyVoice(assistantMsg.content, assistantMsg.id);
       }
     } catch (e) {
+      if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       autoPlayNextResponseRef.current = false;
       if (e.name === 'AbortError') {
@@ -5509,6 +5555,13 @@ function AppContent() {
 
     setTroyLoading(false);
   };
+
+  useEffect(() => {
+    if (currentScreen !== 'TroyChat' || !pendingTroyPrompt || activeConversationId || troyLoading) return;
+    const text = pendingTroyPrompt;
+    setPendingTroyPrompt(null);
+    sendTroyMessage(text);
+  }, [currentScreen, pendingTroyPrompt, activeConversationId, troyLoading]);
 
   // closeTroyChat removed — Troy is always available as home screen
 
@@ -6701,9 +6754,11 @@ function AppContent() {
    * Conditions:
    * - Max 3 prompts per year
    * - At least 30 days between prompts
-   * - Triggered after 10th holding OR 7 days of use
+   * - Triggered after 3rd holding OR 7 days of use
    */
-  const checkAndRequestReview = async (trigger = 'holdings') => {
+  // holdingsCount: the count after the add that triggered this. The caller
+  // runs in the same render as the add, so state here still has the old count.
+  const checkAndRequestReview = async (trigger = 'holdings', holdingsCount = null) => {
     try {
       // Check if store review is available
       const isAvailable = await StoreReview.isAvailableAsync();
@@ -6737,8 +6792,8 @@ function AppContent() {
 
       // Check trigger conditions
       if (trigger === 'holdings') {
-        const totalHoldings = silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length;
-        if (totalHoldings < 10) {
+        const totalHoldings = holdingsCount ?? (silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length);
+        if (totalHoldings < 3) {
           return; // Not enough holdings yet
         }
         if (__DEV__) console.log(`📱 Triggering review prompt: ${totalHoldings} holdings`);
@@ -6925,10 +6980,12 @@ function AppContent() {
   // TODAY TAB - INTELLIGENCE FEED
   // ============================================
 
+  // Resolves true only when this call returned a brief. A refused or failed
+  // call keeps the brief on screen but still resolves false.
   const fetchDailyBrief = async () => {
     if (!supabaseUser) {
       if (__DEV__) console.log(`📰 [Brief] Skipped: supabaseUser=${!!supabaseUser}`);
-      return;
+      return false;
     }
     try {
       setDailyBriefLoading(true);
@@ -6943,13 +7000,19 @@ function AppContent() {
       if (data.brief) {
         setDailyBrief(data.brief);
         lastBriefStateRef.current = data.brief;
-      } else {
+        return true;
+      } else if (response.ok) {
         if (__DEV__) console.log(`📰 [Brief] No brief returned (brief=${!!data.brief}, error=${data.error})`);
         setDailyBrief(null);
         lastBriefStateRef.current = null;
+      } else if (__DEV__) {
+        // Refused or failed (429, 500): keep whatever brief is showing.
+        console.log(`📰 [Brief] HTTP ${response.status}, keeping the current brief`);
       }
+      return false;
     } catch (error) {
       if (__DEV__) console.error('📰 [Brief] Fetch error:', error.message);
+      return false;
     } finally {
       setDailyBriefLoading(false);
     }
@@ -7176,15 +7239,14 @@ function AppContent() {
     if (currentScreen === 'Dashboard' && supabaseUser && (!dailyBrief || !dailyBrief.is_current)) {
       logLifecycleEvent('app:dashboard_fetch_brief_start');
       const _t = Date.now();
-      // fetchDailyBrief swallows errors internally. Derive ok from the
-      // post-call ref: non-null = the success path set a real brief; null
-      // can mean either "API said no brief today" or "error during fetch".
-      // We treat non-null as ok=true; null we can't distinguish so leave ok
-      // false but surface enough metadata for the operator to interpret.
-      fetchDailyBrief().then(() => {
-        const briefState = lastBriefStateRef.current;
+      // fetchDailyBrief swallows errors internally and resolves true only
+      // when this call returned a brief. false can mean "API said no brief
+      // today" or a refused or failed call; a failed call keeps the older
+      // brief on screen, so read its metadata only on a true.
+      fetchDailyBrief().then((gotBrief) => {
+        const briefState = gotBrief ? lastBriefStateRef.current : null;
         logLifecycleEvent('app:dashboard_fetch_brief_end', {
-          ok: briefState !== null,
+          ok: gotBrief === true,
           durationMs: Date.now() - _t,
           isCurrent: briefState?.is_current ?? null,
           briefDate: briefState?.date ?? null,
@@ -7239,7 +7301,10 @@ function AppContent() {
     if (supabaseUser) {
       console.log('[Troy] Fetching conversations...');
       troyAPI.listConversations().then(result => {
-        const convos = result?.conversations || (Array.isArray(result) ? result : []);
+        // A refused or failed call comes back as { error }. Keep the list on
+        // screen rather than showing "No conversations yet".
+        const convos = Array.isArray(result?.conversations) ? result.conversations : (Array.isArray(result) ? result : null);
+        if (!convos) return;
         console.log('[Troy] Fetched conversations:', convos.length);
         setTroyConversations(convos);
       }).catch(() => {});
@@ -8384,7 +8449,7 @@ function AppContent() {
       setter(prev => prev.map(i => i.id === editingItem.id ? item : i));
     } else {
       setter(prev => [...prev, item]);
-      checkAndRequestReview('holdings');
+      checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
     }
 
     // Sync to Supabase if signed in
@@ -8844,8 +8909,8 @@ function AppContent() {
 
   // Sidebar nav items with custom icon components
   const sidebarNavItems = [
-    { key: 'TroyChat', label: 'Troy', subtitle: 'Home', iconType: 'troy' },
-    { key: 'Dashboard', label: 'Dashboard', iconType: 'today' },
+    { key: 'Dashboard', label: 'Dashboard', subtitle: 'Home', iconType: 'today' },
+    { key: 'TroyChat', label: 'Troy', subtitle: 'Ask anything', iconType: 'troy' },
     { key: 'MyStack', label: 'My Stack', iconType: 'holdings' },
     { key: 'Analytics', label: 'Analytics', iconType: 'analytics' },
     { key: 'StackSignal', label: 'Stack Signal', iconType: 'signal' },
@@ -9053,27 +9118,32 @@ function AppContent() {
             <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Settings</Text>
           </TouchableOpacity>
 
-          {/* Debug: voice timing panel (reads PR #22 instrumentation in-app) */}
-          <TouchableOpacity
-            onPress={() => sidebarNavigate('VoiceTimings')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
-          >
-            <View style={{ width: 18, alignItems: 'center' }}>
-              <Text style={{ color: '#71717a', fontSize: 14 }}>⏱</Text>
-            </View>
-            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
-          </TouchableOpacity>
+          {/* Debug panels, only with diagnostics on (long press Settings > Version) */}
+          {showDiagnostics && (
+            <>
+              {/* Debug: voice timing panel (reads PR #22 instrumentation in-app) */}
+              <TouchableOpacity
+                onPress={() => sidebarNavigate('VoiceTimings')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+              >
+                <View style={{ width: 18, alignItems: 'center' }}>
+                  <Text style={{ color: '#71717a', fontSize: 14 }}>⏱</Text>
+                </View>
+                <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Voice Timings</Text>
+              </TouchableOpacity>
 
-          {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
-          <TouchableOpacity
-            onPress={() => sidebarNavigate('LifecycleLog')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
-          >
-            <View style={{ width: 18, alignItems: 'center' }}>
-              <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
-            </View>
-            <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
-          </TouchableOpacity>
+              {/* Debug: lifecycle log (rapid-relaunch zero-state diagnostic) */}
+              <TouchableOpacity
+                onPress={() => sidebarNavigate('LifecycleLog')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}
+              >
+                <View style={{ width: 18, alignItems: 'center' }}>
+                  <Text style={{ color: '#71717a', fontSize: 14 }}>📋</Text>
+                </View>
+                <Text style={{ color: '#a1a1aa', fontSize: 14 }}>Lifecycle Log</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           {/* Subscription badge */}
           <View style={{
@@ -9097,7 +9167,7 @@ function AppContent() {
         </View>
       </SafeAreaView>
     );
-  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation]);
+  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics]);
   if (showResetPasswordScreen) {
     return (
       <View style={[styles.container, { backgroundColor: '#09090b' }]}>
@@ -9199,6 +9269,9 @@ function AppContent() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           {currentScreen === 'TroyChat' ? (
             <>
+              <TouchableOpacity onPress={() => setCurrentScreen(HOME_SCREEN)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 8 }}>
+                <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => drawerNavigation?.dispatch(DrawerActions.openDrawer())} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
                 <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2630'}</Text>
               </TouchableOpacity>
@@ -9223,11 +9296,17 @@ function AppContent() {
             </>
           ) : (
             <>
-              <TouchableOpacity onPress={() => setCurrentScreen('TroyChat')} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
-                <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
-              </TouchableOpacity>
+              {currentScreen === HOME_SCREEN ? (
+                <TouchableOpacity onPress={() => drawerNavigation?.dispatch(DrawerActions.openDrawer())} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
+                  <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2630'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={() => setCurrentScreen(HOME_SCREEN)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ paddingRight: 6 }}>
+                  <Text style={{ color: '#D4A843', fontSize: 22, fontWeight: '300' }}>{'\u2039'}</Text>
+                </TouchableOpacity>
+              )}
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700' }}>
-                {currentScreen === 'Dashboard' ? 'Dashboard' : currentScreen === 'MyStack' ? 'My Stack' : currentScreen === 'Analytics' ? 'Analytics' : currentScreen === 'StackSignal' ? 'Stack Signal' : currentScreen === 'Settings' ? 'Settings' : currentScreen === 'CompareDealers' ? 'Compare Dealers' : currentScreen}
+                {currentScreen === HOME_SCREEN ? 'TroyStack' : currentScreen === 'Dashboard' ? 'Dashboard' : currentScreen === 'MyStack' ? 'My Stack' : currentScreen === 'Analytics' ? 'Analytics' : currentScreen === 'StackSignal' ? 'Stack Signal' : currentScreen === 'Settings' ? 'Settings' : currentScreen === 'CompareDealers' ? 'Compare Dealers' : currentScreen}
               </Text>
             </>
           )}
@@ -9411,6 +9490,9 @@ function AppContent() {
             general: 'Market',
           };
 
+          const holdingsCount = silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length;
+          const isEmptyStack = !demoData && holdingsCount === 0;
+
           const todayCardBg = isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
           const todayCardBorder = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
 
@@ -9431,6 +9513,36 @@ function AppContent() {
 
                 <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '500', marginBottom: 4, marginTop: 4 }}>Today, {dateStr}</Text>
 
+                {isEmptyStack ? (
+                  <View style={{ marginTop: 4 }}>
+                    <Text style={{ color: colors.text, fontSize: scaledFonts.xlarge, fontWeight: '700', marginBottom: 6 }}>Start your stack</Text>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, lineHeight: scaledFonts.normal * 1.45, marginBottom: 16 }}>
+                      Add what you own and TroyStack values it at live spot prices.
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); handleAddPurchase(); }}
+                        style={{ flex: 1, backgroundColor: '#D4A843', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                      >
+                        <Text style={{ color: '#000', fontWeight: '700', fontSize: scaledFonts.normal }}>Add a holding</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          Alert.alert('Scan Receipt', 'Choose a source', [
+                            { text: 'Take Photo', onPress: () => performScan('camera') },
+                            { text: 'Choose from Library', onPress: () => performScan('gallery') },
+                            { text: 'Cancel', style: 'cancel' },
+                          ]);
+                        }}
+                        style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(212,168,67,0.5)', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                      >
+                        <Text style={{ color: '#D4A843', fontWeight: '700', fontSize: scaledFonts.normal }}>Scan a receipt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                <>
                 <Text style={{ color: colors.text, fontSize: scaledFonts.huge, fontWeight: '700', marginBottom: 2 }}>${formatCurrency(effTotalMeltValue, 0)}</Text>
 
                 {effSparklineData && effSparklineData.gold.length >= 2 && effTotalMeltValue > 0 && (() => {
@@ -9481,6 +9593,46 @@ function AppContent() {
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
                   <Image source={TROY_AVATAR} style={{ width: 14, height: 14, borderRadius: 7 }} />
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{aiSummary}</Text>
+                </View>
+                </>
+                )}
+              </View>
+
+              {/* ===== ASK TROY ===== */}
+              <View style={{
+                backgroundColor: todayCardBg,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: todayCardBorder,
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); askTroyFromHome(null); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12 }}
+                >
+                  <Image source={TROY_AVATAR} style={{ width: 24, height: 24, borderRadius: 12 }} />
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, flex: 1 }}>Ask Troy about your stack or the market</Text>
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                  {(isEmptyStack ? [
+                    { label: 'What moved metals today?', text: 'What moved gold and silver today?' },
+                    { label: 'Gold/silver ratio', text: 'What is the gold to silver ratio telling us right now?' },
+                    { label: 'Junk silver value', text: "What is pre-1965 junk silver worth at today's spot price?" },
+                  ] : [
+                    { label: "How's my stack?", text: "How's my stack performing?" },
+                    { label: 'Gold/silver ratio', text: 'Analyze my gold-to-silver ratio' },
+                    { label: 'Purchasing power', text: 'What can my stack buy in real terms? Show me purchasing power.' },
+                  ]).map((chip) => (
+                    <TouchableOpacity
+                      key={chip.label}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); askTroyFromHome(chip.text); }}
+                      style={{ backgroundColor: 'rgba(212,168,67,0.08)', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(212,168,67,0.2)' }}
+                    >
+                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.small }}>{chip.label}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
 
@@ -10453,14 +10605,12 @@ function AppContent() {
               </View>
 
               {/* ===== DEALER PRICE COMPARISON BUTTON ===== */}
+              {/* Open to every user. The dealer links carry affiliate tracking, and the
+                  sidebar entry was never gated, so the paywall here only blocked clicks. */}
               <TouchableOpacity
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  if (!hasGoldAccess) {
-                    setShowPaywallModal(true);
-                  } else {
-                    setCurrentScreen('CompareDealers');
-                  }
+                  setCurrentScreen('CompareDealers');
                 }}
                 style={{
                   flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -10481,11 +10631,6 @@ function AppContent() {
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>Find the lowest premiums on popular products</Text>
                   </View>
                 </View>
-                {!hasGoldAccess && (
-                  <View style={{ backgroundColor: 'rgba(212,168,67,0.2)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 }}>
-                    <Text style={{ color: colors.gold, fontSize: 11, fontWeight: '700' }}>GOLD</Text>
-                  </View>
-                )}
                 <Text style={{ color: colors.muted, fontSize: 18, marginLeft: 8 }}>{'\u203A'}</Text>
               </TouchableOpacity>
 
@@ -11687,9 +11832,12 @@ function AppContent() {
                   isLast={false}
                 />
                 <RowSeparator />
-                {/* Version - triple-tap in __DEV__ to toggle screenshot mode */}
+                {/* Version - triple-tap in __DEV__ to toggle screenshot mode,
+                    long press in any build to show or hide diagnostics */}
                 <TouchableOpacity
                   onPress={__DEV__ ? handleVersionTap : undefined}
+                  onLongPress={toggleDiagnostics}
+                  delayLongPress={800}
                   activeOpacity={__DEV__ ? 0.7 : 1}
                   style={{
                     flexDirection: 'row',
@@ -14643,7 +14791,7 @@ function AppContent() {
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9998 }}>
           <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' }}>
-              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCurrentScreen('TroyChat'); }} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCurrentScreen(HOME_SCREEN); }} style={{ marginRight: 12 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Text style={{ color: '#C9A84C', fontSize: 28, fontWeight: '300' }}>{'\u2039'}</Text>
               </TouchableOpacity>
               <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>Compare Dealer Prices</Text>
