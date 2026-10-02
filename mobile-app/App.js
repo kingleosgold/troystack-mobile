@@ -14911,6 +14911,34 @@ function AppContent() {
                         </TouchableOpacity>
                       ))}
 
+                      {/* Money Metals Quick Links (Awin) */}
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginTop: 20, marginBottom: 4 }}>Shop Money Metals</Text>
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        Coins, bars and weekly specials.
+                      </Text>
+                      {[
+                        { label: 'Specials', sub: 'Current specials', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fspecials' },
+                        { label: 'Silver Eagles', sub: 'American Silver Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fsilver%2Fcoins%2Famerican-silver-eagle' },
+                        { label: 'Gold Eagles', sub: 'American Gold Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fgold%2Fcoins%2Famerican-gold-eagle' },
+                        { label: 'Browse All', sub: 'Full Money Metals catalog', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com' },
+                      ].map((link, i) => (
+                        <TouchableOpacity
+                          key={`mm-${i}`}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          style={{
+                            backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
+                            borderWidth: 1, borderColor: colors.border,
+                            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                          }}
+                        >
+                          <View>
+                            <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '600' }}>{link.label}</Text>
+                            <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>{link.sub}</Text>
+                          </View>
+                          <Text style={{ color: colors.gold, fontSize: 18 }}>→</Text>
+                        </TouchableOpacity>
+                      ))}
+
                       {/* Coming soon notice */}
                       <View style={{ alignItems: 'center', paddingTop: 30, paddingHorizontal: 20 }}>
                         <Text style={{ color: colors.muted, fontSize: scaledFonts.small, textAlign: 'center', lineHeight: scaledFonts.small * 1.5 }}>
