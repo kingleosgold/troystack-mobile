@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
-import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT } from './src/utils/webPlan';
+import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatAnswerCounts } from './src/utils/webPlan';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -4584,6 +4584,17 @@ function AppContent() {
       const isLifetime = activeEntitlements['Lifetime'] !== undefined;
       const tier = getUserTier(customerInfo);
 
+      // Shown and synced only while RevenueCat is on the signed-in account.
+      // After an account switch that skips sign-out it's still on the last
+      // account for a moment, and that account's plan mustn't show for the
+      // new one. At sign-out it moves to an anonymous customer first, whose
+      // empty plan must never be written over the account that's leaving.
+      // Signed out, the anonymous customer's answer is the one to show.
+      let revenueCatUser = null;
+      try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
+      const signedInId = supabaseUser?.id || null;
+      if (!revenueCatAnswerCounts({ signedInId, rcUserId: revenueCatUser })) return;
+
       rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
       const plan = mergePlans({ ...rcPlanRef.current, webPlan: webPlanRef.current });
       setHasGold(plan.hasGold);
@@ -4592,20 +4603,15 @@ function AppContent() {
 
       if (__DEV__) console.log('[RevenueCat Listener] Tier updated:', tier, 'web plan:', webPlanRef.current);
 
-      // Sync to Supabase with the specific tier (lifetime or gold). Only while
-      // RevenueCat is on this same account: at sign-out it switches to an
-      // anonymous customer first, and that customer's empty plan must never
-      // be written over the account that's leaving.
-      let revenueCatUser = null;
-      try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
-      if (supabaseUser?.id && revenueCatUser === supabaseUser.id) {
+      // Sync to Supabase with the specific tier (lifetime or gold).
+      if (signedInId) {
         // A real answer for this account, even if RevenueCat couldn't be read
         // when the app started.
         rcReadOkRef.current = true;
         const goldEntListener = activeEntitlements['Gold'];
         const isLifetimeProductListener = goldEntListener?.productIdentifier?.toLowerCase().includes('lifetime');
         const syncTier = isLifetime ? 'lifetime' : isLifetimeProductListener ? 'lifetime' : (isGold || isSilver) ? 'gold' : 'free';
-        syncSubscriptionToSupabase(supabaseUser.id, syncTier);
+        syncSubscriptionToSupabase(signedInId, syncTier);
       }
     };
     // The SDK returns nothing from add, so the same function is removed on
