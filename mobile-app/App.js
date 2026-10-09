@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
-import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey } from './src/utils/webPlan';
+import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS } from './src/utils/webPlan';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2612,6 +2612,14 @@ function AppContent() {
   // Bumped at sign-out and when an account is set up, so an answer that comes
   // back after the account changed is dropped instead of landing on the next one.
   const webPlanGenRef = useRef(0);
+  // RevenueCat's own answer, kept so a web plan can be merged with it again.
+  const rcPlanRef = useRef({ rcGold: false, rcLifetime: false, rcTier: 'free' });
+  // Bumped by every profile sync, so a slow one never writes over a newer one.
+  const syncSeqRef = useRef(0);
+  // When the web plan was last asked about, and whether that answer could tell.
+  const lastWebCheckRef = useRef({ at: 0, answered: false });
+  // The account RevenueCat's answer has been read for since it was set up.
+  const rcReadyForRef = useRef(null);
 
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
@@ -2956,6 +2964,9 @@ function AppContent() {
       const userId = supabaseUser?.id;
       // 0. A web plan belongs to the account, not the phone
       webPlanGenRef.current += 1;
+      rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
+      rcReadyForRef.current = null;
+      lastWebCheckRef.current = { at: 0, answered: false };
       applyWebPlan(null);
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
@@ -4356,7 +4367,8 @@ function AppContent() {
       if (__DEV__) console.log('📋 RevenueCat User ID:', userId);
       if (__DEV__) console.log('🏆 Has Gold:', isGold, 'Has Silver (→Gold):', isSilver, 'Has Lifetime:', isLifetime, 'Tier:', tier);
 
-      const plan = mergePlans({ rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier, webPlan: webPlanRef.current });
+      rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
+      const plan = mergePlans({ ...rcPlanRef.current, webPlan: webPlanRef.current });
       setHasGold(__DEV__ ? true : plan.hasGold);
       setHasLifetimeAccess(__DEV__ ? true : plan.hasLifetime);
       setUserTier(__DEV__ ? 'gold' : plan.tier);
@@ -4370,36 +4382,44 @@ function AppContent() {
   };
 
   // What plan Stripe holds for this account: 'gold', 'lifetime', null for
-  // none, or undefined when it couldn't tell. See src/utils/webPlan.js.
-  const checkWebPlan = async () => {
+  // none, or undefined when it couldn't tell. See src/utils/webPlan.js. The
+  // session read can refresh a token over the network, so it shares the
+  // timeout, and a session for any other account can't answer for this one.
+  const checkWebPlan = async (userId) => {
+    let answer;
     try {
-      const { data } = await supabase.auth.getSession();
-      return await fetchWebPlan({ apiBase: API_BASE_URL, token: data?.session?.access_token });
+      const { data } = await withTimeout(supabase.auth.getSession(), WEB_PLAN_TIMEOUT_MS);
+      const session = data?.session;
+      answer = session?.user?.id === userId
+        ? await fetchWebPlan({ apiBase: API_BASE_URL, token: session?.access_token, timeoutMs: WEB_PLAN_TIMEOUT_MS })
+        : undefined;
     } catch (e) {
       if (__DEV__) console.log('[WebPlan] Check failed:', e?.message);
-      return undefined;
+      answer = undefined;
     }
+    lastWebCheckRef.current = { at: Date.now(), answered: answer !== undefined };
+    return answer;
   };
 
-  // Gold from a web plan, on top of whatever RevenueCat says. Only called
-  // when RevenueCat has nothing, so a web plan that ended means Free.
+  // Gold from a web plan, merged again with RevenueCat's latest answer, so a
+  // web plan that ended leaves whatever RevenueCat still has.
   const applyWebPlan = (plan) => {
-    const had = webPlanRef.current;
     webPlanRef.current = plan;
     if (__DEV__) return;
-    if (plan) {
-      setHasGold(true);
-      setUserTier('gold');
-      if (plan === 'lifetime') setHasLifetimeAccess(true);
-    } else if (had) {
-      setHasGold(false);
-      setHasLifetimeAccess(false);
-      setUserTier('free');
-    }
+    const merged = mergePlans({ ...rcPlanRef.current, webPlan: plan });
+    setHasGold(merged.hasGold);
+    setHasLifetimeAccess(merged.hasLifetime);
+    setUserTier(merged.tier);
   };
 
   // Sync RevenueCat tier → Supabase profiles (fire-and-forget, never blocks UI)
   const syncSubscriptionToSupabase = async (userId, tierOverride) => {
+    // Every sync takes a number. One that finds a newer sync started, or the
+    // account changed, while it waited stops without applying or writing, so
+    // a slow free can't land over a newer gold.
+    const seq = ++syncSeqRef.current;
+    const gen = webPlanGenRef.current;
+    const stale = () => seq !== syncSeqRef.current || gen !== webPlanGenRef.current;
     try {
       const tier = tierOverride || userTier || 'free';
       if (tier === 'free') {
@@ -4408,12 +4428,11 @@ function AppContent() {
         // the profile right, so free is only written when Stripe has nothing
         // either. If the check can't tell, the profile is left alone and the
         // last confirmed answer for this account still counts.
-        const gen = webPlanGenRef.current;
-        const webPlan = await checkWebPlan();
-        if (gen !== webPlanGenRef.current) return; // the account changed while asking
+        const webPlan = await checkWebPlan(userId);
+        if (stale()) return;
         if (webPlan === undefined) {
           const cached = await readCachedWebPlan(AsyncStorage, userId);
-          if (cached && gen === webPlanGenRef.current) applyWebPlan(cached);
+          if (cached && !stale()) applyWebPlan(cached);
           return;
         }
         cacheWebPlan(AsyncStorage, userId, webPlan);
@@ -4426,7 +4445,11 @@ function AppContent() {
         'free': { subscription_tier: 'free', subscription_status: null },
       };
       const values = tierMap[tier] || tierMap['free'];
-      const { error } = await supabase.from('profiles').update(values).eq('id', userId);
+      let update = supabase.from('profiles').update(values).eq('id', userId);
+      // A lifetime bought on the web outlasts an App Store subscription, so
+      // Gold from the App Store never replaces it.
+      if (tier === 'gold') update = update.neq('subscription_tier', 'lifetime');
+      const { error } = await update;
       if (__DEV__) {
         if (error) console.log('[Sync] Failed to sync tier to Supabase:', error.message);
         else console.log(`[Sync] Synced tier to Supabase: ${tier}`);
@@ -4478,6 +4501,7 @@ function AppContent() {
 
           webPlanGenRef.current += 1; // a new account starts with no web plan
           webPlanRef.current = null;
+          const setupGen = webPlanGenRef.current;
           const initialized = await initializePurchases(apiKey, appUserId);
           if (initialized) {
             // Log in to RevenueCat to transfer anonymous purchases to authenticated user
@@ -4491,16 +4515,23 @@ function AppContent() {
             // Additional delay before checking entitlements
             await new Promise(resolve => setTimeout(resolve, 100));
             await checkEntitlements();
-            // Sync RevenueCat tier → Supabase (fire-and-forget)
-            if (appUserId) {
+            if (setupGen === webPlanGenRef.current) rcReadyForRef.current = appUserId;
+            // Sync RevenueCat tier → Supabase. Only while this setup's account
+            // is still the one signed in and RevenueCat is still on it: a
+            // sign-out partway through switches RevenueCat to an anonymous
+            // customer, whose empty plan must never be written over the
+            // account that's leaving.
+            let rcUser = null;
+            try { rcUser = await Purchases.getAppUserID(); } catch (e) { rcUser = null; }
+            if (appUserId && rcUser === appUserId && setupGen === webPlanGenRef.current) {
               const syncInfo = await Purchases.getCustomerInfo();
               const syncActive = syncInfo?.entitlements?.active || {};
               const goldEnt = syncActive['Gold'];
               const isLifetimeProduct = goldEnt?.productIdentifier?.toLowerCase().includes('lifetime');
               const syncTier = syncActive['Lifetime'] ? 'lifetime' : isLifetimeProduct ? 'lifetime' : (syncActive['Gold'] || syncActive['Silver']) ? 'gold' : 'free';
-              // Waits when RevenueCat has nothing, so a web subscriber's Gold is
-              // in place before upgrade prompts can show. The check times out
-              // after six seconds.
+              // When RevenueCat has nothing this waits for the web plan check,
+              // which times out after six seconds, so subscriptionLoading
+              // turns false once the plan is known.
               if (syncTier === 'free') await syncSubscriptionToSupabase(appUserId, syncTier);
               else syncSubscriptionToSupabase(appUserId, syncTier);
             }
@@ -4523,7 +4554,7 @@ function AppContent() {
 
   // RevenueCat real-time listener — updates tier immediately on purchase/restore/expiry
   useEffect(() => {
-    const removeListener = Purchases.addCustomerInfoUpdateListener(async (customerInfo) => {
+    const listener = async (customerInfo) => {
       if (!customerInfo) return;
       const activeEntitlements = customerInfo?.entitlements?.active || {};
       const isGold = activeEntitlements['Gold'] !== undefined;
@@ -4531,7 +4562,8 @@ function AppContent() {
       const isLifetime = activeEntitlements['Lifetime'] !== undefined;
       const tier = getUserTier(customerInfo);
 
-      const plan = mergePlans({ rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier, webPlan: webPlanRef.current });
+      rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
+      const plan = mergePlans({ ...rcPlanRef.current, webPlan: webPlanRef.current });
       setHasGold(plan.hasGold);
       setHasLifetimeAccess(plan.hasLifetime);
       setUserTier(plan.tier);
@@ -4550,9 +4582,41 @@ function AppContent() {
         const syncTier = isLifetime ? 'lifetime' : isLifetimeProductListener ? 'lifetime' : (isGold || isSilver) ? 'gold' : 'free';
         syncSubscriptionToSupabase(supabaseUser.id, syncTier);
       }
-    });
+    };
+    // The SDK returns nothing from add, so the same function is removed on
+    // cleanup, or listeners would pile up with each account change.
+    Purchases.addCustomerInfoUpdateListener(listener);
+    return () => {
+      try { Purchases.removeCustomerInfoUpdateListener(listener); } catch (e) { /* already gone */ }
+    };
+  }, [supabaseUser?.id]);
 
-    return () => { if (removeListener) removeListener(); };
+  // A change of account drops any web plan answer still on its way for the
+  // last one, right away rather than when setup runs half a second later.
+  useEffect(() => {
+    webPlanGenRef.current += 1;
+    rcReadyForRef.current = null;
+    lastWebCheckRef.current = { at: 0, answered: false };
+  }, [supabaseUser?.id]);
+
+  // Back in the foreground with nothing from RevenueCat, the web plan is asked
+  // about again, so a plan bought on troystack.ai while the app was in the
+  // background, or a check that failed at launch, doesn't leave the account
+  // on Free for the rest of the session.
+  useEffect(() => {
+    if (!supabaseUser?.id) return;
+    const userId = supabaseUser.id;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') return;
+      // Not before RevenueCat's own answer is in for this account, so an App
+      // Store subscriber is never read as having nothing.
+      if (rcReadyForRef.current !== userId) return;
+      const rc = rcPlanRef.current;
+      const last = lastWebCheckRef.current;
+      if (!shouldRecheckWebPlan({ now: Date.now(), lastAt: last.at, lastAnswered: last.answered, rcHasPlan: rc.rcGold || rc.rcLifetime })) return;
+      syncSubscriptionToSupabase(userId, 'free');
+    });
+    return () => sub.remove();
   }, [supabaseUser?.id]);
 
   // Register background fetch for iOS (keeps widget data fresh when app is closed)
