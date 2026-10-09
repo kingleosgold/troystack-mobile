@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/webPlan.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, webPlanCacheKey } from './webPlan.js';
+import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
 
 const API = 'https://api.example.test';
 
@@ -86,4 +86,19 @@ test("an answer that couldn't tell is never cached, and a broken store reads as 
   const broken = { getItem: async () => { throw new Error('disk'); }, setItem: async () => { throw new Error('disk'); } };
   await cacheWebPlan(broken, 'user-a', 'gold');
   assert.equal(await readCachedWebPlan(broken, 'user-a'), null);
+});
+
+test('the foreground asks again only while RevenueCat has nothing, and not too often', () => {
+  const now = 10 * 60 * 60 * 1000;
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastAnswered: true, rcHasPlan: true }), false, 'an App Store plan needs no web check');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastAnswered: true, rcHasPlan: false }), false);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 16 * 60_000, lastAnswered: true, rcHasPlan: false }), true);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 30_000, lastAnswered: false, rcHasPlan: false }), false);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 61_000, lastAnswered: false, rcHasPlan: false }), true, 'a check that failed is tried again after a minute');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: 0, lastAnswered: false, rcHasPlan: false }), true);
+});
+
+test('a slow step gives up after its time', async () => {
+  assert.equal(await withTimeout(Promise.resolve('fast'), 50), 'fast');
+  await assert.rejects(withTimeout(new Promise(() => {}), 20), /Timed out/);
 });

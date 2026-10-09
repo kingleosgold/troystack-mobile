@@ -6,13 +6,36 @@
  * and keeps the app from writing free over a plan it didn't sell.
  */
 
+/** How long a web plan check may take, the session read included. */
+export const WEB_PLAN_TIMEOUT_MS = 6000;
+
+/** The promise's answer, or a rejection once `ms` have passed. */
+export function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Timed out')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Whether to ask about the web plan again when the app comes back to the
+ * foreground. Only while RevenueCat has nothing, at most once a minute after
+ * an answer that couldn't tell, and every fifteen minutes otherwise.
+ */
+export function shouldRecheckWebPlan({ now, lastAt, lastAnswered, rcHasPlan }) {
+  if (rcHasPlan) return false;
+  const since = now - (lastAt || 0);
+  return lastAnswered ? since >= 15 * 60 * 1000 : since >= 60 * 1000;
+}
+
 /**
  * The plan Stripe holds for the signed-in account, from GET /v1/stripe/my-plan.
  * @returns {Promise<'gold'|'lifetime'|null|undefined>} 'gold' or 'lifetime',
  *   null when Stripe has nothing, undefined when it couldn't tell (no session,
  *   offline, a slow answer, or an API without the route yet).
  */
-export async function fetchWebPlan({ apiBase, token, fetchImpl = fetch, timeoutMs = 6000 }) {
+export async function fetchWebPlan({ apiBase, token, fetchImpl = fetch, timeoutMs = WEB_PLAN_TIMEOUT_MS }) {
   if (!token) return undefined;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
