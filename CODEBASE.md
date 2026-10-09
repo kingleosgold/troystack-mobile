@@ -323,7 +323,7 @@ sidebarNavItems = [
 
 ### RevenueCat
 - **Apple API Key:** `appl_WDKPrWsOHfWzfJhxOGluQYsniLW` (public, in App.js)
-- **Products:** `stacktracker_gold_monthly` ($4.99), `stacktracker_gold_yearly` ($39.99), `stacktracker_lifetime` ($149.99)
+- **Products:** the App Store sells `monthly` ($4.99 a month), `yearly_gold` ($39.99 a year) and `lifetime_gold` (Lifetime Gold Pass, $99.99 once), per RevenueCat's catalog on 10/9. RevenueCat's Test Store has `monthly` and `lifetime`. Lifetime on troystack.ai goes through Stripe at its own price
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
 - **Config:** `mobile-app/src/utils/entitlements.js`
