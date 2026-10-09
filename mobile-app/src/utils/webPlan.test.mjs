@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/webPlan.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchWebPlan, mergePlans } from './webPlan.js';
+import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, webPlanCacheKey } from './webPlan.js';
 
 const API = 'https://api.example.test';
 
@@ -55,4 +55,35 @@ test('a web plan adds Gold on top of RevenueCat and never takes it away', () => 
   assert.deepEqual(mergePlans({ rcGold: false, rcLifetime: false, rcTier: 'free', webPlan: 'lifetime' }), { hasGold: true, hasLifetime: true, tier: 'gold' });
   assert.deepEqual(mergePlans({ rcGold: true, rcLifetime: false, rcTier: 'gold', webPlan: null }), { hasGold: true, hasLifetime: false, tier: 'gold' });
   assert.deepEqual(mergePlans({ rcGold: false, rcLifetime: false, rcTier: 'free', webPlan: null }), { hasGold: false, hasLifetime: false, tier: 'free' });
+});
+
+function memoryStorage() {
+  const data = new Map();
+  return {
+    data,
+    getItem: async (key) => (data.has(key) ? data.get(key) : null),
+    setItem: async (key, value) => {
+      data.set(key, value);
+    },
+  };
+}
+
+test('a confirmed answer is kept per account and read back', async () => {
+  const storage = memoryStorage();
+  await cacheWebPlan(storage, 'user-a', 'gold');
+  await cacheWebPlan(storage, 'user-b', null);
+  assert.equal(await readCachedWebPlan(storage, 'user-a'), 'gold');
+  assert.equal(await readCachedWebPlan(storage, 'user-b'), null, 'a confirmed none reads as no plan');
+  assert.equal(storage.data.get(webPlanCacheKey('user-b')), 'none');
+  assert.equal(await readCachedWebPlan(storage, 'user-c'), null);
+});
+
+test("an answer that couldn't tell is never cached, and a broken store reads as no plan", async () => {
+  const storage = memoryStorage();
+  await cacheWebPlan(storage, 'user-a', 'lifetime');
+  await cacheWebPlan(storage, 'user-a', undefined);
+  assert.equal(await readCachedWebPlan(storage, 'user-a'), 'lifetime');
+  const broken = { getItem: async () => { throw new Error('disk'); }, setItem: async () => { throw new Error('disk'); } };
+  await cacheWebPlan(broken, 'user-a', 'gold');
+  assert.equal(await readCachedWebPlan(broken, 'user-a'), null);
 });

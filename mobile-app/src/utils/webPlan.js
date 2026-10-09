@@ -44,3 +44,34 @@ export function mergePlans({ rcGold, rcLifetime, rcTier, webPlan }) {
     tier: rcTier === 'free' && webPlan ? 'gold' : rcTier,
   };
 }
+
+/** Where the last answer for an account is kept, so a check that can't tell doesn't take away Gold it confirmed before. */
+export const webPlanCacheKey = (userId) => `stack_web_plan_${userId}`;
+
+/**
+ * The last confirmed web plan for an account, or null.
+ * @param {{ getItem: (key: string) => Promise<string|null> }} storage AsyncStorage or a stand-in
+ */
+export async function readCachedWebPlan(storage, userId) {
+  if (!userId) return null;
+  try {
+    const value = await storage.getItem(webPlanCacheKey(userId));
+    return value === 'gold' || value === 'lifetime' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep a confirmed answer. A confirmed none is kept too, so an ended plan
+ * isn't brought back by an old cached one.
+ * @param {{ setItem: (key: string, value: string) => Promise<void> }} storage
+ */
+export async function cacheWebPlan(storage, userId, plan) {
+  if (!userId || plan === undefined) return;
+  try {
+    await storage.setItem(webPlanCacheKey(userId), plan || 'none');
+  } catch {
+    // only a convenience
+  }
+}
