@@ -4538,7 +4538,7 @@ function AppContent() {
 
       if (__DEV__) console.log('[RevenueCat Listener] Tier updated:', tier, 'web plan:', webPlanRef.current);
 
-      // Sync to Supabase — use specific tier (lifetime vs gold). Only while
+      // Sync to Supabase with the specific tier (lifetime or gold). Only while
       // RevenueCat is on this same account: at sign-out it switches to an
       // anonymous customer first, and that customer's empty plan must never
       // be written over the account that's leaving.
