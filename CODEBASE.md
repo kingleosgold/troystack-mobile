@@ -127,6 +127,12 @@ Bottom sheet content for each preview type:
 - **Exports:** `initializePurchases`, `hasGoldEntitlement`, `hasSilverEntitlement`, `getUserEntitlements`, `loginRevenueCat`, `logoutRevenueCat`, `restorePurchases`
 - **Last modified:** 2026-04-07
 
+### mobile-app/src/utils/webPlan.js
+- **Purpose:** Plans bought on troystack.ai. Asks the API's `GET /v1/stripe/my-plan` what Stripe holds for the signed-in account, so a web subscriber has Gold in the app and the app never writes free over a plan it didn't sell
+- **Exports:** `fetchWebPlan({ apiBase, token })` returns `'gold'`, `'lifetime'`, `null` for none, or `undefined` when it couldn't tell. `mergePlans({ rcGold, rcLifetime, rcTier, webPlan })` adds a web plan on top of RevenueCat. `readCachedWebPlan` and `cacheWebPlan` keep the last confirmed answer per account under `stack_web_plan_<userId>`, cleared at sign-out. `shouldRecheckWebPlan` decides the foreground re-check, `revenueCatAnswerCounts` says whether a customer info answer is about the person using the app, `withTimeout` bounds the session read, `WEB_PLAN_TIMEOUT_MS` is six seconds
+- **Tests:** `node --test mobile-app/src/utils/webPlan.test.mjs`
+- **Last modified:** 2026-10-09
+
 ### mobile-app/src/utils/widgetKit.js
 - **Purpose:** iOS WidgetKit data bridge — sends portfolio data to native widget
 - **Exports:** `isWidgetKitAvailable`, `updateWidgetData`, `refreshWidgets`, `syncWidgetData`, `getWidgetConfigurations`
@@ -317,10 +323,11 @@ sidebarNavItems = [
 
 ### RevenueCat
 - **Apple API Key:** `appl_WDKPrWsOHfWzfJhxOGluQYsniLW` (public, in App.js)
-- **Products:** `stacktracker_gold_monthly` ($4.99), `stacktracker_gold_yearly` ($39.99), `stacktracker_lifetime` ($149.99)
+- **Products:** the App Store sells `monthly` ($4.99 a month), `yearly_gold` ($39.99 a year) and `lifetime_gold` (Lifetime Gold Pass, $99.99 once), per RevenueCat's catalog on 10/9. RevenueCat's Test Store has `monthly` and `lifetime`. Lifetime on troystack.ai goes through Stripe at its own price
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
 - **Config:** `mobile-app/src/utils/entitlements.js`
+- **Web plans:** When RevenueCat has nothing, the app asks `GET /v1/stripe/my-plan` before writing free to the profile. A web plan gives Gold in the app, merged again with RevenueCat's latest answer whenever either changes. If the check can't tell, the profile is left alone and the last confirmed answer for the account still counts. Every profile sync takes a number, so a slow one never writes over a newer one. An answer that arrives after sign-out or an account switch is dropped, a session for another account can't answer, and no session at all counts as can't tell. Setup only writes, and the RevenueCat listener only shows and writes, while RevenueCat is on the signed-in account, and a change of account resets the plan shown. A Gold write from the app never replaces a lifetime profile. Back in the foreground with nothing from RevenueCat, the app asks again without writing, fifteen minutes after a confirmed web plan or a minute after none or a check that couldn't tell. The listener is removed by reference on cleanup, since the SDK's add returns nothing. See `mobile-app/src/utils/webPlan.js`
 
 ### Session Flow
 ```
