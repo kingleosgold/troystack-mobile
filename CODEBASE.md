@@ -127,6 +127,12 @@ Bottom sheet content for each preview type:
 - **Exports:** `initializePurchases`, `hasGoldEntitlement`, `hasSilverEntitlement`, `getUserEntitlements`, `loginRevenueCat`, `logoutRevenueCat`, `restorePurchases`
 - **Last modified:** 2026-04-07
 
+### mobile-app/src/utils/webPlan.js
+- **Purpose:** Plans bought on troystack.ai. Asks the API's `GET /v1/stripe/my-plan` what Stripe holds for the signed-in account, so a web subscriber has Gold in the app and the app never writes free over a plan it didn't sell
+- **Exports:** `fetchWebPlan({ apiBase, token })` returns `'gold'`, `'lifetime'`, `null` for none, or `undefined` when it couldn't tell. `mergePlans({ rcGold, rcLifetime, rcTier, webPlan })` adds a web plan on top of RevenueCat
+- **Tests:** `node --test mobile-app/src/utils/webPlan.test.mjs`
+- **Last modified:** 2026-10-08
+
 ### mobile-app/src/utils/widgetKit.js
 - **Purpose:** iOS WidgetKit data bridge — sends portfolio data to native widget
 - **Exports:** `isWidgetKitAvailable`, `updateWidgetData`, `refreshWidgets`, `syncWidgetData`, `getWidgetConfigurations`
@@ -321,6 +327,7 @@ sidebarNavItems = [
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
 - **Config:** `mobile-app/src/utils/entitlements.js`
+- **Web plans:** When RevenueCat has nothing, the app asks `GET /v1/stripe/my-plan` before writing free to the profile. A web plan gives Gold in the app. If the check can't tell, the profile is left alone. See `mobile-app/src/utils/webPlan.js`
 
 ### Session Flow
 ```
