@@ -32,6 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
+import { fetchWebPlan, mergePlans } from './src/utils/webPlan';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2604,6 +2605,11 @@ function AppContent() {
   const [hasLifetimeAccess, setHasLifetimeAccess] = useState(false);
   const [revenueCatUserId, setRevenueCatUserId] = useState(null);
 
+  // A plan bought on troystack.ai lives in Stripe, not RevenueCat. The API
+  // answers for it from Stripe, so a web subscriber has Gold here too and the
+  // app never writes free over a plan it didn't sell. null, 'gold' or 'lifetime'.
+  const webPlanRef = useRef(null);
+
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
   const [iCloudAvailable, setICloudAvailable] = useState(false);
@@ -2945,6 +2951,8 @@ function AppContent() {
   const performSignOut = async () => {
     try {
       const userId = supabaseUser?.id;
+      // 0. A web plan belongs to the account, not the phone
+      applyWebPlan(null);
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 2. Sign out from Supabase
@@ -4344,15 +4352,45 @@ function AppContent() {
       if (__DEV__) console.log('📋 RevenueCat User ID:', userId);
       if (__DEV__) console.log('🏆 Has Gold:', isGold, 'Has Silver (→Gold):', isSilver, 'Has Lifetime:', isLifetime, 'Tier:', tier);
 
-      setHasGold(__DEV__ ? true : (isGold || isSilver));
-      setHasLifetimeAccess(__DEV__ ? true : isLifetime);
-      setUserTier(__DEV__ ? 'gold' : tier);
+      const plan = mergePlans({ rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier, webPlan: webPlanRef.current });
+      setHasGold(__DEV__ ? true : plan.hasGold);
+      setHasLifetimeAccess(__DEV__ ? true : plan.hasLifetime);
+      setUserTier(__DEV__ ? 'gold' : plan.tier);
       setRevenueCatUserId(userId);
 
-      return __DEV__ || isGold || isSilver || isLifetime;
+      return __DEV__ || isLifetime || plan.hasGold;
     } catch (error) {
       console.log('[Entitlements] Error checking:', error?.message);
       return __DEV__ || false;
+    }
+  };
+
+  // What plan Stripe holds for this account: 'gold', 'lifetime', null for
+  // none, or undefined when it couldn't tell. See src/utils/webPlan.js.
+  const checkWebPlan = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      return await fetchWebPlan({ apiBase: API_BASE_URL, token: data?.session?.access_token });
+    } catch (e) {
+      if (__DEV__) console.log('[WebPlan] Check failed:', e?.message);
+      return undefined;
+    }
+  };
+
+  // Gold from a web plan, on top of whatever RevenueCat says. Only called
+  // when RevenueCat has nothing, so a web plan that ended means Free.
+  const applyWebPlan = (plan) => {
+    const had = webPlanRef.current;
+    webPlanRef.current = plan;
+    if (__DEV__) return;
+    if (plan) {
+      setHasGold(true);
+      setUserTier('gold');
+      if (plan === 'lifetime') setHasLifetimeAccess(true);
+    } else if (had) {
+      setHasGold(false);
+      setHasLifetimeAccess(false);
+      setUserTier('free');
     }
   };
 
@@ -4360,6 +4398,16 @@ function AppContent() {
   const syncSubscriptionToSupabase = async (userId, tierOverride) => {
     try {
       const tier = tierOverride || userTier || 'free';
+      if (tier === 'free') {
+        // RevenueCat has nothing, but the account may have a plan from
+        // troystack.ai. Stripe is the record for those, and its webhooks keep
+        // the profile right, so free is only written when Stripe has nothing
+        // either. If the check can't tell, the profile is left alone.
+        const webPlan = await checkWebPlan();
+        if (webPlan === undefined) return;
+        applyWebPlan(webPlan);
+        if (webPlan) return;
+      }
       const tierMap = {
         'gold': { subscription_tier: 'gold', subscription_status: 'active' },
         'lifetime': { subscription_tier: 'lifetime', subscription_status: 'active' },
@@ -4416,6 +4464,7 @@ function AppContent() {
             if (__DEV__) console.log('🕶️ RevenueCat: Guest mode - using anonymous device ID');
           }
 
+          webPlanRef.current = null; // a new account starts with no web plan
           const initialized = await initializePurchases(apiKey, appUserId);
           if (initialized) {
             // Log in to RevenueCat to transfer anonymous purchases to authenticated user
@@ -4436,7 +4485,11 @@ function AppContent() {
               const goldEnt = syncActive['Gold'];
               const isLifetimeProduct = goldEnt?.productIdentifier?.toLowerCase().includes('lifetime');
               const syncTier = syncActive['Lifetime'] ? 'lifetime' : isLifetimeProduct ? 'lifetime' : (syncActive['Gold'] || syncActive['Silver']) ? 'gold' : 'free';
-              syncSubscriptionToSupabase(appUserId, syncTier);
+              // Waits when RevenueCat has nothing, so a web subscriber's Gold is
+              // in place before upgrade prompts can show. The check times out
+              // after six seconds.
+              if (syncTier === 'free') await syncSubscriptionToSupabase(appUserId, syncTier);
+              else syncSubscriptionToSupabase(appUserId, syncTier);
             }
             if (__DEV__) console.log('✅ RevenueCat setup complete');
           } else {
@@ -4465,11 +4518,12 @@ function AppContent() {
       const isLifetime = activeEntitlements['Lifetime'] !== undefined;
       const tier = getUserTier(customerInfo);
 
-      setHasGold(isGold || isSilver);
-      setHasLifetimeAccess(isLifetime);
-      setUserTier(tier);
+      const plan = mergePlans({ rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier, webPlan: webPlanRef.current });
+      setHasGold(plan.hasGold);
+      setHasLifetimeAccess(plan.hasLifetime);
+      setUserTier(plan.tier);
 
-      if (__DEV__) console.log('[RevenueCat Listener] Tier updated:', tier);
+      if (__DEV__) console.log('[RevenueCat Listener] Tier updated:', tier, 'web plan:', webPlanRef.current);
 
       // Sync to Supabase — use specific tier (lifetime vs gold)
       if (supabaseUser?.id) {
