@@ -46,7 +46,9 @@ const GOLD_FEATURES = [
 ];
 
 // initialCycle ('yearly' or 'monthly') opens the screen on the plan whose free
-// trial a prompt just promised, so that trial is the first button shown.
+// trial a prompt just promised, so that trial is the first button shown. Any
+// other open starts on Yearly, the default, since the screen stays mounted and
+// would otherwise keep the plan from the last time it was shown.
 const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', initialCycle = null }) => {
   const [offering, setOffering] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -57,7 +59,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', i
 
   useEffect(() => {
     if (visible) {
-      if (initialCycle === 'yearly' || initialCycle === 'monthly') setBillingCycle(initialCycle);
+      setBillingCycle(initialCycle === 'yearly' || initialCycle === 'monthly' ? initialCycle : 'yearly');
       loadOfferings();
     }
   }, [visible, initialCycle]);
