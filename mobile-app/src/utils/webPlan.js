@@ -38,6 +38,18 @@ export function shouldRecheckWebPlan({ now, lastAt, lastPlan, rcHasPlan }) {
 }
 
 /**
+ * Whether an answer from RevenueCat's customer info listener is about the
+ * person using the app. Signed out, the anonymous customer's answer is theirs.
+ * Signed in, only an answer while RevenueCat is on that same account counts:
+ * right after an account switch that skips sign-out RevenueCat is still on the
+ * last account for a moment, and at sign-out it moves to an anonymous customer
+ * before the account has gone.
+ */
+export function revenueCatAnswerCounts({ signedInId, rcUserId }) {
+  return !signedInId || rcUserId === signedInId;
+}
+
+/**
  * The plan Stripe holds for the signed-in account, from GET /v1/stripe/my-plan.
  * @returns {Promise<'gold'|'lifetime'|null|undefined>} 'gold' or 'lifetime',
  *   null when Stripe has nothing, undefined when it couldn't tell (no session,

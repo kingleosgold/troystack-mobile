@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/webPlan.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
+import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, revenueCatAnswerCounts, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
 
 const API = 'https://api.example.test';
 
@@ -102,4 +102,12 @@ test('the foreground asks again only while RevenueCat has nothing, and not too o
 test('a slow step gives up after its time', async () => {
   assert.equal(await withTimeout(Promise.resolve('fast'), 50), 'fast');
   await assert.rejects(withTimeout(new Promise(() => {}), 20), /Timed out/);
+});
+
+test("RevenueCat's answer counts only for the person using the app", () => {
+  assert.equal(revenueCatAnswerCounts({ signedInId: null, rcUserId: '$RCAnonymousID:abc' }), true, 'signed out, the anonymous customer is theirs');
+  assert.equal(revenueCatAnswerCounts({ signedInId: 'user-b', rcUserId: 'user-b' }), true);
+  assert.equal(revenueCatAnswerCounts({ signedInId: 'user-b', rcUserId: 'user-a' }), false, 'still on the last account after a switch');
+  assert.equal(revenueCatAnswerCounts({ signedInId: 'user-a', rcUserId: '$RCAnonymousID:abc' }), false, 'moved to anonymous at sign-out');
+  assert.equal(revenueCatAnswerCounts({ signedInId: 'user-a', rcUserId: null }), false, "RevenueCat's user unknown");
 });
