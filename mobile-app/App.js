@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
-import { unlockLine, TROY_GOLD_LINE, speakFailure, listenGoldPrompt, LISTEN_LIMIT_PROMPT } from './src/utils/goldOffer';
+import { unlockLine, TROY_GOLD_LINE, speakFailure, listenGoldPrompt, listenLimitPrompt } from './src/utils/goldOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2605,10 +2605,14 @@ function AppContent() {
   const [hasLifetimeAccess, setHasLifetimeAccess] = useState(false);
   const [revenueCatUserId, setRevenueCatUserId] = useState(null);
 
-  // The free trial upgrade prompts may promise, as { count, unit }, or null
-  // when this Apple ID can't get one or it hasn't been checked yet. Checked
-  // through RevenueCat the same way the Gold screen checks it.
+  // The free trial upgrade prompts may promise, as { count, unit, cycle }, or
+  // null when this Apple ID can't get one or it hasn't been checked yet.
+  // Checked through RevenueCat the same way the Gold screen checks it. cycle is
+  // the plan it's on, 'yearly' or 'monthly'.
   const [goldTrial, setGoldTrial] = useState(null);
+  // The plan the Gold screen opens on when a prompt promised that plan's free
+  // trial, or null for its usual opening.
+  const [paywallCycle, setPaywallCycle] = useState(null);
 
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
@@ -4501,6 +4505,14 @@ function AppContent() {
     return () => { cancelled = true; };
   }, [subscriptionLoading, hasGoldAccess]);
 
+  // Opens the Gold screen from a prompt that may have promised a free trial,
+  // on the plan that trial belongs to, so the promised trial is the button the
+  // person sees first.
+  const openGoldScreen = (cycle) => {
+    setPaywallCycle(cycle || null);
+    setShowPaywallModal(true);
+  };
+
   // Register background fetch for iOS (keeps widget data fresh when app is closed)
   useEffect(() => {
     if (Platform.OS === 'ios') {
@@ -5307,16 +5319,17 @@ function AppContent() {
       tFetch = Date.now();
       if (!response.ok) {
         // A 403 means the account isn't on Gold and a 429 Voice limit reached
-        // means the day's spoken answers are used up. Neither is a connection
-        // problem, so each gets its own message. Anything else keeps the
-        // error below.
+        // means the day's voice uses, spoken questions and answers together,
+        // are used up. Neither is a connection problem, so each gets its own
+        // message. Anything else keeps the error below.
         const body = await response.json().catch(() => ({}));
         const failure = speakFailure(response.status, body);
         if (failure !== 'error') {
           setPlayingMessageId(null);
           setIsPaused(false);
           if (failure === 'limit') {
-            Alert.alert(LISTEN_LIMIT_PROMPT.title, LISTEN_LIMIT_PROMPT.message);
+            const limitPrompt = listenLimitPrompt(body?.limit);
+            Alert.alert(limitPrompt.title, limitPrompt.message);
           } else if (hasGoldAccess) {
             // The app has Gold for this account but the server's record doesn't
             // yet, so an upgrade prompt would ask a paying customer to pay again.
@@ -5325,7 +5338,7 @@ function AppContent() {
             const prompt = listenGoldPrompt(goldTrial);
             Alert.alert(prompt.title, prompt.message, [
               { text: 'Not now', style: 'cancel' },
-              { text: prompt.action, onPress: () => setShowPaywallModal(true) },
+              { text: prompt.action, onPress: () => openGoldScreen(goldTrial?.cycle) },
             ]);
           }
           return;
@@ -9949,7 +9962,7 @@ function AppContent() {
                 {!effHasPaidAccess && holdingsImpact.length > 1 && (
                   <>
                     <TouchableOpacity
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowPaywallModal(true); }}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
                       style={{ marginTop: 10, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center' }}
                     >
                       <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('full insights', goldTrial)}</Text>
@@ -10861,7 +10874,7 @@ function AppContent() {
             {!effHasGoldAccess && (
               <>
                 <TouchableOpacity
-                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowPaywallModal(true); }}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
                   style={{ marginHorizontal: 2, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center', backgroundColor: 'rgba(212, 168, 67, 0.05)' }}
                 >
                   <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('advanced analytics', goldTrial)}</Text>
@@ -14104,7 +14117,8 @@ function AppContent() {
       {/* Gold Paywall */}
       <GoldPaywall
         visible={showPaywallModal}
-        onClose={() => setShowPaywallModal(false)}
+        initialCycle={paywallCycle}
+        onClose={() => { setShowPaywallModal(false); setPaywallCycle(null); }}
         onPurchaseSuccess={checkEntitlements}
         userTier={userTier}
       />
