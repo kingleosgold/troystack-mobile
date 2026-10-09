@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
-import { fetchWebPlan, mergePlans } from './src/utils/webPlan';
+import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey } from './src/utils/webPlan';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2609,6 +2609,9 @@ function AppContent() {
   // answers for it from Stripe, so a web subscriber has Gold here too and the
   // app never writes free over a plan it didn't sell. null, 'gold' or 'lifetime'.
   const webPlanRef = useRef(null);
+  // Bumped at sign-out and when an account is set up, so an answer that comes
+  // back after the account changed is dropped instead of landing on the next one.
+  const webPlanGenRef = useRef(0);
 
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
@@ -2952,6 +2955,7 @@ function AppContent() {
     try {
       const userId = supabaseUser?.id;
       // 0. A web plan belongs to the account, not the phone
+      webPlanGenRef.current += 1;
       applyWebPlan(null);
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
@@ -2970,7 +2974,7 @@ function AppContent() {
         'lastSnapshotDate',
         'stack_guest_mode',
       ];
-      if (userId) userKeys.push(`stack_synced_${userId}`);
+      if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
       await AsyncStorage.multiRemove(userKeys);
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
@@ -4402,9 +4406,17 @@ function AppContent() {
         // RevenueCat has nothing, but the account may have a plan from
         // troystack.ai. Stripe is the record for those, and its webhooks keep
         // the profile right, so free is only written when Stripe has nothing
-        // either. If the check can't tell, the profile is left alone.
+        // either. If the check can't tell, the profile is left alone and the
+        // last confirmed answer for this account still counts.
+        const gen = webPlanGenRef.current;
         const webPlan = await checkWebPlan();
-        if (webPlan === undefined) return;
+        if (gen !== webPlanGenRef.current) return; // the account changed while asking
+        if (webPlan === undefined) {
+          const cached = await readCachedWebPlan(AsyncStorage, userId);
+          if (cached && gen === webPlanGenRef.current) applyWebPlan(cached);
+          return;
+        }
+        cacheWebPlan(AsyncStorage, userId, webPlan);
         applyWebPlan(webPlan);
         if (webPlan) return;
       }
@@ -4464,7 +4476,8 @@ function AppContent() {
             if (__DEV__) console.log('🕶️ RevenueCat: Guest mode - using anonymous device ID');
           }
 
-          webPlanRef.current = null; // a new account starts with no web plan
+          webPlanGenRef.current += 1; // a new account starts with no web plan
+          webPlanRef.current = null;
           const initialized = await initializePurchases(apiKey, appUserId);
           if (initialized) {
             // Log in to RevenueCat to transfer anonymous purchases to authenticated user
@@ -4525,8 +4538,13 @@ function AppContent() {
 
       if (__DEV__) console.log('[RevenueCat Listener] Tier updated:', tier, 'web plan:', webPlanRef.current);
 
-      // Sync to Supabase — use specific tier (lifetime vs gold)
-      if (supabaseUser?.id) {
+      // Sync to Supabase — use specific tier (lifetime vs gold). Only while
+      // RevenueCat is on this same account: at sign-out it switches to an
+      // anonymous customer first, and that customer's empty plan must never
+      // be written over the account that's leaving.
+      let revenueCatUser = null;
+      try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
+      if (supabaseUser?.id && revenueCatUser === supabaseUser.id) {
         const goldEntListener = activeEntitlements['Gold'];
         const isLifetimeProductListener = goldEntListener?.productIdentifier?.toLowerCase().includes('lifetime');
         const syncTier = isLifetime ? 'lifetime' : isLifetimeProductListener ? 'lifetime' : (isGold || isSilver) ? 'gold' : 'free';
