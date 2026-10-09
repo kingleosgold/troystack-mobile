@@ -45,7 +45,9 @@ const GOLD_FEATURES = [
   { icon: '🏦', text: 'COMEX Vault Watch' },
 ];
 
-const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' }) => {
+// initialCycle ('yearly' or 'monthly') opens the screen on the plan whose free
+// trial a prompt just promised, so that trial is the first button shown.
+const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', initialCycle = null }) => {
   const [offering, setOffering] = useState(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(null);
@@ -55,9 +57,10 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
 
   useEffect(() => {
     if (visible) {
+      if (initialCycle === 'yearly' || initialCycle === 'monthly') setBillingCycle(initialCycle);
       loadOfferings();
     }
-  }, [visible]);
+  }, [visible, initialCycle]);
 
   const loadOfferings = async () => {
     try {
