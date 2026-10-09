@@ -31,7 +31,8 @@ import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
-import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
+import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
+import { unlockLine, TROY_GOLD_LINE, speakFailure, listenGoldPrompt, listenLimitPrompt } from './src/utils/goldOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2604,6 +2605,15 @@ function AppContent() {
   const [hasLifetimeAccess, setHasLifetimeAccess] = useState(false);
   const [revenueCatUserId, setRevenueCatUserId] = useState(null);
 
+  // The free trial upgrade prompts may promise, as { count, unit, cycle }, or
+  // null when this Apple ID can't get one or it hasn't been checked yet.
+  // Checked through RevenueCat the same way the Gold screen checks it. cycle is
+  // the plan it's on, 'yearly' or 'monthly'.
+  const [goldTrial, setGoldTrial] = useState(null);
+  // The plan the Gold screen opens on when a prompt promised that plan's free
+  // trial, or null for its usual opening.
+  const [paywallCycle, setPaywallCycle] = useState(null);
+
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
   const [iCloudAvailable, setICloudAvailable] = useState(false);
@@ -4483,6 +4493,26 @@ function AppContent() {
     return () => { if (removeListener) removeListener(); };
   }, [supabaseUser?.id]);
 
+  // Look up the free trial for upgrade prompts once RevenueCat is set up, and
+  // again whenever Gold access changes, since an Apple ID that has used its
+  // trial can't get it again. Until it's known, prompts offer Gold plainly.
+  useEffect(() => {
+    if (subscriptionLoading || hasGoldAccess) return undefined;
+    let cancelled = false;
+    loadGoldOffering()
+      .then(({ trial }) => { if (!cancelled) setGoldTrial(trial); })
+      .catch(() => { if (!cancelled) setGoldTrial(null); });
+    return () => { cancelled = true; };
+  }, [subscriptionLoading, hasGoldAccess]);
+
+  // Opens the Gold screen from a prompt that may have promised a free trial,
+  // on the plan that trial belongs to, so the promised trial is the button the
+  // person sees first.
+  const openGoldScreen = (cycle) => {
+    setPaywallCycle(cycle || null);
+    setShowPaywallModal(true);
+  };
+
   // Register background fetch for iOS (keeps widget data fresh when app is closed)
   useEffect(() => {
     if (Platform.OS === 'ios') {
@@ -5228,7 +5258,9 @@ function AppContent() {
     }
   };
 
-  const playTroyVoice = async (text, messageId) => {
+  // auto is true when the answer plays by itself after a voice question, so a
+  // free account isn't shown a Gold prompt it didn't ask for.
+  const playTroyVoice = async (text, messageId, { auto = false } = {}) => {
     // Stop if already playing this message
     if (playingMessageId === messageId) {
       await stopTroyAudio();
@@ -5286,6 +5318,31 @@ function AppContent() {
       });
       tFetch = Date.now();
       if (!response.ok) {
+        // A 403 means the account isn't on Gold and a 429 Voice limit reached
+        // means the day's voice uses, spoken questions and answers together,
+        // are used up. Neither is a connection problem, so each gets its own
+        // message. Anything else keeps the error below.
+        const body = await response.json().catch(() => ({}));
+        const failure = speakFailure(response.status, body);
+        if (failure !== 'error') {
+          setPlayingMessageId(null);
+          setIsPaused(false);
+          if (failure === 'limit') {
+            const limitPrompt = listenLimitPrompt(body?.limit);
+            Alert.alert(limitPrompt.title, limitPrompt.message);
+          } else if (hasGoldAccess) {
+            // The app has Gold for this account but the server's record doesn't
+            // yet, so an upgrade prompt would ask a paying customer to pay again.
+            Alert.alert('Voice Unavailable', "Troy's voice isn't available on this account right now. Try again later.");
+          } else if (!auto) {
+            const prompt = listenGoldPrompt(goldTrial);
+            Alert.alert(prompt.title, prompt.message, [
+              { text: 'Not now', style: 'cancel' },
+              { text: prompt.action, onPress: () => openGoldScreen(goldTrial?.cycle) },
+            ]);
+          }
+          return;
+        }
         throw new Error(`TTS fetch failed: ${response.status}`);
       }
       const arrayBuffer = await response.arrayBuffer();
@@ -5428,7 +5485,9 @@ function AppContent() {
       return;
     }
 
-    // Daily limit check — Free gets 3/day, Gold/Lifetime unlimited
+    // Daily limit check. Free gets 3 a day here. Gold and Lifetime aren't
+    // capped in the app, but the server stops them at 30 a day
+    // (GOLD_DAILY_LIMIT in the API's troy-chat.js).
     // Check both RevenueCat state (hasGoldAccess) and Supabase tier (userTier) as backup
     const isPaidUser = hasGoldAccess || userTier === 'gold' || userTier === 'lifetime' || hasLifetimeAccess;
     console.log('[Troy] Tier check:', { hasGold, hasLifetimeAccess, hasGoldAccess, userTier, isPaidUser, questions: advisorQuestionsToday });
@@ -5538,7 +5597,7 @@ function AppContent() {
       // Auto-play Troy's voice response after voice input — immediate, no delay
       if (autoPlayNextResponseRef.current && assistantMsg.content && assistantMsg.id) {
         autoPlayNextResponseRef.current = false;
-        playTroyVoice(assistantMsg.content, assistantMsg.id);
+        playTroyVoice(assistantMsg.content, assistantMsg.id, { auto: true });
       }
     } catch (e) {
       if (troySessionRef.current !== session) return;
@@ -9099,7 +9158,7 @@ function AppContent() {
                       onPress={() => { drawerProps.navigation.closeDrawer(); setShowPaywallModal(true); }}
                       style={{ marginTop: 8, backgroundColor: '#C9A84C', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}
                     >
-                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Upgrade — $4.99/mo</Text>
+                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Upgrade for $4.99 a month</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -9709,7 +9768,7 @@ function AppContent() {
                       <View style={{ flex: 1, backgroundColor: todayCardBg, opacity: 0.95 }} />
                     </View>
                     <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
-                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock Your Daily Brief — upgrade now →</Text>
+                      <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock your daily brief with Gold →</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -9731,7 +9790,7 @@ function AppContent() {
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Your Daily Brief</Text>
                     </View>
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
-                      Get your daily brief — upgrade to unlock
+                      Get your daily brief with Gold
                     </Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
                       <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
@@ -9903,10 +9962,10 @@ function AppContent() {
                 {!effHasPaidAccess && holdingsImpact.length > 1 && (
                   <>
                     <TouchableOpacity
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowPaywallModal(true); }}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
                       style={{ marginTop: 10, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center' }}
                     >
-                      <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock full insights — start free</Text>
+                      <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('full insights', goldTrial)}</Text>
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 2 }}>Plans from $4.99/mo · Cancel anytime</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={handleRestore} style={{ marginTop: 6, alignItems: 'center' }}>
@@ -10815,10 +10874,10 @@ function AppContent() {
             {!effHasGoldAccess && (
               <>
                 <TouchableOpacity
-                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowPaywallModal(true); }}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
                   style={{ marginHorizontal: 2, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center', backgroundColor: 'rgba(212, 168, 67, 0.05)' }}
                 >
-                  <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock advanced analytics — start free</Text>
+                  <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('advanced analytics', goldTrial)}</Text>
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 2 }}>Plans from $4.99/mo · Cancel anytime</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handleRestore} style={{ marginTop: 6, alignItems: 'center', marginBottom: 4 }}>
@@ -10885,7 +10944,7 @@ function AppContent() {
                     <View style={{ flex: 1, backgroundColor: colors.cardBg, opacity: 0.95 }} />
                   </View>
                   <TouchableOpacity onPress={() => setShowPaywallModal(true)} style={{ marginTop: 4 }}>
-                    <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock full portfolio intelligence — upgrade to Gold →</Text>
+                    <Text style={{ color: '#D4A843', fontSize: scaledFonts.small, fontWeight: '600' }}>Unlock full portfolio intelligence with Gold →</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -10907,7 +10966,7 @@ function AppContent() {
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.small, fontWeight: '600' }}>Stack Intelligence</Text>
                   </View>
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small }}>
-                    Get Troy's portfolio intelligence — upgrade to Gold
+                    Get Troy's portfolio intelligence with Gold
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(251,191,36,0.15)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
                     <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>UPGRADE</Text>
@@ -13328,13 +13387,13 @@ function AppContent() {
 
             {/* Gold features */}
             <Text style={{ color: isDarkMode ? '#8e8e93' : '#6d6d72', fontSize: scaledFonts.small, fontWeight: '400', textTransform: 'uppercase', marginBottom: 8, marginLeft: 4, letterSpacing: 0.5 }}>
-              {hasGoldAccess ? 'Gold Features' : 'Gold — $4.99/mo'}
+              {hasGoldAccess ? 'Gold Features' : 'Gold, $4.99 a month'}
             </Text>
             <View style={{ backgroundColor: isDarkMode ? '#1c1c1e' : '#ffffff', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
               {[
                 { icon: '🧠', label: 'Market Intelligence' },
                 { icon: '🏦', label: 'COMEX Vault Watch' },
-                { icon: 'troy', label: 'Troy — Unlimited messages' },
+                { icon: 'troy', label: TROY_GOLD_LINE },
                 { icon: '📊', label: 'Advanced Analytics & Cost Basis' },
                 { icon: '📸', label: 'Unlimited receipt scans' },
                 { icon: '☁️', label: 'Cloud sync across devices' },
@@ -14058,7 +14117,8 @@ function AppContent() {
       {/* Gold Paywall */}
       <GoldPaywall
         visible={showPaywallModal}
-        onClose={() => setShowPaywallModal(false)}
+        initialCycle={paywallCycle}
+        onClose={() => { setShowPaywallModal(false); setPaywallCycle(null); }}
         onPurchaseSuccess={checkEntitlements}
         userTier={userTier}
       />

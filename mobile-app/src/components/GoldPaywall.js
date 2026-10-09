@@ -19,7 +19,8 @@ import {
 } from 'react-native';
 import Purchases from 'react-native-purchases';
 import * as Haptics from 'expo-haptics';
-import { restorePurchases } from '../utils/entitlements';
+import { restorePurchases, loadGoldOffering, INTRO_ELIGIBLE_STATUS } from '../utils/entitlements';
+import { freeTrialPeriod, trialLabel, TROY_GOLD_LINE } from '../utils/goldOffer';
 import TroyCoinIcon from './TroyCoinIcon';
 
 const PRIVACY_URL = 'https://troystack.com/privacy';
@@ -29,22 +30,13 @@ const GOLD_COLOR = '#fbbf24';
 
 // Length of a free intro offer this user is eligible for, such as "7 Days",
 // or null. RevenueCat advises plain pricing when eligibility is unknown, so
-// anything short of ELIGIBLE shows no trial wording.
-const freeTrialLength = (product, eligibility) => {
-  const intro = product?.introPrice;
-  const ELIGIBLE = Purchases.INTRO_ELIGIBILITY_STATUS?.INTRO_ELIGIBILITY_STATUS_ELIGIBLE ?? 2;
-  if (!intro || intro.price !== 0) return null;
-  if (eligibility?.[product.identifier]?.status !== ELIGIBLE) return null;
-  const n = (intro.periodNumberOfUnits || 0) * (intro.cycles || 1);
-  const unit = String(intro.periodUnit || '').toUpperCase();
-  const days = unit === 'DAY' ? n : unit === 'WEEK' ? n * 7 : 0;
-  if (days > 0) return `${days} Day${days === 1 ? '' : 's'}`;
-  if (unit === 'MONTH' && n > 0) return `${n} Month${n === 1 ? '' : 's'}`;
-  return null;
-};
+// anything short of ELIGIBLE shows no trial wording. The upgrade banners use
+// the same check through src/utils/goldOffer.js.
+const freeTrialLength = (product, eligibility) =>
+  trialLabel(freeTrialPeriod(product, eligibility, INTRO_ELIGIBLE_STATUS), { capitalized: true });
 
 const GOLD_FEATURES = [
-  { icon: 'troy', text: 'Unlimited Troy AI Chat' },
+  { icon: 'troy', text: TROY_GOLD_LINE },
   { icon: 'troy', text: 'Troy Remembers (conversation history)' },
   { icon: '📰', text: 'Daily Market Brief' },
   { icon: '🧠', text: 'Portfolio Intelligence' },
@@ -53,7 +45,11 @@ const GOLD_FEATURES = [
   { icon: '🏦', text: 'COMEX Vault Watch' },
 ];
 
-const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' }) => {
+// initialCycle ('yearly' or 'monthly') opens the screen on the plan whose free
+// trial a prompt just promised, so that trial is the first button shown. Any
+// other open starts on Yearly, the default, since the screen stays mounted and
+// would otherwise keep the plan from the last time it was shown.
+const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', initialCycle = null }) => {
   const [offering, setOffering] = useState(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(null);
@@ -63,25 +59,19 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
 
   useEffect(() => {
     if (visible) {
+      setBillingCycle(initialCycle === 'yearly' || initialCycle === 'monthly' ? initialCycle : 'yearly');
       loadOfferings();
     }
-  }, [visible]);
+  }, [visible, initialCycle]);
 
   const loadOfferings = async () => {
     try {
       setLoading(true);
-      const offerings = await Purchases.getOfferings();
+      const { offering: current, eligibility } = await loadGoldOffering();
 
-      if (offerings.current) {
-        setOffering(offerings.current);
-        try {
-          const ids = [offerings.current.annual, offerings.current.monthly]
-            .filter(Boolean)
-            .map((pkg) => pkg.product.identifier);
-          setIntroEligibility(ids.length ? (await Purchases.checkTrialOrIntroductoryPriceEligibility(ids)) || {} : {});
-        } catch (e) {
-          setIntroEligibility({});
-        }
+      if (current) {
+        setOffering(current);
+        setIntroEligibility(eligibility);
       } else {
         if (__DEV__) console.log('No offerings available');
         setOffering(null);

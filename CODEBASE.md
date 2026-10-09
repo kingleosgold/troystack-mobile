@@ -51,10 +51,10 @@
 ## 2. Components
 
 ### mobile-app/src/components/GoldPaywall.js
-- **Purpose:** RevenueCat subscription paywall modal (Gold monthly/yearly/lifetime)
+- **Purpose:** RevenueCat subscription paywall modal (Gold monthly/yearly/lifetime). Loads the offering and trial eligibility through `loadGoldOffering` and shows a free trial only when this Apple ID can still get it
 - **Exports:** `GoldPaywall` (default)
-- **Props:** `visible`, `onClose`, `onPurchaseSuccess`, `userTier`
-- **Last modified:** 2026-04-07
+- **Props:** `visible`, `onClose`, `onPurchaseSuccess`, `userTier`, `initialCycle` ('yearly' or 'monthly', the plan a prompt's promised trial is on, so the screen opens on it)
+- **Last modified:** 2026-10-09
 
 ### mobile-app/src/components/TroyCoinIcon.js
 - **Purpose:** Custom Troy Aureus coin SVG icon
@@ -124,8 +124,14 @@ Bottom sheet content for each preview type:
 
 ### mobile-app/src/utils/entitlements.js
 - **Purpose:** RevenueCat subscription status checks
-- **Exports:** `initializePurchases`, `hasGoldEntitlement`, `hasSilverEntitlement`, `getUserEntitlements`, `loginRevenueCat`, `logoutRevenueCat`, `restorePurchases`
-- **Last modified:** 2026-04-07
+- **Exports:** `initializePurchases`, `hasGoldEntitlement`, `hasSilverEntitlement`, `getUserEntitlements`, `loginRevenueCat`, `logoutRevenueCat`, `restorePurchases`, `loadGoldOffering` (current offering, trial eligibility for its yearly and monthly plans, and the trial a prompt may promise), `INTRO_ELIGIBLE_STATUS`
+- **Last modified:** 2026-10-09
+
+### mobile-app/src/utils/goldOffer.js
+- **Purpose:** What Gold prompts may say. A free trial only when RevenueCat says this Apple ID is eligible, carrying the plan it's on so the Gold screen opens there, and Troy's limits as the API enforces them (30 questions a day, and 20 voice uses a day that spoken questions and answers share, reset at midnight Eastern time)
+- **Exports:** `freeTrialPeriod`, `trialLabel`, `offeringFreeTrial`, `unlockLine`, `TROY_GOLD_LINE`, `TROY_GOLD_DAILY_QUESTIONS`, `TROY_GOLD_DAILY_VOICE`, `speakFailure`, `listenGoldPrompt`, `listenLimitPrompt`, `INTRO_ELIGIBLE`
+- **Tests:** `node --test mobile-app/src/utils/goldOffer.test.mjs`
+- **Last modified:** 2026-10-09
 
 ### mobile-app/src/utils/widgetKit.js
 - **Purpose:** iOS WidgetKit data bridge — sends portfolio data to native widget
@@ -179,6 +185,8 @@ Bottom sheet content for each preview type:
       │      ├─ Voice: ELEVENLABS_VOICE_ID env var
       │      ├─ API key: ELEVENLABS_API_KEY env var
       │      └─ Returns: audio/mpeg stream
+      ├─ 403 (not Gold): Listen tap opens the Gold prompt, free trial named only when eligible and the Gold screen opened on that trial's plan; auto-play stays quiet
+      ├─ 429 Voice limit reached: "Voice limit reached" alert, the day's voice uses (spoken questions and answers together, the 429's own limit) and the midnight Eastern reset
       ├─ arrayBuffer -> base64 -> FileSystem cache (.mp3)
       └─ TrackPlayer.add({ url, title: 'Troy', artist: 'TroyStack', artwork }) -> TrackPlayer.play()
 ```
