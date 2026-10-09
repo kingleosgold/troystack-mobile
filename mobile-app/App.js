@@ -2619,12 +2619,11 @@ function AppContent() {
   // When the web plan was last asked about, and what that answer was:
   // 'gold', 'lifetime', null for none, or undefined when it couldn't tell.
   const lastWebCheckRef = useRef({ at: 0, plan: undefined });
-  // The account RevenueCat's answer has been read for since it was set up.
-  const rcReadyForRef = useRef(null);
   // Whether the last RevenueCat read worked, so a failed one isn't taken as no plan.
   const rcReadOkRef = useRef(false);
-  // A foreground web check still running, so quick app switches don't stack more.
-  const webCheckInFlightRef = useRef(false);
+  // The account a foreground web check is still running for, so quick app
+  // switches don't stack more, and another account's check doesn't block.
+  const webCheckInFlightRef = useRef(null);
   // The sync number of the last web plan answer kept in the cache, so an
   // older answer that comes back late never replaces a newer one.
   const webCachedSeqRef = useRef(0);
@@ -2973,7 +2972,6 @@ function AppContent() {
       // 0. A web plan belongs to the account, not the phone
       webPlanGenRef.current += 1;
       rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
-      rcReadyForRef.current = null;
       lastWebCheckRef.current = { at: 0, plan: undefined };
       applyWebPlan(null);
       // 1. Logout from RevenueCat
@@ -4400,7 +4398,10 @@ function AppContent() {
       const { data } = await withTimeout(supabase.auth.getSession(), WEB_PLAN_TIMEOUT_MS);
       const session = data?.session;
       // Signed in as someone else now, so this check is over for this account.
-      if (session?.user?.id !== userId) return WEB_PLAN_WRONG_ACCOUNT;
+      if (session && session.user?.id !== userId) return WEB_PLAN_WRONG_ACCOUNT;
+      // No session at all, a token refresh that failed offline say, can't
+      // tell, so the cached answer still counts.
+      if (!session) return undefined;
       return await fetchWebPlan({ apiBase: API_BASE_URL, token: session?.access_token, timeoutMs: WEB_PLAN_TIMEOUT_MS });
     } catch (e) {
       if (__DEV__) console.log('[WebPlan] Check failed:', e?.message);
@@ -4534,8 +4535,6 @@ function AppContent() {
             // Additional delay before checking entitlements
             await new Promise(resolve => setTimeout(resolve, 100));
             await checkEntitlements();
-            // Ready only on a real answer, so a RevenueCat outage isn't read as no plan.
-            if (setupGen === webPlanGenRef.current && rcReadOkRef.current) rcReadyForRef.current = appUserId;
             // Sync RevenueCat tier → Supabase. Only while this setup's account
             // is still the one signed in and RevenueCat is still on it: a
             // sign-out partway through switches RevenueCat to an anonymous
@@ -4600,10 +4599,9 @@ function AppContent() {
       let revenueCatUser = null;
       try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
       if (supabaseUser?.id && revenueCatUser === supabaseUser.id) {
-        // A real answer for this account, so the foreground web check can run
-        // even if RevenueCat couldn't be read when the app started.
+        // A real answer for this account, even if RevenueCat couldn't be read
+        // when the app started.
         rcReadOkRef.current = true;
-        rcReadyForRef.current = supabaseUser.id;
         const goldEntListener = activeEntitlements['Gold'];
         const isLifetimeProductListener = goldEntListener?.productIdentifier?.toLowerCase().includes('lifetime');
         const syncTier = isLifetime ? 'lifetime' : isLifetimeProductListener ? 'lifetime' : (isGold || isSilver) ? 'gold' : 'free';
@@ -4622,8 +4620,11 @@ function AppContent() {
   // last one, right away rather than when setup runs half a second later.
   useEffect(() => {
     webPlanGenRef.current += 1;
-    rcReadyForRef.current = null;
     lastWebCheckRef.current = { at: 0, plan: undefined };
+    // Some paths switch accounts without signing out, a password reset link
+    // for another account say. The last account's plan goes with it.
+    rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
+    applyWebPlan(null);
   }, [supabaseUser?.id]);
 
   // Back in the foreground with nothing from RevenueCat, the web plan is asked
@@ -4635,16 +4636,16 @@ function AppContent() {
     const userId = supabaseUser.id;
     const sub = AppState.addEventListener('change', (next) => {
       if (next !== 'active') return;
-      // Not before RevenueCat's own answer is in for this account, so an App
-      // Store subscriber is never read as having nothing.
-      if (rcReadyForRef.current !== userId) return;
-      if (webCheckInFlightRef.current) return;
+      if (webCheckInFlightRef.current === userId) return;
       const rc = rcPlanRef.current;
       const last = lastWebCheckRef.current;
       if (!shouldRecheckWebPlan({ now: Date.now(), lastAt: last.at, lastPlan: last.plan, rcHasPlan: rc.rcGold || rc.rcLifetime })) return;
-      webCheckInFlightRef.current = true;
-      syncSubscriptionToSupabase(userId, 'free').finally(() => {
-        webCheckInFlightRef.current = false;
+      // It only reads the web plan and shows it. Launch and RevenueCat's
+      // listener do the profile writes, so a foreground check never writes,
+      // and it still runs while RevenueCat can't be read.
+      webCheckInFlightRef.current = userId;
+      syncSubscriptionToSupabase(userId, 'free', { webOnly: true }).finally(() => {
+        if (webCheckInFlightRef.current === userId) webCheckInFlightRef.current = null;
       });
     });
     return () => sub.remove();
