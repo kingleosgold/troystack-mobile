@@ -8,9 +8,11 @@
  */
 
 // Troy's daily limits as the API enforces them in src/routes/troy-chat.js:
-// GOLD_DAILY_LIMIT questions a day, and a voice cap of 20 a day (in
-// handleSpeak and /transcribe) that spoken questions and spoken answers share,
-// counted per New York calendar day.
+// GOLD_DAILY_LIMIT questions a day, and a Gold voice limit of 20 a day
+// (dailyLimit in handleSpeak and in /transcribe). Both routes count against
+// the same voice_usage_<user>_<New York date> key, so asking Troy out loud
+// and hearing his answers use the same 20, and the count starts over at
+// midnight Eastern time.
 export const TROY_GOLD_DAILY_QUESTIONS = 30;
 export const TROY_GOLD_DAILY_VOICE = 20;
 
@@ -44,13 +46,20 @@ export function trialLabel(period, { capitalized = false } = {}) {
 
 /**
  * The free trial an upgrade prompt can promise: the first of the offering's
- * yearly and monthly plans whose trial this Apple ID can still get. Yearly
- * comes first because the Gold screen opens on it.
+ * yearly and monthly plans whose trial this Apple ID can still get, with the
+ * plan it belongs to as cycle ('yearly' or 'monthly'), the Gold screen's
+ * billingCycle values. A prompt that promises it opens the Gold screen on that
+ * plan, so the trial is one tap away. Yearly comes first because the Gold
+ * screen opens on it otherwise.
  */
 export function offeringFreeTrial(offering, eligibility, eligibleStatus = INTRO_ELIGIBLE) {
-  for (const pkg of [offering?.annual, offering?.monthly]) {
+  const plans = [
+    { pkg: offering?.annual, cycle: 'yearly' },
+    { pkg: offering?.monthly, cycle: 'monthly' },
+  ];
+  for (const { pkg, cycle } of plans) {
     const period = freeTrialPeriod(pkg?.product, eligibility, eligibleStatus);
-    if (period) return period;
+    if (period) return { ...period, cycle };
   }
   return null;
 }
@@ -77,7 +86,7 @@ export function speakFailure(status, body) {
 
 /** What a free account sees after tapping Listen. */
 export function listenGoldPrompt(trial) {
-  const base = `Hearing Troy's answers out loud comes with Gold, up to ${TROY_GOLD_DAILY_VOICE} a day.`;
+  const base = `Hearing Troy's answers out loud comes with Gold. It includes ${TROY_GOLD_DAILY_VOICE} voice uses a day, spoken questions and answers together.`;
   return {
     title: 'Listen with Gold',
     message: trial ? `${base} You can try Gold free for ${trialLabel(trial)}.` : base,
@@ -85,8 +94,14 @@ export function listenGoldPrompt(trial) {
   };
 }
 
-/** What a Gold account sees once the day's spoken answers are used up. */
-export const LISTEN_LIMIT_PROMPT = {
-  title: 'Spoken answers used up',
-  message: "You've used today's spoken answers. They reset at midnight Eastern time.",
-};
+/**
+ * What a Gold account sees once the day's voice uses run out. limit is the
+ * 429's own limit from the server when it sent one.
+ */
+export function listenLimitPrompt(limit) {
+  const uses = Number.isInteger(limit) && limit > 0 ? limit : TROY_GOLD_DAILY_VOICE;
+  return {
+    title: 'Voice limit reached',
+    message: `You've used today's ${uses} voice uses, spoken questions and answers together. They reset at midnight Eastern time.`,
+  };
+}

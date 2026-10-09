@@ -3,12 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   INTRO_ELIGIBLE,
-  LISTEN_LIMIT_PROMPT,
   TROY_GOLD_DAILY_QUESTIONS,
   TROY_GOLD_DAILY_VOICE,
   TROY_GOLD_LINE,
   freeTrialPeriod,
   listenGoldPrompt,
+  listenLimitPrompt,
   offeringFreeTrial,
   speakFailure,
   trialLabel,
@@ -47,21 +47,35 @@ test('trial lengths read the way the Gold screen has always shown them', () => {
   assert.equal(trialLabel(null), null);
 });
 
-test('a prompt offers the yearly trial first, then the monthly one, else none', () => {
+test('a prompt offers the yearly trial first, then the monthly one, and names the plan it is on', () => {
   const offering = {
     annual: { product: product('gold_yearly', sevenDayTrial) },
     monthly: { product: product('gold_monthly', oneMonthTrial) },
   };
   assert.deepEqual(
     offeringFreeTrial(offering, { gold_yearly: { status: INTRO_ELIGIBLE }, gold_monthly: { status: INTRO_ELIGIBLE } }),
-    { count: 7, unit: 'day' },
+    { count: 7, unit: 'day', cycle: 'yearly' },
   );
   assert.deepEqual(
     offeringFreeTrial(offering, { gold_yearly: { status: INELIGIBLE }, gold_monthly: { status: INTRO_ELIGIBLE } }),
-    { count: 1, unit: 'month' },
+    { count: 1, unit: 'month', cycle: 'monthly' },
   );
   assert.equal(offeringFreeTrial(offering, { gold_yearly: { status: INELIGIBLE }, gold_monthly: { status: INELIGIBLE } }), null);
   assert.equal(offeringFreeTrial(null, {}), null);
+});
+
+test('a free week promised from the monthly plan opens the Gold screen on monthly', () => {
+  // Codex's case: the yearly trial was used, the monthly one wasn't. The promise
+  // has to carry the plan, since the Gold screen otherwise opens on yearly,
+  // where the button buys the yearly plan with no trial.
+  const offering = {
+    annual: { product: product('gold_yearly', sevenDayTrial) },
+    monthly: { product: product('gold_monthly', sevenDayTrial) },
+  };
+  const trial = offeringFreeTrial(offering, { gold_yearly: { status: INELIGIBLE }, gold_monthly: { status: INTRO_ELIGIBLE } });
+  assert.equal(trial.cycle, 'monthly');
+  assert.equal(unlockLine('full insights', trial), 'Unlock full insights, free for 7 days');
+  assert.equal(listenGoldPrompt(trial).action, 'Try Gold free');
 });
 
 test('banners promise a free start only with a trial to give', () => {
@@ -71,7 +85,8 @@ test('banners promise a free start only with a trial to give', () => {
 });
 
 test("Troy's line says what the server allows", () => {
-  // troystack-api src/routes/troy-chat.js: GOLD_DAILY_LIMIT = 30, voice cap 20 a day.
+  // troystack-api src/routes/troy-chat.js: GOLD_DAILY_LIMIT = 30, and a Gold voice
+  // limit of 20 a day that /speak and /transcribe count together.
   assert.equal(TROY_GOLD_DAILY_QUESTIONS, 30);
   assert.equal(TROY_GOLD_DAILY_VOICE, 20);
   assert.equal(TROY_GOLD_LINE, 'Up to 30 questions to Troy a day');
@@ -94,7 +109,16 @@ test('the Listen prompt offers the trial only when there is one', () => {
   const without = listenGoldPrompt(null);
   assert.doesNotMatch(without.message, /free/i);
   assert.equal(without.action, 'See Gold');
-  assert.match(without.message, /up to 20 a day/);
+  assert.match(without.message, /20 voice uses a day, spoken questions and answers together/);
+});
+
+test('the voice limit message counts questions and answers and says when it resets', () => {
+  const prompt = listenLimitPrompt(20);
+  assert.equal(prompt.title, 'Voice limit reached');
+  assert.equal(prompt.message, "You've used today's 20 voice uses, spoken questions and answers together. They reset at midnight Eastern time.");
+  assert.match(listenLimitPrompt(25).message, /today's 25 voice uses/, "the server's own limit wins");
+  assert.match(listenLimitPrompt(undefined).message, /today's 20 voice uses/, 'without one, the known Gold limit');
+  assert.match(listenLimitPrompt('20').message, /today's 20 voice uses/);
 });
 
 test('no long dashes in anything a person reads', () => {
@@ -104,8 +128,7 @@ test('no long dashes in anything a person reads', () => {
     unlockLine('full insights', null),
     ...Object.values(listenGoldPrompt({ count: 7, unit: 'day' })),
     ...Object.values(listenGoldPrompt(null)),
-    LISTEN_LIMIT_PROMPT.title,
-    LISTEN_LIMIT_PROMPT.message,
+    ...Object.values(listenLimitPrompt(20)),
   ];
   for (const s of strings) assert.doesNotMatch(s, /[\u2013\u2014]/, s);
 });
