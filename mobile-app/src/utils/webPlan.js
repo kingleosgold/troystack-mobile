@@ -6,8 +6,14 @@
  * and keeps the app from writing free over a plan it didn't sell.
  */
 
-/** How long a web plan check may take, the session read included. */
+/**
+ * How long each step of a web plan check may take, the session read and the
+ * API call each, so a whole check can take up to twice this.
+ */
 export const WEB_PLAN_TIMEOUT_MS = 6000;
+
+/** What a check returns when another account is signed in by the time it runs. */
+export const WEB_PLAN_WRONG_ACCOUNT = 'wrong-account';
 
 /** The promise's answer, or a rejection once `ms` have passed. */
 export function withTimeout(promise, ms) {
@@ -20,13 +26,15 @@ export function withTimeout(promise, ms) {
 
 /**
  * Whether to ask about the web plan again when the app comes back to the
- * foreground. Only while RevenueCat has nothing, at most once a minute after
- * an answer that couldn't tell, and every fifteen minutes otherwise.
+ * foreground. Only while RevenueCat has nothing. A confirmed web plan is asked
+ * about every fifteen minutes. No plan, or an answer that couldn't tell, is
+ * asked about again after a minute, so a plan bought on troystack.ai a moment
+ * ago shows up when the person switches back to the app.
  */
-export function shouldRecheckWebPlan({ now, lastAt, lastAnswered, rcHasPlan }) {
+export function shouldRecheckWebPlan({ now, lastAt, lastPlan, rcHasPlan }) {
   if (rcHasPlan) return false;
   const since = now - (lastAt || 0);
-  return lastAnswered ? since >= 15 * 60 * 1000 : since >= 60 * 1000;
+  return lastPlan === 'gold' || lastPlan === 'lifetime' ? since >= 15 * 60 * 1000 : since >= 60 * 1000;
 }
 
 /**

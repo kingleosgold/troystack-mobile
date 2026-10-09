@@ -90,12 +90,13 @@ test("an answer that couldn't tell is never cached, and a broken store reads as 
 
 test('the foreground asks again only while RevenueCat has nothing, and not too often', () => {
   const now = 10 * 60 * 60 * 1000;
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastAnswered: true, rcHasPlan: true }), false, 'an App Store plan needs no web check');
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastAnswered: true, rcHasPlan: false }), false);
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 16 * 60_000, lastAnswered: true, rcHasPlan: false }), true);
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 30_000, lastAnswered: false, rcHasPlan: false }), false);
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 61_000, lastAnswered: false, rcHasPlan: false }), true, 'a check that failed is tried again after a minute');
-  assert.equal(shouldRecheckWebPlan({ now, lastAt: 0, lastAnswered: false, rcHasPlan: false }), true);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastPlan: 'gold', rcHasPlan: true }), false, 'an App Store plan needs no web check');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 5 * 60_000, lastPlan: 'gold', rcHasPlan: false }), false, 'a confirmed web plan waits fifteen minutes');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 16 * 60_000, lastPlan: 'lifetime', rcHasPlan: false }), true);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 30_000, lastPlan: null, rcHasPlan: false }), false);
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 61_000, lastPlan: null, rcHasPlan: false }), true, 'no plan a minute ago is asked again, in case one was just bought');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: now - 61_000, lastPlan: undefined, rcHasPlan: false }), true, 'a check that failed is tried again after a minute');
+  assert.equal(shouldRecheckWebPlan({ now, lastAt: 0, lastPlan: undefined, rcHasPlan: false }), true);
 });
 
 test('a slow step gives up after its time', async () => {
