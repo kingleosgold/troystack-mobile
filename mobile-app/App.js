@@ -33,6 +33,8 @@ import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatAnswerCounts } from './src/utils/webPlan';
+import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
+import { latestWriteQueue } from './src/utils/profileWrites';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2627,6 +2629,16 @@ function AppContent() {
   // The sync number of the last web plan answer kept in the cache, so an
   // older answer that comes back late never replaces a newer one.
   const webCachedSeqRef = useRef(0);
+  // The plan the server last read for this account from RevenueCat through
+  // /v1/revenuecat/sync: 'gold', 'lifetime' or null. Shown on top of
+  // RevenueCat's and the web plan's answers, never written to profiles.
+  const storePlanRef = useRef(null);
+  // The account signed in now, so a sync answer for another one is dropped.
+  const signedInIdRef = useRef(null);
+  // The sync after Purchases.logIn runs at most once per account per launch.
+  const [claimStoreSync] = useState(() => oncePerAccount());
+  // Profile writes go out one at a time, newest wins. See src/utils/profileWrites.js.
+  const [profileWrites] = useState(() => latestWriteQueue());
 
   // iCloud Sync State
   const [iCloudSyncEnabled, setICloudSyncEnabled] = useState(false);
@@ -2973,6 +2985,9 @@ function AppContent() {
       webPlanGenRef.current += 1;
       rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
       lastWebCheckRef.current = { at: 0, plan: undefined };
+      // So does the server's App Store answer, and one still on its way is dropped.
+      storePlanRef.current = null;
+      signedInIdRef.current = null;
       applyWebPlan(null);
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
@@ -4375,7 +4390,7 @@ function AppContent() {
 
       rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
       rcReadOkRef.current = true;
-      const plan = mergePlans({ ...rcPlanRef.current, webPlan: webPlanRef.current });
+      const plan = mergePlans({ ...rcPlanRef.current, webPlan: strongerPlan(webPlanRef.current, storePlanRef.current) });
       setHasGold(__DEV__ ? true : plan.hasGold);
       setHasLifetimeAccess(__DEV__ ? true : plan.hasLifetime);
       setUserTier(__DEV__ ? 'gold' : plan.tier);
@@ -4414,10 +4429,46 @@ function AppContent() {
   const applyWebPlan = (plan) => {
     webPlanRef.current = plan;
     if (__DEV__) return;
-    const merged = mergePlans({ ...rcPlanRef.current, webPlan: plan });
+    const merged = mergePlans({ ...rcPlanRef.current, webPlan: strongerPlan(plan, storePlanRef.current) });
     setHasGold(merged.hasGold);
     setHasLifetimeAccess(merged.hasLifetime);
     setUserTier(merged.tier);
+  };
+
+  // The plan the server just read from RevenueCat for this account, merged
+  // with RevenueCat's and the web plan's answers the same way, so it adds Gold
+  // and never takes any away. Only ever shown, never written to profiles.
+  const applyStorePlan = (plan) => {
+    storePlanRef.current = plan;
+    if (__DEV__) return;
+    const merged = mergePlans({ ...rcPlanRef.current, webPlan: strongerPlan(webPlanRef.current, plan) });
+    setHasGold(merged.hasGold);
+    setHasLifetimeAccess(merged.hasLifetime);
+    setUserTier(merged.tier);
+  };
+
+  // Asks the server to read this account's App Store plan from RevenueCat and
+  // write it to profiles, which the app can't do itself once migration 006 is
+  // on, so a guest's purchase or one a restore moved here reaches the server.
+  // In the background. See src/utils/storeSync.js for the answers.
+  const syncStorePlan = (userId) => {
+    syncStorePlanFor({
+      userId,
+      apiBase: API_BASE_URL,
+      getSession: () => withTimeout(supabase.auth.getSession(), WEB_PLAN_TIMEOUT_MS),
+      stillSignedIn: (id) => signedInIdRef.current === id,
+    })
+      .then((plan) => {
+        if (__DEV__) console.log('[StoreSync] plan:', plan);
+        if (plan !== undefined) applyStorePlan(plan);
+      })
+      .catch((e) => { if (__DEV__) console.log('[StoreSync] failed:', e?.message); });
+  };
+
+  // A restore can move a purchase onto this account, so the server reads the
+  // plan again after every one.
+  const syncStoreAfterRestore = () => {
+    if (supabaseUser?.id) syncStorePlan(supabaseUser.id);
   };
 
   // Sync RevenueCat tier → Supabase profiles (fire-and-forget, never blocks UI).
@@ -4425,8 +4476,10 @@ function AppContent() {
   // for when RevenueCat couldn't be read and its plan isn't known.
   const syncSubscriptionToSupabase = async (userId, tierOverride, { webOnly = false } = {}) => {
     // Every sync takes a number. One that finds a newer sync started, or the
-    // account changed, while it waited stops without applying or writing, so
-    // a slow free can't land over a newer gold.
+    // account changed, while it waited for the web plan stops without
+    // applying or writing. The number only decides whether a write starts,
+    // so the writes themselves go through profileWrites, below, which keeps
+    // them in order.
     const seq = ++syncSeqRef.current;
     const gen = webPlanGenRef.current;
     const stale = () => seq !== syncSeqRef.current || gen !== webPlanGenRef.current;
@@ -4464,14 +4517,30 @@ function AppContent() {
         'free': { subscription_tier: 'free', subscription_status: null },
       };
       const values = tierMap[tier] || tierMap['free'];
-      let update = supabase.from('profiles').update(values).eq('id', userId);
-      // A lifetime bought on the web outlasts an App Store subscription, so
-      // Gold from the App Store never replaces it.
-      // A row with no tier yet counts as not lifetime.
-      if (tier === 'gold') update = update.or('subscription_tier.is.null,subscription_tier.neq.lifetime');
-      const { error } = await update;
+      // Writes reach the server in the order they arrive, so they go out one
+      // at a time: this one waits for any write already on its way to settle,
+      // and is skipped if a newer write was asked for meanwhile. A slow free
+      // can't land after a newer Gold. At its turn it's also dropped if the
+      // account changed, and a free is dropped if a web plan, or a plan the
+      // server read from RevenueCat, has turned up since, so it never goes
+      // over one.
+      const outcome = await profileWrites.write(
+        () => {
+          let update = supabase.from('profiles').update(values).eq('id', userId);
+          // A lifetime bought on the web outlasts an App Store subscription,
+          // so Gold from the App Store never replaces it. A row with no tier
+          // yet counts as not lifetime.
+          if (tier === 'gold') update = update.or('subscription_tier.is.null,subscription_tier.neq.lifetime');
+          return update;
+        },
+        {
+          stillWanted: () => gen === webPlanGenRef.current
+            && (tier !== 'free' || !strongerPlan(webPlanRef.current, storePlanRef.current)),
+        },
+      );
       if (__DEV__) {
-        if (error) console.log('[Sync] Failed to sync tier to Supabase:', error.message);
+        if (outcome.skipped) console.log(`[Sync] Skipped ${tier}: a newer write, an account change or a web plan came first`);
+        else if (outcome.result?.error) console.log('[Sync] Failed to sync tier to Supabase:', outcome.result.error.message);
         else console.log(`[Sync] Synced tier to Supabase: ${tier}`);
       }
     } catch (e) {
@@ -4483,6 +4552,7 @@ function AppContent() {
   const handleRestore = async () => {
     try {
       const restored = await restorePurchases();
+      syncStoreAfterRestore();
       if (restored.hasGold || restored.hasSilver) {
         await checkEntitlements(); // Re-check all entitlements to set correct tier
         Alert.alert('Purchases Restored!', 'Your subscription has been restored.');
@@ -4528,6 +4598,12 @@ function AppContent() {
             if (appUserId) {
               try {
                 await loginRevenueCat(appUserId);
+                // RevenueCat's app user id is the Supabase user id, so the
+                // server can read this account's App Store plan, a guest's
+                // purchase included, and write it to profiles. Once per
+                // account per launch, in the background, and not for a setup
+                // the account has already moved on from.
+                if (setupGen === webPlanGenRef.current && claimStoreSync(appUserId)) syncStorePlan(appUserId);
               } catch (error) {
                 if (__DEV__) console.error('RevenueCat login failed (non-fatal):', error?.message || error);
               }
@@ -4596,7 +4672,7 @@ function AppContent() {
       if (!revenueCatAnswerCounts({ signedInId, rcUserId: revenueCatUser })) return;
 
       rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
-      const plan = mergePlans({ ...rcPlanRef.current, webPlan: webPlanRef.current });
+      const plan = mergePlans({ ...rcPlanRef.current, webPlan: strongerPlan(webPlanRef.current, storePlanRef.current) });
       setHasGold(plan.hasGold);
       setHasLifetimeAccess(plan.hasLifetime);
       setUserTier(plan.tier);
@@ -4630,6 +4706,10 @@ function AppContent() {
     // Some paths switch accounts without signing out, a password reset link
     // for another account say. The last account's plan goes with it.
     rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
+    // The server's App Store answer belongs to the account too, and one for
+    // the last account that comes back after this is dropped.
+    signedInIdRef.current = supabaseUser?.id || null;
+    storePlanRef.current = null;
     applyWebPlan(null);
   }, [supabaseUser?.id]);
 
@@ -14234,6 +14314,7 @@ function AppContent() {
         visible={showPaywallModal}
         onClose={() => setShowPaywallModal(false)}
         onPurchaseSuccess={checkEntitlements}
+        onRestored={syncStoreAfterRestore}
         userTier={userTier}
       />
 
