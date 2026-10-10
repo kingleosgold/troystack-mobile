@@ -53,7 +53,9 @@ const GOLD_FEATURES = [
   { icon: '🏦', text: 'COMEX Vault Watch' },
 ];
 
-const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' }) => {
+// onRestored runs as soon as a restore resolves, whatever it found, so the app
+// can have the server read the App Store plan again.
+const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, onRestored, userTier = 'free' }) => {
   const [offering, setOffering] = useState(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(null);
@@ -128,6 +130,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free' })
     try {
       setRestoring(true);
       const restored = await restorePurchases();
+      onRestored?.();
 
       if (restored.hasGold || restored.hasSilver) {
         Alert.alert(
