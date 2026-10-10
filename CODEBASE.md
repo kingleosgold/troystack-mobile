@@ -53,7 +53,7 @@
 ### mobile-app/src/components/GoldPaywall.js
 - **Purpose:** RevenueCat subscription paywall modal (Gold monthly/yearly/lifetime)
 - **Exports:** `GoldPaywall` (default)
-- **Props:** `visible`, `onClose`, `onPurchaseSuccess`, `userTier`
+- **Props:** `visible`, `onClose`, `onPurchaseSuccess`, `onRestored` (runs as soon as a restore resolves, so the app can ask the server to read the App Store plan again), `userTier`
 - **Last modified:** 2026-04-07
 
 ### mobile-app/src/components/TroyCoinIcon.js
@@ -131,6 +131,18 @@ Bottom sheet content for each preview type:
 - **Purpose:** Plans bought on troystack.ai. Asks the API's `GET /v1/stripe/my-plan` what Stripe holds for the signed-in account, so a web subscriber has Gold in the app and the app never writes free over a plan it didn't sell
 - **Exports:** `fetchWebPlan({ apiBase, token })` returns `'gold'`, `'lifetime'`, `null` for none, or `undefined` when it couldn't tell. `mergePlans({ rcGold, rcLifetime, rcTier, webPlan })` adds a web plan on top of RevenueCat. `readCachedWebPlan` and `cacheWebPlan` keep the last confirmed answer per account under `stack_web_plan_<userId>`, cleared at sign-out. `shouldRecheckWebPlan` decides the foreground re-check, `revenueCatAnswerCounts` says whether a customer info answer is about the person using the app, `withTimeout` bounds the session read, `WEB_PLAN_TIMEOUT_MS` is six seconds
 - **Tests:** `node --test mobile-app/src/utils/webPlan.test.mjs`
+- **Last modified:** 2026-10-09
+
+### mobile-app/src/utils/profileWrites.js
+- **Purpose:** Keeps the app's profile writes in order. The server applies writes in the order they arrive, so a free that went out first and was slow could land after a newer Gold. Writes go one at a time: each waits for the one before it to settle, and one a newer write overtook while it waited is skipped
+- **Exports:** `latestWriteQueue()` returns `{ write(run, { stillWanted }) }`, which resolves to `{ skipped: true }` or `{ result }` and doesn't let a failed write hold up the next
+- **Tests:** `node --test mobile-app/src/utils/profileWrites.test.mjs`
+- **Last modified:** 2026-10-09
+
+### mobile-app/src/utils/storeSync.js
+- **Purpose:** Asks the API to read the signed-in account's App Store plan from RevenueCat's REST API and write it to profiles, with `POST /v1/revenuecat/sync` and the Supabase session token, after `Purchases.logIn` resolves and after a restore. Once migration 006 guards the plan columns, that's how a guest's purchase, or one a restore moved to the account, reaches profiles. The app never writes the answer to profiles
+- **Exports:** `requestStoreSync({ apiBase, token })` answers `{ kind: 'plan', tier, expiresAt }` on 200, `'expired'` on 401, `'not-ready'` on 404 or 503 (ignored), and `'retry'` on 429, 500, a timeout or no connection (tried again next launch). `syncStorePlanFor({ userId, getSession, stillSignedIn, apiBase })` asks only with that account's own session and drops an answer that comes back once another account is signed in. `strongerPlan` adds the server's plan to the web plan's, and `oncePerAccount` limits the sync after sign-in to once per account per launch
+- **Tests:** `node --test mobile-app/src/utils/storeSync.test.mjs`
 - **Last modified:** 2026-10-09
 
 ### mobile-app/src/utils/widgetKit.js
@@ -326,8 +338,9 @@ sidebarNavItems = [
 - **Products:** the App Store sells `monthly` ($4.99 a month), `yearly_gold` ($39.99 a year) and `lifetime_gold` (Lifetime Gold Pass, $99.99 once), per RevenueCat's catalog on 10/9. RevenueCat's Test Store has `monthly` and `lifetime`. Lifetime on troystack.ai goes through Stripe at its own price
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
+- **App Store plan sync:** After `loginRevenueCat(supabaseUser.id)` resolves (once per account per launch) and after every restore, the app calls `POST /v1/revenuecat/sync` in the background so the server reads the account's App Store plan from RevenueCat and writes it to profiles. A 200's tier is shown on top of RevenueCat's and the web plan's answers, adding Gold and never taking any away, and it's dropped if another account is signed in by then. 401, 404 and 503 change nothing; 429 and 500 wait for the next launch. See `mobile-app/src/utils/storeSync.js`
 - **Config:** `mobile-app/src/utils/entitlements.js`
-- **Web plans:** When RevenueCat has nothing, the app asks `GET /v1/stripe/my-plan` before writing free to the profile. A web plan gives Gold in the app, merged again with RevenueCat's latest answer whenever either changes. If the check can't tell, the profile is left alone and the last confirmed answer for the account still counts. Every profile sync takes a number, so a slow one never writes over a newer one. An answer that arrives after sign-out or an account switch is dropped, a session for another account can't answer, and no session at all counts as can't tell. Setup only writes, and the RevenueCat listener only shows and writes, while RevenueCat is on the signed-in account, and a change of account resets the plan shown. A Gold write from the app never replaces a lifetime profile. Back in the foreground with nothing from RevenueCat, the app asks again without writing, fifteen minutes after a confirmed web plan or a minute after none or a check that couldn't tell. The listener is removed by reference on cleanup, since the SDK's add returns nothing. See `mobile-app/src/utils/webPlan.js`
+- **Web plans:** When RevenueCat has nothing, the app asks `GET /v1/stripe/my-plan` before writing free to the profile. A web plan gives Gold in the app, merged again with RevenueCat's latest answer whenever either changes. If the check can't tell, the profile is left alone and the last confirmed answer for the account still counts. Every profile sync takes a number, and the writes go out one at a time in the order they're asked for, newest wins, so a slow free can't land after a newer Gold. At its turn a write is dropped if the account changed, and a free is dropped if a web plan or the server's App Store answer has turned up, so it never goes over one. An answer that arrives after sign-out or an account switch is dropped, a session for another account can't answer, and no session at all counts as can't tell. Setup only writes, and the RevenueCat listener only shows and writes, while RevenueCat is on the signed-in account, and a change of account resets the plan shown. A Gold write from the app never replaces a lifetime profile. Back in the foreground with nothing from RevenueCat, the app asks again without writing, fifteen minutes after a confirmed web plan or a minute after none or a check that couldn't tell. The listener is removed by reference on cleanup, since the SDK's add returns nothing. See `mobile-app/src/utils/webPlan.js`
 
 ### Session Flow
 ```
