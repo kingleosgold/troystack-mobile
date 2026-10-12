@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat } from './src/utils/entitlements';
-import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatAnswerCounts } from './src/utils/webPlan';
+import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatAnswerCounts, revenueCatReadCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -4369,12 +4369,25 @@ function AppContent() {
 
   // Check entitlements function (can be called after purchase)
   const checkEntitlements = async () => {
+    // The account this read is for. An answer still on its way when the
+    // account changes (a reset link for another account, a sign-out) is
+    // dropped, and so is one that lands while RevenueCat is on another
+    // account, as the listener does. Otherwise the last account's Gold would
+    // show on the next one, and stay if the next one's own read failed.
+    const askedGen = webPlanGenRef.current;
     try {
       const customerInfo = await Purchases.getCustomerInfo();
 
       // Safety checks for customerInfo structure
       if (!customerInfo) {
         if (__DEV__) console.log('❌ No customer info returned from RevenueCat');
+        return false;
+      }
+
+      let revenueCatUser = null;
+      try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
+      if (!revenueCatReadCounts({ askedGen, gen: webPlanGenRef.current, signedInId: signedInIdRef.current, rcUserId: revenueCatUser })) {
+        if (__DEV__) console.log('[Entitlements] Dropped an answer for an account that is no longer signed in');
         return false;
       }
 
@@ -4591,6 +4604,11 @@ function AppContent() {
 
           webPlanGenRef.current += 1; // a new account starts with no web plan
           webPlanRef.current = null;
+          // Nor anything from RevenueCat until this setup reads it. A read for
+          // the last account that landed after the account-change reset can't
+          // carry over.
+          rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
+          rcReadOkRef.current = false;
           const setupGen = webPlanGenRef.current;
           const initialized = await initializePurchases(apiKey, appUserId);
           if (initialized) {
