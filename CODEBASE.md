@@ -54,6 +54,7 @@
 - **Purpose:** RevenueCat subscription paywall modal (Gold monthly/yearly/lifetime). Loads the offering and trial eligibility through `loadGoldOffering` and shows a free trial only when this Apple ID can still get it
 - **Exports:** `GoldPaywall` (default)
 - **Props:** `visible`, `onClose`, `onPurchaseSuccess`, `userTier`, `initialCycle` ('yearly' or 'monthly', the plan a prompt's promised trial is on, so the screen opens on it)
+- **Merging with PR #42 (fix/keep-web-gold):** the merge conflicts in four places, and each must keep both sides, or the app throws at runtime on a name only one side declared. GoldPaywall's props line becomes `({ visible, onClose, onPurchaseSuccess, onRestored, userTier = 'free', initialCycle = null })`. App.js's imports keep one entitlements import with `loadGoldOffering` and every other import from both sides. App.js's plan refs and state after `revenueCatUserId` keep #42's refs and this branch's `goldTrial` and `paywallCycle`. This entry keeps both props. The `<GoldPaywall>` element merges by itself, with both `onRestored` and `initialCycle`
 - **Last modified:** 2026-10-09
 
 ### mobile-app/src/components/TroyCoinIcon.js
@@ -128,10 +129,17 @@ Bottom sheet content for each preview type:
 - **Last modified:** 2026-10-09
 
 ### mobile-app/src/utils/goldOffer.js
-- **Purpose:** What Gold prompts may say. A free trial only when RevenueCat says this Apple ID is eligible, carrying the plan it's on so the Gold screen opens there, and Troy's limits as the API enforces them (30 questions a day, and 20 voice uses a day that spoken questions and answers share, reset at midnight Eastern time)
-- **Exports:** `freeTrialPeriod`, `trialLabel`, `offeringFreeTrial`, `unlockLine`, `TROY_GOLD_LINE`, `TROY_GOLD_DAILY_QUESTIONS`, `TROY_GOLD_DAILY_VOICE`, `speakFailure`, `listenGoldPrompt`, `listenLimitPrompt`, `INTRO_ELIGIBLE`
+- **Purpose:** What Gold prompts may say. A free trial only when RevenueCat says this Apple ID is eligible, carrying the plan it's on so the Gold screen opens there, and Troy's limits as the API enforces them (30 questions a day, and 20 voice uses a day that spoken questions and answers share, reset at midnight Eastern time). Also the prompt a free account sees under Historical Spot Prices on Analytics, where Gold's charts go (history only loads with Gold); a Gold account whose history is empty still sees "No data available". And who already pays: `alreadyPaid` reads RevenueCat Gold or Lifetime, `userTier`, and the account's profile row (a gold or lifetime `subscription_tier`, or a `stripe_customer_id`, since the app's own launch sync can write free over a web member's tier), which App.js reads in its ALREADY PAYING block when an account signs in and again each time the app comes to the front, at most once a minute (`shouldRereadProfile`, `PROFILE_REREAD_MS`), so a web plan bought while the app sat in the background shows before a prompt offers the App Store trial; a read that fails keeps the last answer. The id stays on the profile after a web plan ends, so `alreadyPaid` also takes `webPlan`, the API's answer about the web plan once the app asks for it: 'gold' or 'lifetime' counts, null means Stripe holds no plan and the id stops counting, and undefined keeps counting it. Nothing passes `webPlan` until the web plan check lands. `upsellPlan` turns that into 'paid', 'unknown' or 'free', and every upgrade prompt (the Listen 403 prompt, the dashboard and Analytics banners, the price history card and the free week sheet) promises the free trial only to 'free' (`upsellTrial`); a refused Listen shows Voice Unavailable to 'paid' or 'unknown' (`listenRefusedPrompt`), so an App Store trial isn't pitched to someone Stripe already bills. That note has to hold for a plan the server hasn't caught up with and for a web plan that has ended, so it says Gold isn't showing on the account and that a plan just bought can take a few minutes
+- **Exports:** `freeTrialPeriod`, `trialLabel`, `offeringFreeTrial`, `unlockLine`, `priceHistoryPrompt`, `alreadyPaid`, `upsellPlan`, `upsellTrial`, `shouldRereadProfile`, `PROFILE_REREAD_MS`, `listenRefusedPrompt`, `TROY_GOLD_LINE`, `TROY_GOLD_DAILY_QUESTIONS`, `TROY_GOLD_DAILY_VOICE`, `speakFailure`, `listenGoldPrompt`, `listenLimitPrompt`, `INTRO_ELIGIBLE`
 - **Tests:** `node --test mobile-app/src/utils/goldOffer.test.mjs`
-- **Last modified:** 2026-10-09
+- **Last modified:** 2026-10-10
+
+### mobile-app/src/utils/freeWeekOffer.js
+- **Purpose:** The one-time free week offer. Right after someone adds their first holding (by hand, receipt scan or import), once they're back on the dashboard with the stack's live value showing, App.js shows a short sheet offering Gold's free trial. Only to a signed-in account (a guest's Lifetime from an earlier install is invisible to RevenueCat until Restore, while the Apple ID still reads trial eligible), only when `loadGoldOffering` found a trial this Apple ID can get and `upsellPlan` (goldOffer.js) says the account is 'free'; not after the Gold screen has opened this session; at most once per device (AsyncStorage `stack_free_week_offer_shown`, written as it opens, whatever's tapped); never over another sheet, the Gold screen, the tutorial, the drawer, an alert or a system prompt; never for holdings that arrived by sync, restore or launch. Its start button opens the Gold screen on the plan the trial is on. A sheet that's up closes for good when the account changes or the main screen goes (a session that ends, a reset password link), so it never comes back on the next account
+- **Exports:** `isFirstHolding`, `freeWeekOfferBlocker` (why it can't show yet, or null), `freeWeekOfferCopy`, `watchAlerts`, `FREE_WEEK_OFFER_KEY`, `FREE_WEEK_OFFER_DELAY_MS`
+- **In App.js:** the FREE WEEK OFFER block after `openGoldScreen`; `noteHoldingsAdded` in `savePurchase`, `confirmScannedItems`, `addScannedItemIndividually` and `confirmImport`; the sheet after `<Tutorial>`; `DrawerStatusCapture` in the main screen. `watchAlerts(Alert)` runs once at load and wraps `Alert.alert` for the whole app to count open alerts, since React Native can't say whether one is showing and AppState stays active under one. Callers' buttons, options and `onDismiss` pass through unchanged, an alert with no buttons gets the same single OK, and a `Symbol.for` mark on the Alert module keeps Fast Refresh from wrapping it twice
+- **Tests:** `node --test mobile-app/src/utils/freeWeekOffer.test.mjs`
+- **Last modified:** 2026-10-10
 
 ### mobile-app/src/utils/widgetKit.js
 - **Purpose:** iOS WidgetKit data bridge — sends portfolio data to native widget
@@ -373,7 +381,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 | Feature | Free | Gold/Lifetime |
 |---------|------|---------------|
 | Holdings (items) | 25 max | Unlimited |
-| Troy text messages | 3/day | Unlimited (200 soft cap log) |
+| Troy questions | 3/day | 30/day (the server's GOLD_DAILY_LIMIT) |
 | Voice exchanges (TTS+STT combined) | 1/day | 20/day |
 | Receipt scans | Limited | Unlimited |
 | Encrypted PDF Ledger Export | — | ✓ Gold-only |
