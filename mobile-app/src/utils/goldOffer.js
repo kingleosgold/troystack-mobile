@@ -64,9 +64,80 @@ export function offeringFreeTrial(offering, eligibility, eligibleStatus = INTRO_
   return null;
 }
 
+/**
+ * Whether any of the app's own signals say the account already pays, so it
+ * mustn't be offered an App Store trial: RevenueCat's Gold or Lifetime, the
+ * tier the app keeps (userTier), or the account's profile row, which is where
+ * a web (Stripe) plan shows. On the profile, a gold or lifetime
+ * subscription_tier counts, and so does a Stripe customer id. The id is there
+ * because the app's own RevenueCat sync can write free over a web member's
+ * subscription_tier at launch, while nothing in the app writes the id. The API
+ * sets it when a web checkout starts, so it also catches a checkout that was
+ * started and never finished. profile is null for a guest.
+ *
+ * The id stays on the profile after a web plan ends, so it can't tell a web
+ * member from someone whose plan lapsed. webPlan is the API's own answer
+ * about the web plan once the app asks for it: 'gold' or 'lifetime' counts as
+ * paid, null means Stripe holds no plan and the id stops counting, and
+ * undefined (not asked, or an answer that couldn't tell) keeps counting it.
+ */
+export function alreadyPaid({ revenueCatGold, lifetime, userTier, profile, webPlan }) {
+  if (revenueCatGold || lifetime) return true;
+  if (userTier === 'gold' || userTier === 'lifetime') return true;
+  if (webPlan === 'gold' || webPlan === 'lifetime') return true;
+  const tier = profile?.subscription_tier;
+  if (tier === 'gold' || tier === 'lifetime') return true;
+  return webPlan === null ? false : Boolean(profile?.stripe_customer_id);
+}
+
+/**
+ * What upgrade prompts may do for the account: 'paid' when alreadyPaid says
+ * it already pays, 'unknown' while a signed-in account's profile hasn't been
+ * read (or couldn't be), and 'free' otherwise. A guest has no profile to wait
+ * for. Only a 'free' account is promised the free trial (upsellTrial), since
+ * an App Store trial started by someone already paying on the web is billed by
+ * Apple on top of Stripe.
+ */
+export function upsellPlan({ revenueCatGold, lifetime, userTier, signedIn, profileRead, profile, webPlan }) {
+  const known = !signedIn || profileRead;
+  if (alreadyPaid({ revenueCatGold, lifetime, userTier, profile: signedIn && known ? profile : null, webPlan: signedIn ? webPlan : undefined })) return 'paid';
+  return known ? 'free' : 'unknown';
+}
+
+// How soon the app reads the account's profile again when it comes back to
+// the front, so a web plan bought while it sat in the background shows before
+// a prompt can offer the App Store trial.
+export const PROFILE_REREAD_MS = 60 * 1000;
+
+/**
+ * Whether the app should read the profile now. lastReadAt is when the last
+ * read that worked finished, or 0 when none has. The first read always goes,
+ * and after that at most one a minute.
+ */
+export function shouldRereadProfile({ now, lastReadAt }) {
+  return !lastReadAt || now - lastReadAt >= PROFILE_REREAD_MS;
+}
+
+/** The trial an upgrade prompt may promise: only to a 'free' account. */
+export function upsellTrial(plan, trial) {
+  return plan === 'free' && trial ? trial : null;
+}
+
 /** An upgrade banner's line: the free trial when there is one, Gold plainly when not. */
 export function unlockLine(feature, trial) {
   return trial ? `Unlock ${feature}, free for ${trialLabel(trial)}` : `Unlock ${feature} with Gold`;
+}
+
+/**
+ * What a free account sees under Historical Spot Prices, where Gold's charts
+ * go: a line saying the charts come with Gold, and a button worded like the
+ * banners, offering the free trial only when there is one.
+ */
+export function priceHistoryPrompt(trial) {
+  return {
+    line: 'Price history charts for gold, silver, platinum and palladium come with Gold.',
+    action: unlockLine('price history', trial),
+  };
 }
 
 /** How the Gold and Benefits screens describe Troy. */
@@ -92,6 +163,27 @@ export function listenGoldPrompt(trial) {
     message: trial ? `${base} You can try Gold free for ${trialLabel(trial)}.` : base,
     action: trial ? 'Try Gold free' : 'See Gold',
   };
+}
+
+/**
+ * What a Listen the server refused for Gold (a 403) shows, by upsellPlan:
+ * the Gold prompt to a 'free' account, and to one that pays or can't be
+ * checked yet a plain note with no pitch, since the server may not have caught
+ * up with a plan the app can see. The note has to be true for a plan that
+ * hasn't reached the server yet and for a web plan that has ended, so it says
+ * what the server sees and when trying again helps. An answer that played by
+ * itself after a spoken question pitches nothing, and a free account hears
+ * nothing about it. null means show nothing.
+ */
+export function listenRefusedPrompt(plan, trial, { auto = false } = {}) {
+  const unavailable = {
+    title: 'Voice Unavailable',
+    message: "Troy's voice comes with Gold, and Gold isn't showing on this account. If you just bought a plan, give it a few minutes and try again.",
+    action: null,
+  };
+  if (plan === 'paid') return unavailable;
+  if (auto) return null;
+  return plan === 'free' ? listenGoldPrompt(trial) : unavailable;
 }
 
 /**
