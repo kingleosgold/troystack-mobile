@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/webPlan.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, revenueCatAnswerCounts, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
+import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, revenueCatAnswerCounts, revenueCatReadCounts, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
 
 const API = 'https://api.example.test';
 
@@ -110,4 +110,17 @@ test("RevenueCat's answer counts only for the person using the app", () => {
   assert.equal(revenueCatAnswerCounts({ signedInId: 'user-b', rcUserId: 'user-a' }), false, 'still on the last account after a switch');
   assert.equal(revenueCatAnswerCounts({ signedInId: 'user-a', rcUserId: '$RCAnonymousID:abc' }), false, 'moved to anonymous at sign-out');
   assert.equal(revenueCatAnswerCounts({ signedInId: 'user-a', rcUserId: null }), false, "RevenueCat's user unknown");
+});
+
+test('a RevenueCat read counts only for the account it was asked for, while RevenueCat is still on it', () => {
+  const asked = { askedGen: 4, gen: 4, signedInId: 'user-a', rcUserId: 'user-a' };
+  assert.equal(revenueCatReadCounts(asked), true);
+  assert.equal(revenueCatReadCounts({ ...asked, gen: 5, signedInId: 'user-b' }), false, 'a reset link switched to B while A was being read');
+  assert.equal(
+    revenueCatReadCounts({ ...asked, gen: 5, signedInId: 'user-b', rcUserId: 'user-b' }),
+    false,
+    "RevenueCat already moved to B, but this answer was asked for A",
+  );
+  assert.equal(revenueCatReadCounts({ ...asked, signedInId: 'user-b', rcUserId: 'user-a' }), false, 'RevenueCat still on the last account');
+  assert.equal(revenueCatReadCounts({ askedGen: 2, gen: 2, signedInId: null, rcUserId: '$RCAnonymousID:x' }), true, "signed out, the anonymous customer's answer is theirs");
 });

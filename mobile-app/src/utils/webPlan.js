@@ -50,6 +50,19 @@ export function revenueCatAnswerCounts({ signedInId, rcUserId }) {
 }
 
 /**
+ * Whether a RevenueCat read the app asked for itself (checkEntitlements) can
+ * still be shown. askedGen is the account generation when the read was asked
+ * for and gen is the one now; any change of account since (a sign-out, a
+ * reset link for another account, a fresh setup) drops it, even if RevenueCat
+ * has already moved to the new account, since the answer is the old one's.
+ * Then the listener's rule applies: RevenueCat must be on the signed-in
+ * account, or signed out on its anonymous customer.
+ */
+export function revenueCatReadCounts({ askedGen, gen, signedInId, rcUserId }) {
+  return askedGen === gen && revenueCatAnswerCounts({ signedInId, rcUserId });
+}
+
+/**
  * The plan Stripe holds for the signed-in account, from GET /v1/stripe/my-plan.
  * @returns {Promise<'gold'|'lifetime'|null|undefined>} 'gold' or 'lifetime',
  *   null when Stripe has nothing, undefined when it couldn't tell (no session,
