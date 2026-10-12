@@ -4,6 +4,33 @@
  */
 
 import Purchases from 'react-native-purchases';
+import { offeringFreeTrial } from './goldOffer';
+
+/** RevenueCat's status for an Apple ID that can still get a product's intro offer. */
+export const INTRO_ELIGIBLE_STATUS = Purchases.INTRO_ELIGIBILITY_STATUS?.INTRO_ELIGIBILITY_STATUS_ELIGIBLE ?? 2;
+
+/**
+ * The current Gold offering, which of its yearly and monthly plans this Apple
+ * ID can still get a free trial on, and the trial an upgrade prompt may
+ * promise. Eligibility is empty when it couldn't be checked, which reads as no
+ * trial. Throws when the offerings can't be loaded.
+ * @returns {Promise<{ offering: object|null, eligibility: object, trial: { count: number, unit: 'day'|'month' }|null }>}
+ */
+export const loadGoldOffering = async () => {
+  const offerings = await Purchases.getOfferings();
+  const offering = offerings?.current || null;
+  if (!offering) return { offering: null, eligibility: {}, trial: null };
+  let eligibility = {};
+  try {
+    const ids = [offering.annual, offering.monthly]
+      .filter(Boolean)
+      .map((pkg) => pkg.product.identifier);
+    eligibility = ids.length ? (await Purchases.checkTrialOrIntroductoryPriceEligibility(ids)) || {} : {};
+  } catch (e) {
+    eligibility = {};
+  }
+  return { offering, eligibility, trial: offeringFreeTrial(offering, eligibility, INTRO_ELIGIBLE_STATUS) };
+};
 
 /**
  * Check if user has Gold entitlement (premium subscription)
