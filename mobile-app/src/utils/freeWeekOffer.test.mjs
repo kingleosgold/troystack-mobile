@@ -127,18 +127,20 @@ test('other trial lengths are named as they are', () => {
 test("what Gold adds, as the server and the Gold screen have it", () => {
   // troystack-api: the morning brief goes to Gold and Lifetime profiles; Troy
   // allows 30 questions a day and 20 voice uses a day that spoken questions
-  // and answers share, so up to 20 answers read out loud; price history only
-  // loads with Gold in the app; Gold skips the free 5 scans a month.
+  // and answers share, so the sheet counts voice uses, not answers; price
+  // history only loads with Gold in the app; Gold skips the free 5 scans a month.
   const { lead, points } = freeWeekOfferCopy(WEEK);
   assert.equal(lead, "Now that you've started your stack, here's what Gold adds.");
   assert.deepEqual(points, [
     'A brief each morning on the metals and your stack',
-    'Up to 30 questions to Troy a day and up to 20 answers read out loud',
+    'Up to 30 questions to Troy a day and 20 voice uses, spoken questions and answers together',
     'Price history charts for gold, silver, platinum and palladium',
     'Unlimited receipt scans',
   ]);
   assert.match(points[1], new RegExp(`^Up to ${TROY_GOLD_DAILY_QUESTIONS} questions`));
-  assert.match(points[1], new RegExp(`up to ${TROY_GOLD_DAILY_VOICE} answers`));
+  assert.match(points[1], new RegExp(`${TROY_GOLD_DAILY_VOICE} voice uses, spoken questions and answers together`));
+  // A spoken question uses the same 20, so the sheet never promises 20 answers.
+  assert.doesNotMatch(points[1], /answers read out loud/);
   assert.doesNotMatch(points.join(' '), /unlimited (questions|troy|voice)/i);
 });
 

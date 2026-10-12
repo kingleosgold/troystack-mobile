@@ -88,7 +88,7 @@ export function freeWeekOfferCopy(trial) {
     lead: "Now that you've started your stack, here's what Gold adds.",
     points: [
       'A brief each morning on the metals and your stack',
-      `Up to ${TROY_GOLD_DAILY_QUESTIONS} questions to Troy a day and up to ${TROY_GOLD_DAILY_VOICE} answers read out loud`,
+      `Up to ${TROY_GOLD_DAILY_QUESTIONS} questions to Troy a day and ${TROY_GOLD_DAILY_VOICE} voice uses, spoken questions and answers together`,
       'Price history charts for gold, silver, platinum and palladium',
       'Unlimited receipt scans',
     ],
