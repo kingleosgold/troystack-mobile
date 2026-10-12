@@ -32,7 +32,8 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
-import { unlockLine, TROY_GOLD_LINE, speakFailure, listenGoldPrompt, listenLimitPrompt } from './src/utils/goldOffer';
+import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial, shouldRereadProfile } from './src/utils/goldOffer';
+import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -43,7 +44,7 @@ import FloatingInput from './src/components/FloatingInput';
 import Svg, { Path, Circle, Line, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { Swipeable, GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { NavigationContainer, useNavigation, DrawerActions } from '@react-navigation/native';
-import { createDrawerNavigator } from '@react-navigation/drawer';
+import { createDrawerNavigator, useDrawerStatus } from '@react-navigation/drawer';
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
@@ -1011,6 +1012,16 @@ function DrawerNavCapture({ onCapture }) {
   }, [nav]);
   return null;
 }
+
+// Reports whether the side drawer is open, so the free week offer waits for
+// it to close. Renders inside the drawer's screen, like DrawerNavCapture.
+function DrawerStatusCapture({ onChange }) {
+  const open = useDrawerStatus() === 'open';
+  useEffect(() => {
+    onChange(open);
+  }, [open]);
+  return null;
+}
 import GoldPaywall from './src/components/GoldPaywall';
 import Tutorial from './src/components/Tutorial';
 import TroyCoinIcon from './src/components/TroyCoinIcon';
@@ -1032,6 +1043,16 @@ import {
   findHoldingByLocalId,
 } from './src/services/supabaseHoldings';
 import { supabase } from './src/lib/supabase';
+
+// Counts open alerts so the free week offer never comes up on top of one.
+// React Native can't say whether an alert is showing, and AppState stays
+// active under one, so this wraps Alert.alert once for the whole app; every
+// alert's buttons, options and onDismiss work as before (see watchAlerts).
+// Tracking only the alerts that can be up on the dashboard today (the
+// milestone alerts, a tapped price alert notification, and Restore Purchases
+// from the dashboard banner) would quietly miss the next one added there. A
+// Fast Refresh runs this line again and it wraps nothing twice.
+const alertWatch = watchAlerts(Alert);
 
 // Configure notifications behavior
 Notifications.setNotificationHandler({
@@ -2348,7 +2369,7 @@ function AppContent() {
   const insets = useSafeAreaInsets();
 
   // Preview system
-  const { openPreview, setOnOpenFull } = usePreview();
+  const { openPreview, setOnOpenFull, previewVisible } = usePreview();
 
   // Register "Open full" handler — navigates from preview to the relevant screen
   useEffect(() => {
@@ -3779,6 +3800,7 @@ function AppContent() {
                   if (cloudData.goldItems) setGoldItems(cloudData.goldItems);
                   if (cloudData.platinumItems) setPlatinumItems(cloudData.platinumItems);
                   if (cloudData.palladiumItems) setPalladiumItems(cloudData.palladiumItems);
+                  setFirstHoldingAdded(false); // a restored stack isn't one the person just started
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
@@ -4511,6 +4533,239 @@ function AppContent() {
   const openGoldScreen = (cycle) => {
     setPaywallCycle(cycle || null);
     setShowPaywallModal(true);
+  };
+
+  // ============================================
+  // ALREADY PAYING?
+  // RevenueCat only knows App Store purchases. A web (Stripe) plan shows on
+  // the account's profile row, so that's read when an account signs in and
+  // again when the app comes back to the front, and every upgrade prompt
+  // checks upsellPlan before it pitches Gold or its free trial
+  // (src/utils/goldOffer.js). An App Store trial started by someone already
+  // paying on the web is billed by Apple on top of Stripe.
+  // ============================================
+
+  // The profile row as { userId, profile }. It's read again each time the app
+  // comes to the front, at most once a minute (shouldRereadProfile), so a web
+  // plan bought while the app sat in the background shows before a prompt can
+  // offer the App Store trial. A read that fails keeps the last answer and is
+  // tried again the next time the app comes to the front; until one works,
+  // prompts treat the account as one they can't check.
+  const [planProfile, setPlanProfile] = useState(null);
+  useEffect(() => {
+    const userId = supabaseUser?.id;
+    if (!userId) return undefined;
+    let cancelled = false;
+    let reading = false;
+    // When the last read that worked finished, or 0 before one has.
+    let lastReadAt = 0;
+    const readProfile = async () => {
+      if (cancelled || reading || !shouldRereadProfile({ now: Date.now(), lastReadAt })) return;
+      reading = true;
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('subscription_tier, stripe_customer_id')
+          .eq('id', userId)
+          .maybeSingle();
+        if (cancelled || error) return;
+        lastReadAt = Date.now();
+        setPlanProfile({ userId, profile: data || {} });
+      } catch (e) {
+        // Left as it was until the next try.
+      } finally {
+        reading = false;
+      }
+    };
+    readProfile();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') readProfile();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [supabaseUser?.id]);
+  const planProfileRead = !!supabaseUser && planProfile?.userId === supabaseUser.id;
+  // 'paid', 'unknown' or 'free', and the trial a prompt may promise, which
+  // only a 'free' account gets.
+  const planForPrompts = upsellPlan({
+    revenueCatGold: hasGold,
+    lifetime: hasLifetimeAccess,
+    userTier,
+    signedIn: !!supabaseUser,
+    profileRead: planProfileRead,
+    profile: planProfileRead ? planProfile.profile : null,
+  });
+  const trialForPrompts = upsellTrial(planForPrompts, goldTrial);
+
+  // ============================================
+  // FREE WEEK OFFER
+  // Once per device, right after someone adds their first holding (by hand,
+  // from a receipt scan or from an import), the app offers Gold's free trial
+  // when they're back on the dashboard looking at the stack's live value. The
+  // rules and the words are in src/utils/freeWeekOffer.js.
+  // ============================================
+
+  // Whether this device has shown the offer: null until the flag is read, and
+  // true if reading it fails, so it can't show twice.
+  const [freeWeekOfferShown, setFreeWeekOfferShown] = useState(null);
+  // Set by an add that made the stack's first holding. Holdings that arrive
+  // by sync, restore or a launch never set it.
+  const [firstHoldingAdded, setFirstHoldingAdded] = useState(false);
+  // The sheet, with the trial it offered.
+  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null });
+  const [alertOpen, setAlertOpen] = useState(() => alertWatch.isOpen());
+  const [appActive, setAppActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // What was tapped on the sheet, and the plan to open the Gold screen on
+  // once the sheet is gone after its start button.
+  const freeWeekChoiceRef = useRef(null);
+  const freeWeekGoldRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(FREE_WEEK_OFFER_KEY)
+      .then((value) => { if (!cancelled) setFreeWeekOfferShown(value != null); })
+      .catch(() => { if (!cancelled) setFreeWeekOfferShown(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    setAlertOpen(alertWatch.isOpen());
+    return alertWatch.subscribe(setAlertOpen);
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppActive(state !== 'background' && state !== 'inactive');
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // Set once the Gold screen has opened this session, from any button. Someone
+  // who has just looked at Gold and closed it doesn't get a second pitch.
+  const [goldScreenSeen, setGoldScreenSeen] = useState(false);
+  useEffect(() => {
+    if (showPaywallModal) setGoldScreenSeen(true);
+  }, [showPaywallModal]);
+
+  // A first holding belongs to the account it was added under. Signing in to
+  // another account brings that account's stack by sync, which never counts.
+  // A sheet that's up closes for good too, and a Gold screen its start button
+  // was about to open doesn't open: after a session ends or a reset link
+  // switches accounts it mustn't come back on the next account, which may pay.
+  useEffect(() => {
+    setFirstHoldingAdded(false);
+    freeWeekGoldRef.current = null;
+    setFreeWeekOffer((offer) => (offer.visible ? { ...offer, visible: false } : offer));
+  }, [supabaseUser?.id]);
+
+  // Past the loading, sign-in, reset password and lock screens the main
+  // render returns early for. The sheet lives only on the main screen it came
+  // up on: if that goes, a reset password link for the same account say, the
+  // sheet closes for good as well.
+  const mainScreenShown = !showResetPasswordScreen
+    && !(isLoading || authLoading || guestMode === null || needsPostSignInSync)
+    && (!!supabaseUser || !!guestMode)
+    && isAuthenticated;
+  useEffect(() => {
+    if (mainScreenShown) return;
+    freeWeekGoldRef.current = null;
+    setFreeWeekOffer((offer) => (offer.visible ? { ...offer, visible: false } : offer));
+  }, [mainScreenShown]);
+
+  // Each way of adding holdings calls this with the stack's size just before
+  // the add and how many holdings it added.
+  const noteHoldingsAdded = (holdingsBefore, added) => {
+    if (isFirstHolding({ holdingsBefore, added, signedIn: !!supabaseUser, cloudStackRead: hasSyncedOnce })) {
+      setFirstHoldingAdded(true);
+    }
+  };
+
+  const freeWeekOfferBlock = freeWeekOfferBlocker({
+    shownBefore: freeWeekOfferShown,
+    firstHoldingAdded,
+    guest: !supabaseUser,
+    goldScreenSeen,
+    planKnown: !subscriptionLoading && planForPrompts !== 'unknown',
+    paid: planForPrompts === 'paid',
+    trial: trialForPrompts,
+    demo: !!demoData,
+    mainScreen: mainScreenShown,
+    screen: currentScreen,
+    livePrices: spotPricesLive,
+    stackValue: totalMeltValue,
+    sheets: {
+      gold: showPaywallModal,
+      tutorial: showTutorial,
+      aiConsent: showAiConsentModal,
+      forceUpdate: !!forceUpdate,
+      add: showAddModal,
+      datePicker: showDatePicker,
+      timePicker: showTimePicker,
+      scanPreview: showScannedItemsPreview,
+      importPreview: showImportPreview,
+      dealerSelector: showDealerSelector,
+      detail: showDetailView,
+      sortMenu: showSortMenu,
+      ledgerPin: showLedgerPinModal,
+      privacy: showPrivacyModal,
+      speculation: showSpeculationModal,
+      junkCalc: showJunkCalcModal,
+      premiumAnalysis: showPremiumAnalysisModal,
+      help: showHelpModal,
+      priceAlerts: showAddAlertModal,
+      milestones: showMilestoneModal,
+      benefits: showBenefitsScreen,
+      account: showAccountScreen,
+      stackSignal: showStackSignal,
+      settings: settingsSubPage,
+      preview: previewVisible,
+      drawer: drawerOpen,
+    },
+    alertOpen,
+    appActive,
+  });
+
+  // Shows the sheet once the dashboard has been on screen for a moment, as
+  // long as nothing above changes first. It's marked shown as it opens, so
+  // it never shows again whatever's tapped.
+  useEffect(() => {
+    if (freeWeekOfferBlock !== null) return undefined;
+    const timer = setTimeout(() => {
+      if (alertWatch.isOpen()) return; // an alert that came up since this render
+      freeWeekChoiceRef.current = null;
+      setFreeWeekOfferShown(true);
+      setFirstHoldingAdded(false);
+      setFreeWeekOffer({ visible: true, trial: trialForPrompts });
+      AsyncStorage.setItem(FREE_WEEK_OFFER_KEY, new Date().toISOString()).catch(() => {});
+      logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null });
+    }, FREE_WEEK_OFFER_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [freeWeekOfferBlock, trialForPrompts, supabaseUser?.id]);
+
+  // The start button opens the Gold screen on the plan whose trial the sheet
+  // offered. On iOS that waits for the sheet to finish closing, since a new
+  // sheet can't come up while another is still going away: the sheet's
+  // onDismiss opens it, and the timer covers a dismissal that never reports.
+  const openGoldAfterFreeWeekOffer = () => {
+    const pending = freeWeekGoldRef.current;
+    if (!pending) return;
+    freeWeekGoldRef.current = null;
+    openGoldScreen(pending.cycle);
+  };
+
+  // choice is 'start' or 'later'. The first tap is the one that counts.
+  const closeFreeWeekOffer = (choice) => {
+    if (!freeWeekOffer.visible || freeWeekChoiceRef.current) return;
+    freeWeekChoiceRef.current = choice;
+    logLifecycleEvent(`free_week_offer:${choice}`);
+    setFreeWeekOffer((offer) => ({ ...offer, visible: false }));
+    if (choice !== 'start') return;
+    freeWeekGoldRef.current = { cycle: freeWeekOffer.trial?.cycle || null };
+    if (Platform.OS === 'ios') setTimeout(openGoldAfterFreeWeekOffer, 700);
+    else openGoldAfterFreeWeekOffer();
   };
 
   // Register background fetch for iOS (keeps widget data fresh when app is closed)
@@ -5318,10 +5573,10 @@ function AppContent() {
       });
       tFetch = Date.now();
       if (!response.ok) {
-        // A 403 means the account isn't on Gold and a 429 Voice limit reached
-        // means the day's voice uses, spoken questions and answers together,
-        // are used up. Neither is a connection problem, so each gets its own
-        // message. Anything else keeps the error below.
+        // A 403 means the server's record has no Gold for the account and a
+        // 429 Voice limit reached means the day's voice uses, spoken questions
+        // and answers together, are used up. Neither is a connection problem,
+        // so each gets its own message. Anything else keeps the error below.
         const body = await response.json().catch(() => ({}));
         const failure = speakFailure(response.status, body);
         if (failure !== 'error') {
@@ -5330,16 +5585,19 @@ function AppContent() {
           if (failure === 'limit') {
             const limitPrompt = listenLimitPrompt(body?.limit);
             Alert.alert(limitPrompt.title, limitPrompt.message);
-          } else if (hasGoldAccess) {
-            // The app has Gold for this account but the server's record doesn't
-            // yet, so an upgrade prompt would ask a paying customer to pay again.
-            Alert.alert('Voice Unavailable', "Troy's voice isn't available on this account right now. Try again later.");
-          } else if (!auto) {
-            const prompt = listenGoldPrompt(goldTrial);
-            Alert.alert(prompt.title, prompt.message, [
-              { text: 'Not now', style: 'cancel' },
-              { text: prompt.action, onPress: () => openGoldScreen(goldTrial?.cycle) },
-            ]);
+          } else {
+            // Only an account known to be free is pitched Gold. One that pays,
+            // here or on the web, or can't be checked yet gets a plain note:
+            // the server may not have caught up with a plan the app can see.
+            const prompt = listenRefusedPrompt(planForPrompts, trialForPrompts, { auto });
+            if (prompt?.action) {
+              Alert.alert(prompt.title, prompt.message, [
+                { text: 'Not now', style: 'cancel' },
+                { text: prompt.action, onPress: () => openGoldScreen(trialForPrompts?.cycle) },
+              ]);
+            } else if (prompt) {
+              Alert.alert(prompt.title, prompt.message);
+            }
           }
           return;
         }
@@ -6794,6 +7052,7 @@ function AppContent() {
               if (backup.data.goldItems) setGoldItems(backup.data.goldItems);
               if (backup.data.platinumItems) setPlatinumItems(backup.data.platinumItems);
               if (backup.data.palladiumItems) setPalladiumItems(backup.data.palladiumItems);
+              setFirstHoldingAdded(false); // a restored stack isn't one the person just started
               Alert.alert('Success', 'Backup restored!');
             }
           }
@@ -8170,6 +8429,8 @@ function AppContent() {
         newItems.push({ ...newItem, metal: metalKey });
       });
 
+      noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, newItems.length);
+
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         (async () => {
@@ -8237,6 +8498,8 @@ function AppContent() {
         newItems.push({ ...newItem, metal: metalKey });
       });
 
+      noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, newItems.length);
+
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         (async () => {
@@ -8294,6 +8557,7 @@ function AppContent() {
     } else {
       setGoldItems(prev => [...prev, newItem]);
     }
+    noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, 1);
 
     // Remove this item from scannedItems
     const remainingItems = scannedItems.filter((_, i) => i !== index);
@@ -8509,6 +8773,7 @@ function AppContent() {
     } else {
       setter(prev => [...prev, item]);
       checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
+      noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, 1);
     }
 
     // Sync to Supabase if signed in
@@ -9320,6 +9585,7 @@ function AppContent() {
         {() => (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <DrawerNavCapture onCapture={(nav) => { if (nav && !drawerNavigation) setDrawerNavigation(nav); }} />
+      <DrawerStatusCapture onChange={setDrawerOpen} />
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
@@ -9962,10 +10228,10 @@ function AppContent() {
                 {!effHasPaidAccess && holdingsImpact.length > 1 && (
                   <>
                     <TouchableOpacity
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(trialForPrompts?.cycle); }}
                       style={{ marginTop: 10, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center' }}
                     >
-                      <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('full insights', goldTrial)}</Text>
+                      <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('full insights', trialForPrompts)}</Text>
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 2 }}>Plans from $4.99/mo · Cancel anytime</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={handleRestore} style={{ marginTop: 6, alignItems: 'center' }}>
@@ -10874,10 +11140,10 @@ function AppContent() {
             {!effHasGoldAccess && (
               <>
                 <TouchableOpacity
-                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(goldTrial?.cycle); }}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(trialForPrompts?.cycle); }}
                   style={{ marginHorizontal: 2, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center', backgroundColor: 'rgba(212, 168, 67, 0.05)' }}
                 >
-                  <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('advanced analytics', goldTrial)}</Text>
+                  <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{unlockLine('advanced analytics', trialForPrompts)}</Text>
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 2 }}>Plans from $4.99/mo · Cancel anytime</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handleRestore} style={{ marginTop: 6, alignItems: 'center', marginBottom: 4 }}>
@@ -11053,7 +11319,21 @@ function AppContent() {
                 <View onLayout={(e) => { sectionOffsets.current['spotPriceHistory'] = e.nativeEvent.layout.y; }} style={{ marginBottom: 10, marginLeft: 4 }}>
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase' }}>Historical Spot Prices</Text>
                 </View>
-                {[
+                {/* History only loads with Gold, so a free account gets the Gold prompt in place of four empty charts */}
+                {!effHasGoldAccess ? (() => {
+                  const prompt = priceHistoryPrompt(trialForPrompts);
+                  return (
+                    <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.normal, lineHeight: Math.round(scaledFonts.normal * 1.45), marginBottom: 12 }}>{prompt.line}</Text>
+                      <TouchableOpacity
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openGoldScreen(trialForPrompts?.cycle); }}
+                        style={{ borderWidth: 1, borderColor: 'rgba(212, 168, 67, 0.3)', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center', backgroundColor: 'rgba(212, 168, 67, 0.05)' }}
+                      >
+                        <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>{prompt.action}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })() : [
                   { key: 'gold', label: 'Gold', spot: effGoldSpotA, color: '#D4A843', fillColor: 'rgba(212, 168, 67, 0.15)' },
                   { key: 'silver', label: 'Silver', spot: effSilverSpotA, color: '#C0C0C0', fillColor: 'rgba(192, 192, 192, 0.15)' },
                   { key: 'platinum', label: 'Platinum', spot: effPlatinumSpotA, color: '#4A90D9', fillColor: 'rgba(74, 144, 217, 0.15)' },
@@ -15238,6 +15518,54 @@ function AppContent() {
         visible={showTutorial}
         onComplete={handleTutorialComplete}
       />
+
+      {/* Free week offer, once after the first holding (see FREE WEEK OFFER above) */}
+      {freeWeekOffer.trial && (() => {
+        const copy = freeWeekOfferCopy(freeWeekOffer.trial);
+        const bodyLine = Math.round(scaledFonts.normal * 1.5);
+        return (
+          <Modal
+            visible={freeWeekOffer.visible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => closeFreeWeekOffer('later')}
+            onDismiss={openGoldAfterFreeWeekOffer}
+          >
+            <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+              <TouchableWithoutFeedback onPress={() => closeFreeWeekOffer('later')} accessible={false}>
+                <View style={{ flex: 1 }} />
+              </TouchableWithoutFeedback>
+              <View style={{ maxHeight: '90%', backgroundColor: '#18181b', borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, borderBottomWidth: 0, borderColor: 'rgba(201,168,76,0.5)', paddingHorizontal: 24, paddingTop: 24, paddingBottom: Math.max(insets.bottom, 16) + 8 }}>
+                {/* Scrolls only when very large text makes it taller than the screen; the buttons stay put */}
+                <ScrollView style={{ flexGrow: 0 }} bounces={false}>
+                  <Text style={{ color: '#C9A84C', fontSize: scaledFonts.large, fontWeight: '700', marginBottom: 8 }}>{copy.title}</Text>
+                  <Text style={{ color: '#e4e4e7', fontSize: scaledFonts.normal, lineHeight: bodyLine, marginBottom: 14 }}>{copy.lead}</Text>
+                  {copy.points.map((point) => (
+                    <View key={point} style={{ flexDirection: 'row', marginBottom: 8 }}>
+                      <Text style={{ color: '#C9A84C', fontSize: scaledFonts.normal, lineHeight: bodyLine, marginRight: 8 }}>{'\u2022'}</Text>
+                      <Text style={{ flex: 1, color: '#e4e4e7', fontSize: scaledFonts.normal, lineHeight: bodyLine }}>{point}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); closeFreeWeekOffer('start'); }}
+                  style={{ backgroundColor: '#C9A84C', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 18 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: '#09090b', fontSize: scaledFonts.medium, fontWeight: '700' }}>{copy.start}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => closeFreeWeekOffer('later')}
+                  style={{ paddingVertical: 14, alignItems: 'center', marginTop: 4 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.medium, fontWeight: '600' }}>{copy.later}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+        );
+      })()}
 
       {/* Old custom drawer removed — replaced by React Navigation drawer */}
 
