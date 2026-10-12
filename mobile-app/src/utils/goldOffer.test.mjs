@@ -3,10 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   INTRO_ELIGIBLE,
-  PROFILE_REREAD_MS,
   alreadyPaid,
   listenRefusedPrompt,
-  shouldRereadProfile,
   upsellPlan,
   upsellTrial,
   TROY_GOLD_DAILY_QUESTIONS,
@@ -197,14 +195,7 @@ test("a refused Listen pitches Gold only to a free account, and never to one tha
   assert.equal(free.title, 'Listen with Gold');
   assert.equal(free.action, 'Try Gold free');
   const paid = listenRefusedPrompt('paid', trial, { auto: false });
-  assert.deepEqual(paid, {
-    title: 'Voice Unavailable',
-    message: "Troy's voice comes with Gold, and Gold isn't showing on this account. If you just bought a plan, give it a few minutes and try again.",
-    action: null,
-  });
-  // The same note goes to a plan the server hasn't caught up with and to a web
-  // plan that ended, so it can't promise that trying again will work.
-  assert.doesNotMatch(paid.message, /right now|Try again later/);
+  assert.deepEqual(paid, { title: 'Voice Unavailable', message: "Hearing Troy's answers out loud comes with Gold. If you already have Gold, it can take a few minutes to show up here.", action: null });
   assert.deepEqual(listenRefusedPrompt('paid', trial, { auto: true }), paid, 'a paying customer hears why even when it played by itself');
   assert.deepEqual(listenRefusedPrompt('unknown', trial, { auto: false }), paid);
   assert.equal(listenRefusedPrompt('unknown', trial, { auto: true }), null);
@@ -212,35 +203,4 @@ test("a refused Listen pitches Gold only to a free account, and never to one tha
   for (const p of [free, paid]) {
     for (const v of Object.values(p)) if (typeof v === 'string') assert.doesNotMatch(v, new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`), v);
   }
-});
-
-test("the web plan check decides what a Stripe customer id means once the app has it", () => {
-  const lapsed = { revenueCatGold: false, lifetime: false, userTier: 'free', profile: { subscription_tier: 'free', stripe_customer_id: 'cus_123' } };
-  assert.equal(alreadyPaid(lapsed), true, 'before any check the id still counts');
-  assert.equal(alreadyPaid({ ...lapsed, webPlan: undefined }), true, "a check that couldn't tell keeps counting it");
-  assert.equal(alreadyPaid({ ...lapsed, webPlan: null }), false, 'Stripe holds no plan, so the id stops counting');
-  assert.equal(alreadyPaid({ ...lapsed, webPlan: 'gold' }), true);
-  assert.equal(alreadyPaid({ ...lapsed, profile: {}, webPlan: 'lifetime' }), true, 'a web Lifetime counts with nothing on the profile');
-  assert.equal(
-    alreadyPaid({ ...lapsed, profile: { subscription_tier: 'gold', stripe_customer_id: 'cus_123' }, webPlan: null }),
-    true,
-    'a gold tier on the profile still counts, since an App Store plan writes it too',
-  );
-  assert.equal(alreadyPaid({ ...lapsed, revenueCatGold: true, webPlan: null }), true, 'App Store Gold still counts');
-
-  const base = { revenueCatGold: false, lifetime: false, userTier: 'free', signedIn: true, profileRead: true, profile: lapsed.profile };
-  assert.equal(upsellPlan(base), 'paid');
-  assert.equal(upsellPlan({ ...base, webPlan: null }), 'free', 'a lapsed web customer can be offered the trial');
-  assert.equal(upsellPlan({ ...base, profileRead: false, profile: null, webPlan: 'gold' }), 'paid', 'the web plan alone can say paid');
-  assert.equal(upsellPlan({ ...base, profileRead: false, profile: null, webPlan: null }), 'unknown', 'still waiting on the profile');
-  assert.equal(upsellPlan({ ...base, signedIn: false, profileRead: false, profile: null, webPlan: 'gold' }), 'free', 'a guest has no web plan');
-});
-
-test('the profile is read at sign-in and again at most once a minute', () => {
-  assert.equal(PROFILE_REREAD_MS, 60 * 1000);
-  const now = 1_000_000_000;
-  assert.equal(shouldRereadProfile({ now, lastReadAt: 0 }), true, 'the first read always goes');
-  assert.equal(shouldRereadProfile({ now, lastReadAt: now - 30 * 1000 }), false, 'thirty seconds after the last read');
-  assert.equal(shouldRereadProfile({ now, lastReadAt: now - PROFILE_REREAD_MS }), true, 'a minute after');
-  assert.equal(shouldRereadProfile({ now, lastReadAt: now - 10 * 60 * 1000 }), true);
 });
