@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
-import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial, shouldRereadProfile } from './src/utils/goldOffer';
+import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
@@ -4538,29 +4538,26 @@ function AppContent() {
   // ============================================
   // ALREADY PAYING?
   // RevenueCat only knows App Store purchases. A web (Stripe) plan shows on
-  // the account's profile row, so that's read when an account signs in and
-  // again when the app comes back to the front, and every upgrade prompt
-  // checks upsellPlan before it pitches Gold or its free trial
-  // (src/utils/goldOffer.js). An App Store trial started by someone already
-  // paying on the web is billed by Apple on top of Stripe.
+  // the account's profile row, so that's read for each signed-in account, and
+  // every upgrade prompt checks upsellPlan before it pitches Gold or its free
+  // trial (src/utils/goldOffer.js). An App Store trial started by someone
+  // already paying on the web is billed by Apple on top of Stripe.
   // ============================================
 
-  // The profile row as { userId, profile }. It's read again each time the app
-  // comes to the front, at most once a minute (shouldRereadProfile), so a web
-  // plan bought while the app sat in the background shows before a prompt can
-  // offer the App Store trial. A read that fails keeps the last answer and is
-  // tried again the next time the app comes to the front; until one works,
-  // prompts treat the account as one they can't check.
+  // The profile row as { userId, profile }. It's read at sign-in and again
+  // each time the app comes to the front, at most once a minute, so a web
+  // plan bought while the app sat in the background shows before a prompt
+  // offers the App Store trial. Until a read works, prompts treat the account
+  // as one they can't check.
   const [planProfile, setPlanProfile] = useState(null);
   useEffect(() => {
     const userId = supabaseUser?.id;
     if (!userId) return undefined;
     let cancelled = false;
     let reading = false;
-    // When the last read that worked finished, or 0 before one has.
-    let lastReadAt = 0;
+    let readAt = 0;
     const readProfile = async () => {
-      if (cancelled || reading || !shouldRereadProfile({ now: Date.now(), lastReadAt })) return;
+      if (cancelled || reading || Date.now() - readAt < 60 * 1000) return;
       reading = true;
       try {
         const { data, error } = await supabase
@@ -4569,10 +4566,10 @@ function AppContent() {
           .eq('id', userId)
           .maybeSingle();
         if (cancelled || error) return;
-        lastReadAt = Date.now();
+        readAt = Date.now();
         setPlanProfile({ userId, profile: data || {} });
       } catch (e) {
-        // Left as it was until the next try.
+        // Kept as it was until the next try.
       } finally {
         reading = false;
       }
