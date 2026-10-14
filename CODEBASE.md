@@ -149,7 +149,7 @@ Bottom sheet content for each preview type:
 
 ### mobile-app/src/utils/accountDelete.js
 - **Purpose:** Deleting the account from inside the app, which Google Play and Apple's guideline 5.1.1(v) ask for. AccountScreen's Delete Account confirms, says a plan bought in the App Store or Google Play is the store's to cancel, and calls `DELETE /v1/account` with the Supabase session token. On success it signs out through App.js's `performSignOut`
-- **Exports:** `deleteAccount({ apiBase, token })` answers `{ kind: 'deleted' }` on 200, `'expired'` with no token or on 401, `{ kind: 'plan', message }` on 409 when a troystack.ai plan would charge again, and `{ kind: 'retry', message }` on anything else, a timeout or no connection. `DELETE_TIMEOUT_MS` is thirty seconds
+- **Exports:** `deleteAccount({ apiBase, token })` answers `{ kind: 'deleted' }` on 200, `'expired'` with no token or on 401, `{ kind: 'plan', message }` on 409 when a troystack.ai plan would charge again, `{ kind: 'retry', message }` on any other answer, and `{ kind: 'unknown', message }` on a timeout or no connection, since the server may have deleted the account before the answer was lost. `DELETE_TIMEOUT_MS` is thirty seconds
 - **Tests:** `node --test mobile-app/src/utils/accountDelete.test.mjs`
 - **Last modified:** 2026-10-14
 

@@ -83,6 +83,8 @@ export default function AccountScreen({
       Alert.alert('Sign in again', 'Your session ran out. Sign out, sign back in, and then delete your account.');
     } else if (result.kind === 'plan') {
       Alert.alert('Cancel your plan first', result.message);
+    } else if (result.kind === 'unknown') {
+      Alert.alert('No answer yet', result.message);
     } else {
       Alert.alert('Not deleted', result.message);
     }

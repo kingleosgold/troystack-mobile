@@ -11,17 +11,22 @@
 export const DELETE_TIMEOUT_MS = 30000;
 
 const RETRY_MESSAGE = "Your account couldn't be deleted just now. Try again, or email support@troystack.com.";
+const UNKNOWN_MESSAGE = "No answer came back, so your account may or may not be deleted. Give it a minute. If you can still sign in, delete it again, or email support@troystack.com.";
 
 /**
  * @returns {Promise<{ kind: 'deleted' }
  *   | { kind: 'expired' }
  *   | { kind: 'plan', message: string }
- *   | { kind: 'retry', message: string }>}
+ *   | { kind: 'retry', message: string }
+ *   | { kind: 'unknown', message: string }>}
  *   'deleted' on 200. 'expired' with no token or on 401, so the person signs
  *   in again first. 'plan' on 409, a troystack.ai plan that would charge
  *   again, with the API's message saying to cancel it first. 'retry' on 503,
- *   500, any other answer, a timeout or no connection, with the API's message
- *   when it sent one. Nothing is deleted unless the answer is 'deleted'.
+ *   500 or any other answer, with the API's message when it sent one, since
+ *   the API answers those only when it deleted nothing it can't finish on a
+ *   retry. 'unknown' on a timeout or no connection, since the server may have
+ *   deleted the account before the answer was lost, so the app can't say it
+ *   wasn't.
  */
 export async function deleteAccount({ apiBase, token, fetchImpl = fetch, timeoutMs = DELETE_TIMEOUT_MS }) {
   if (!token) return { kind: 'expired' };
@@ -40,7 +45,7 @@ export async function deleteAccount({ apiBase, token, fetchImpl = fetch, timeout
     if (res.status === 409) return { kind: 'plan', message: body?.message || RETRY_MESSAGE };
     return { kind: 'retry', message: body?.error || RETRY_MESSAGE };
   } catch {
-    return { kind: 'retry', message: RETRY_MESSAGE };
+    return { kind: 'unknown', message: UNKNOWN_MESSAGE };
   } finally {
     clearTimeout(timer);
   }
