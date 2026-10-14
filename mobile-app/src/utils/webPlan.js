@@ -63,6 +63,18 @@ export function revenueCatReadCounts({ askedGen, gen, signedInId, rcUserId }) {
 }
 
 /**
+ * Whether an answer the RevenueCat listener is holding still counts. The
+ * listener belongs to the account that was signed in when it was added
+ * (listenerId), and it awaits RevenueCat's app user id before it shows
+ * anything. If the account changed during that wait, signedInId (read after
+ * the await) no longer matches and the answer is dropped, so the last
+ * account's plan never shows on the new one.
+ */
+export function revenueCatListenerCounts({ listenerId, signedInId, rcUserId }) {
+  return (listenerId || null) === (signedInId || null) && revenueCatAnswerCounts({ signedInId, rcUserId });
+}
+
+/**
  * The plan Stripe holds for the signed-in account, from GET /v1/stripe/my-plan.
  * @returns {Promise<'gold'|'lifetime'|null|undefined>} 'gold' or 'lifetime',
  *   null when Stripe has nothing, undefined when it couldn't tell (no session,

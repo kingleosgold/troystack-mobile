@@ -32,7 +32,7 @@ import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
-import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatAnswerCounts, revenueCatReadCounts } from './src/utils/webPlan';
+import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -4726,10 +4726,12 @@ function AppContent() {
       // new one. At sign-out it moves to an anonymous customer first, whose
       // empty plan must never be written over the account that's leaving.
       // Signed out, the anonymous customer's answer is the one to show.
+      // The account can also change while RevenueCat is asked for its user
+      // id, so the account signed in after the wait has to be this one.
       let revenueCatUser = null;
       try { revenueCatUser = await Purchases.getAppUserID(); } catch (e) { revenueCatUser = null; }
       const signedInId = supabaseUser?.id || null;
-      if (!revenueCatAnswerCounts({ signedInId, rcUserId: revenueCatUser })) return;
+      if (!revenueCatListenerCounts({ listenerId: signedInId, signedInId: signedInIdRef.current, rcUserId: revenueCatUser })) return;
 
       rcPlanRef.current = { rcGold: isGold || isSilver, rcLifetime: isLifetime, rcTier: tier };
       const plan = mergePlans({ ...rcPlanRef.current, webPlan: strongerPlan(webPlanRef.current, storePlanRef.current) });

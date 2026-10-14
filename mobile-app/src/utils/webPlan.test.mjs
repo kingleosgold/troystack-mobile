@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/webPlan.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, revenueCatAnswerCounts, revenueCatReadCounts, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
+import { cacheWebPlan, fetchWebPlan, mergePlans, readCachedWebPlan, revenueCatAnswerCounts, revenueCatListenerCounts, revenueCatReadCounts, shouldRecheckWebPlan, webPlanCacheKey, withTimeout } from './webPlan.js';
 
 const API = 'https://api.example.test';
 
@@ -123,4 +123,12 @@ test('a RevenueCat read counts only for the account it was asked for, while Reve
   );
   assert.equal(revenueCatReadCounts({ ...asked, signedInId: 'user-b', rcUserId: 'user-a' }), false, 'RevenueCat still on the last account');
   assert.equal(revenueCatReadCounts({ askedGen: 2, gen: 2, signedInId: null, rcUserId: '$RCAnonymousID:x' }), true, "signed out, the anonymous customer's answer is theirs");
+});
+
+test('a listener answer counts only while its own account is still the one signed in', () => {
+  assert.equal(revenueCatListenerCounts({ listenerId: 'user-a', signedInId: 'user-a', rcUserId: 'user-a' }), true);
+  assert.equal(revenueCatListenerCounts({ listenerId: 'user-a', signedInId: 'user-b', rcUserId: 'user-a' }), false, 'a reset link switched to B during the wait');
+  assert.equal(revenueCatListenerCounts({ listenerId: 'user-a', signedInId: null, rcUserId: 'user-a' }), false, 'signed out during the wait');
+  assert.equal(revenueCatListenerCounts({ listenerId: 'user-a', signedInId: 'user-a', rcUserId: '$RCAnonymousID:x' }), false, 'RevenueCat on another customer');
+  assert.equal(revenueCatListenerCounts({ listenerId: null, signedInId: null, rcUserId: '$RCAnonymousID:x' }), true, 'a guest sees the anonymous answer');
 });
