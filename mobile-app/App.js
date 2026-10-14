@@ -13680,6 +13680,7 @@ function AppContent() {
       {showAccountScreen && (
         <View {...accountSwipe.panHandlers} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9998 }}>
           <AccountScreen
+            apiBase={API_BASE_URL}
             onClose={() => setShowAccountScreen(false)}
             onSignOut={() => performSignOut()}
             hasGold={hasGold}

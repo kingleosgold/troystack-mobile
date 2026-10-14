@@ -14,6 +14,25 @@ export const REPORT_TIMEOUT_MS = 10000;
 // The API caps a reply it stores at this length, and so does the email.
 export const REPORT_CONTENT_MAX = 4000;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The API takes ids only as UUIDs and refuses anything else. Messages the
+// app makes itself, a daily brief or a fallback reply, carry ids like
+// brief-..., so those go without one rather than fail the report.
+function uuidOrNull(value) {
+  return typeof value === 'string' && UUID_RE.test(value) ? value : null;
+}
+
+/**
+ * The reply cut to the cap without splitting a character. A cut through an
+ * emoji leaves half of a surrogate pair, which encodeURIComponent throws on.
+ */
+export function reportContent(content) {
+  const text = String(content || '').slice(0, REPORT_CONTENT_MAX);
+  const last = text.charCodeAt(text.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
+}
+
 export const REPORT_REASONS = [
   { key: 'offensive', label: 'Offensive or harmful' },
   { key: 'wrong', label: 'Wrong or misleading' },
@@ -39,11 +58,11 @@ export async function sendTroyReport({
       method: 'POST',
       headers,
       body: JSON.stringify({
-        userId: userId || null,
-        conversationId: conversationId || null,
-        messageId: message?.id || null,
+        userId: uuidOrNull(userId),
+        conversationId: uuidOrNull(conversationId),
+        messageId: uuidOrNull(message?.id),
         reason,
-        content: String(message?.content || '').slice(0, REPORT_CONTENT_MAX),
+        content: reportContent(message?.content),
       }),
       signal: controller.signal,
     });
@@ -66,7 +85,7 @@ export function reportText({ message, reason, conversationId }) {
     `Message: ${message?.id || 'unknown'}`,
     `Conversation: ${conversationId || 'none'}`,
     '',
-    String(message?.content || '').slice(0, REPORT_CONTENT_MAX),
+    reportContent(message?.content),
   ].join('\n');
 }
 

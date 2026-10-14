@@ -143,8 +143,14 @@ Bottom sheet content for each preview type:
 
 ### mobile-app/src/utils/troyReport.js
 - **Purpose:** Reporting one of Troy's replies, which Google Play's AI-generated content policy asks for. Each assistant message in Troy's chat has a Report button beside Listen. `reportTroyReply` in App.js asks for a reason and sends the reply to `POST /v1/troy/report` with the Supabase session token when there is one. When the route can't take it (404 before it's live, any other non-2xx, a timeout or no connection) the app offers a support email with the reply in it, and if no email app opens it copies the report and shows the address
-- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportText` is the report as text and `reportEmailUrl` the mailto built from it. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
+- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportText` is the report as text and `reportEmailUrl` the mailto built from it. `reportContent` cuts the reply to the cap without splitting an emoji. Ids go to the API only as UUIDs, so a report on a daily brief or fallback reply goes without a message id instead of being refused. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
 - **Tests:** `node --test mobile-app/src/utils/troyReport.test.mjs`
+- **Last modified:** 2026-10-14
+
+### mobile-app/src/utils/accountDelete.js
+- **Purpose:** Deleting the account from inside the app, which Google Play and Apple's guideline 5.1.1(v) ask for. AccountScreen's Delete Account confirms, says a plan bought in the App Store or Google Play is the store's to cancel, and calls `DELETE /v1/account` with the Supabase session token. On success it signs out through App.js's `performSignOut`
+- **Exports:** `deleteAccount({ apiBase, token })` answers `{ kind: 'deleted' }` on 200, `'expired'` with no token or on 401, `{ kind: 'plan', message }` on 409 when a troystack.ai plan would charge again, and `{ kind: 'retry', message }` on anything else, a timeout or no connection. `DELETE_TIMEOUT_MS` is thirty seconds
+- **Tests:** `node --test mobile-app/src/utils/accountDelete.test.mjs`
 - **Last modified:** 2026-10-14
 
 ### mobile-app/src/utils/widgetKit.js
