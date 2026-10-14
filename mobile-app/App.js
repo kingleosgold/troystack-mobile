@@ -4696,6 +4696,12 @@ function AppContent() {
             if (__DEV__) console.log('✅ RevenueCat setup complete');
           } else {
             if (__DEV__) console.log('⚠️ RevenueCat initialization returned false, skipping entitlements');
+            // RevenueCat isn't there, Android before its Google key say, but
+            // a plan from troystack.ai still counts. It's checked and shown
+            // and nothing is written.
+            if (appUserId && setupGen === webPlanGenRef.current) {
+              await syncSubscriptionToSupabase(appUserId, 'free', { webOnly: true });
+            }
           }
           setSubscriptionLoading(false); // Done checking subscription status
         } catch (error) {
