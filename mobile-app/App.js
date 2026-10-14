@@ -35,6 +35,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
+import { sendTroyReport, reportEmailUrl, REPORT_REASONS } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import PieChart from './src/components/PieChart';
@@ -1077,6 +1078,16 @@ const ICLOUD_HOLDINGS_KEY = 'stack_tracker_holdings.json';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'https://api.stacktrackergold.com';
+// RevenueCat's public Google Play key (goog_...). Empty until the Play app exists in RevenueCat.
+const REVENUECAT_GOOGLE_KEY = '';
+
+// Android plays Troy's voice from a service that needs a registered playback
+// task, and this runs before expo/AppEntry registers the app. The remote
+// controls stay on the in-app handlers in initTrackPlayer, so the task has
+// nothing to do. iOS keeps the setup it was tested with on device.
+if (Platform.OS === 'android') {
+  TrackPlayer.registerPlaybackService(() => async () => {});
+}
 const appVersion = Constants.expoConfig?.version || Constants.manifest?.version || '0.0.0';
 const TROY_AVATAR = require('./assets/troy-avatar.png');
 
@@ -4187,6 +4198,17 @@ function AppContent() {
     if (__DEV__) console.log('📱 [Push] registerForPushNotifications() called');
     if (__DEV__) console.log('📱 [Push] API_BASE_URL:', API_BASE_URL);
     try {
+      // Android 13 and later shows the permission prompt only once a channel
+      // exists, so the channel comes first.
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#fbbf24',
+        });
+      }
+
       // Check existing permissions
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       if (__DEV__) console.log('📱 [Push] Current permission status:', existingStatus);
@@ -4214,16 +4236,6 @@ function AppContent() {
 
       const token = tokenData.data;
       if (__DEV__) console.log('📱 [Notifications] Push Token:', token);
-
-      // Configure notification channel for Android
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#fbbf24',
-        });
-      }
 
       // Sync token to backend for price alert notifications
       try {
@@ -4434,7 +4446,9 @@ function AppContent() {
         try {
           // Use the same API key for all builds - RevenueCat auto-detects sandbox vs production
           // based on the App Store receipt. EAS dev builds use release mode so __DEV__ is false.
-          const apiKey = 'appl_WDKPrWsOHfWzfJhxOGluQYsniLW';
+          // Android takes the Google Play key, which RevenueCat issues once the Play app is
+          // added to the project. Until it's here, setup stops and Android shows free.
+          const apiKey = Platform.OS === 'android' ? REVENUECAT_GOOGLE_KEY : 'appl_WDKPrWsOHfWzfJhxOGluQYsniLW';
 
           if (__DEV__) console.log('🔧 Initializing RevenueCat...');
 
@@ -5721,6 +5735,48 @@ function AppContent() {
     if (pending) {
       try { pending(); } catch (e) { if (__DEV__) console.error('Pending Troy action failed:', e?.message || e); }
     }
+  };
+
+  // Report one of Troy's replies. Google Play asks generative AI apps for a
+  // way to flag offensive content without leaving the app (src/utils/troyReport.js).
+  const reportTroyReply = (message) => {
+    Alert.alert(
+      'Report this reply',
+      "What's wrong with it? We review every report.",
+      [
+        ...REPORT_REASONS.map(({ key, label }) => ({
+          text: label,
+          onPress: async () => {
+            let token = null;
+            try {
+              const { data } = await supabase.auth.getSession();
+              token = data?.session?.access_token || null;
+            } catch {}
+            const result = await sendTroyReport({
+              apiBase: API_BASE_URL,
+              token,
+              userId: supabaseUser?.id,
+              conversationId: activeConversationId,
+              message,
+              reason: key,
+            });
+            if (result === 'sent') {
+              Alert.alert('Thanks', 'We got your report and will review this reply.');
+            } else {
+              Alert.alert(
+                'Report by email',
+                "We couldn't send the report from here. Your email app can send it to support with the reply attached.",
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open Email', onPress: () => Linking.openURL(reportEmailUrl({ message, reason: key, conversationId: activeConversationId })).catch(() => {}) },
+                ]
+              );
+            }
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const sendTroyMessage = async (messageText) => {
@@ -12721,8 +12777,9 @@ function AppContent() {
                       <Text style={{ color: '#DAA520', fontSize: 14, marginLeft: 6 }}>→</Text>
                     </TouchableOpacity>
                   )}
-                  {/* Troy Voice — pause/resume/listen per message */}
+                  {/* Troy Voice pause, resume or listen per message, and Report */}
                   {item.role === 'assistant' && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <TouchableOpacity
                       onPress={async () => {
                         if (playingMessageId === item.id && !isPaused) {
@@ -12746,6 +12803,14 @@ function AppContent() {
                         <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>▶ Listen</Text>
                       )}
                     </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => reportTroyReply(item)}
+                      accessibilityLabel="Report this reply"
+                      style={{ marginTop: 6, paddingVertical: 4, paddingHorizontal: 8 }}
+                    >
+                      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>⚑ Report</Text>
+                    </TouchableOpacity>
+                    </View>
                   )}
                 </Animated.View>
               );

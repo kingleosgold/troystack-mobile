@@ -141,6 +141,12 @@ Bottom sheet content for each preview type:
 - **Tests:** `node --test mobile-app/src/utils/freeWeekOffer.test.mjs`
 - **Last modified:** 2026-10-10
 
+### mobile-app/src/utils/troyReport.js
+- **Purpose:** Reporting one of Troy's replies, which Google Play's AI-generated content policy asks for. Each assistant message in Troy's chat has a Report button beside Listen. `reportTroyReply` in App.js asks for a reason and sends the reply to `POST /v1/troy/report` with the Supabase session token when there is one. When the route can't take it (404 before it's live, any other non-2xx, a timeout or no connection) the app offers a support email with the reply in it
+- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportEmailUrl` builds the mailto. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
+- **Tests:** `node --test mobile-app/src/utils/troyReport.test.mjs`
+- **Last modified:** 2026-10-14
+
 ### mobile-app/src/utils/widgetKit.js
 - **Purpose:** iOS WidgetKit data bridge — sends portfolio data to native widget
 - **Exports:** `isWidgetKitAvailable`, `updateWidgetData`, `refreshWidgets`, `syncWidgetData`, `getWidgetConfigurations`
@@ -333,6 +339,7 @@ sidebarNavItems = [
 
 ### RevenueCat
 - **Apple API Key:** `appl_WDKPrWsOHfWzfJhxOGluQYsniLW` (public, in App.js)
+- **Google Play API Key:** `REVENUECAT_GOOGLE_KEY` near the top of App.js, empty until the Play app is added to the RevenueCat project. Android uses it and iOS the Apple key. With it empty, setup stops on Android and the app shows free. `checkTrialOrIntroductoryPriceEligibility` is iOS only, so Android shows no trial wording until the app reads Play's offers
 - **Products:** `stacktracker_gold_monthly` ($4.99), `stacktracker_gold_yearly` ($39.99), `stacktracker_lifetime` ($149.99)
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
@@ -411,6 +418,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 - `registerForPushNotifications()` in App.js
 - Sends `POST /v1/push/register` with `{ expo_push_token, platform, app_version, user_id, device_id }`
 - Triggered on auth + periodically on app foreground
+- Android creates the `default` channel before asking permission, since Android 13 and later shows the prompt only once a channel exists. Android push needs FCM: a `google-services.json` from the Firebase project, `android.googleServicesFile` in app.json and the FCM key in EAS. Until then `getExpoPushTokenAsync` throws on Android and registration stops quietly
 
 ### Notification Types
 | Type | Source | Trigger |
@@ -444,12 +452,13 @@ App Launch → Supabase session check → Biometric auth (optional)
 - **Entitlements:** App Groups (`group.com.stacktrackerpro.shared`), In-App Purchase, iCloud
 - **Splash:** Solid `#0A0A0E` background (no logo)
 - **Plugins:** `withWidgetNativeModule`, `@bacons/apple-targets`
+- **Android:** package `com.stacktrackerpro.app`. `RECORD_AUDIO` is requested for Troy's voice and isn't blocked. Android registers an empty React Native Track Player playback service at the top of App.js, since its player runs in a service that needs a registered task. The remote controls stay on the in-app handlers
 
 ### mobile-app/eas.json
 - **development:** iOS simulator + dev client
 - **preview:** Internal distribution
-- **production:** App Store submission with auto-submit
-- **Last modified:** 2026-03-01
+- **production:** App Store submission with auto-submit. Android builds an app bundle and EAS raises `android.versionCode` in app.json each build (`autoIncrement`, with `appVersionSource` local). `eas submit` sends Android to the Play internal track with `google-service-account.json`, which is gitignored
+- **Last modified:** 2026-10-14
 
 ### Backend Deployment
 - **Host:** Railway (auto-deploys from `main` branch)
@@ -478,6 +487,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 | POST | `/v1/troy/conversations/:id/messages` | Send message, get Troy response |
 | POST | `/v1/troy/speak` | ElevenLabs TTS (voice caps enforced) |
 | POST | `/v1/troy/transcribe` | OpenAI Whisper STT (voice caps enforced) |
+| POST | `/v1/troy/report` | Report a Troy reply for review (asked of troystack-api 10/14, not live yet) |
 
 ### Prices & Data
 | Method | Route | Purpose |
