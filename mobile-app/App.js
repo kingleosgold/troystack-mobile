@@ -35,7 +35,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
-import { sendTroyReport, reportEmailUrl, REPORT_REASONS } from './src/utils/troyReport';
+import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import PieChart from './src/components/PieChart';
@@ -5768,7 +5768,18 @@ function AppContent() {
                 "We couldn't send the report from here. Your email app can send it to support with the reply attached.",
                 [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Open Email', onPress: () => Linking.openURL(reportEmailUrl({ message, reason: key, conversationId: activeConversationId })).catch(() => {}) },
+                  {
+                    text: 'Open Email',
+                    onPress: () => {
+                      const report = { message, reason: key, conversationId: activeConversationId };
+                      Linking.openURL(reportEmailUrl(report)).catch(() => {
+                        // No email app opened, so the report is copied and
+                        // the address shown, and it isn't lost.
+                        Clipboard.setString(reportText(report));
+                        Alert.alert('Report copied', `No email app opened. The report is copied, so you can paste it in an email to ${SUPPORT_EMAIL}.`);
+                      });
+                    },
+                  },
                 ]
               );
             }

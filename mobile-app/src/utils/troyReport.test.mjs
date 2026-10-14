@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sendTroyReport, reportEmailUrl, REPORT_CONTENT_MAX, SUPPORT_EMAIL } from './troyReport.js';
+import { sendTroyReport, reportEmailUrl, reportText, REPORT_CONTENT_MAX, SUPPORT_EMAIL } from './troyReport.js';
 
 const message = { id: 'msg-1', role: 'assistant', content: 'Silver is up 2% today.' };
 
@@ -65,4 +65,10 @@ test('the email goes to support with the reason label, ids and reply', () => {
   assert.ok(url.startsWith(`mailto:${SUPPORT_EMAIL}?subject=Report%20a%20Troy%20reply&body=`));
   const body = decodeURIComponent(url.split('&body=')[1]);
   assert.equal(body, 'Reason: Offensive or harmful\nMessage: msg-1\nConversation: c1\n\nSilver is up 2% today.');
+});
+
+test('the copied report matches the email body', () => {
+  const report = { message, reason: 'wrong', conversationId: 'c1' };
+  assert.equal(reportText(report), 'Reason: Wrong or misleading\nMessage: msg-1\nConversation: c1\n\nSilver is up 2% today.');
+  assert.equal(decodeURIComponent(reportEmailUrl(report).split('&body=')[1]), reportText(report));
 });

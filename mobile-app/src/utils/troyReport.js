@@ -56,17 +56,24 @@ export async function sendTroyReport({
 }
 
 /**
- * A mailto link to support with the reply in the body, for when the route
- * can't take the report.
+ * The report as text: the reason, the ids and the reply. It's the email's
+ * body, and what the app copies when no email app opens.
  */
-export function reportEmailUrl({ message, reason, conversationId }) {
+export function reportText({ message, reason, conversationId }) {
   const label = REPORT_REASONS.find(r => r.key === reason)?.label || reason;
-  const body = [
+  return [
     `Reason: ${label}`,
     `Message: ${message?.id || 'unknown'}`,
     `Conversation: ${conversationId || 'none'}`,
     '',
     String(message?.content || '').slice(0, REPORT_CONTENT_MAX),
   ].join('\n');
-  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Report a Troy reply')}&body=${encodeURIComponent(body)}`;
+}
+
+/**
+ * A mailto link to support with the report in the body, for when the route
+ * can't take it.
+ */
+export function reportEmailUrl(report) {
+  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Report a Troy reply')}&body=${encodeURIComponent(reportText(report))}`;
 }

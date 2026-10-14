@@ -142,8 +142,8 @@ Bottom sheet content for each preview type:
 - **Last modified:** 2026-10-10
 
 ### mobile-app/src/utils/troyReport.js
-- **Purpose:** Reporting one of Troy's replies, which Google Play's AI-generated content policy asks for. Each assistant message in Troy's chat has a Report button beside Listen. `reportTroyReply` in App.js asks for a reason and sends the reply to `POST /v1/troy/report` with the Supabase session token when there is one. When the route can't take it (404 before it's live, any other non-2xx, a timeout or no connection) the app offers a support email with the reply in it
-- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportEmailUrl` builds the mailto. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
+- **Purpose:** Reporting one of Troy's replies, which Google Play's AI-generated content policy asks for. Each assistant message in Troy's chat has a Report button beside Listen. `reportTroyReply` in App.js asks for a reason and sends the reply to `POST /v1/troy/report` with the Supabase session token when there is one. When the route can't take it (404 before it's live, any other non-2xx, a timeout or no connection) the app offers a support email with the reply in it, and if no email app opens it copies the report and shows the address
+- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportText` is the report as text and `reportEmailUrl` the mailto built from it. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
 - **Tests:** `node --test mobile-app/src/utils/troyReport.test.mjs`
 - **Last modified:** 2026-10-14
 
