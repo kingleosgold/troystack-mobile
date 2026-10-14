@@ -3026,6 +3026,9 @@ function AppContent() {
       storePlanRef.current = null;
       signedInIdRef.current = null;
       applyWebPlan(null);
+      // A guest purchase or restore before the next sign-in moves to that
+      // account at its login, so even the same account syncs again then.
+      claimStoreSync.reset();
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 2. Sign out from Supabase
@@ -4658,7 +4661,7 @@ function AppContent() {
                 // RevenueCat's app user id is the Supabase user id, so the
                 // server can read this account's App Store plan, a guest's
                 // purchase included, and write it to profiles. Once per
-                // account per launch, in the background, and not for a setup
+                // account per sign-in, in the background, and not for a setup
                 // the account has already moved on from.
                 if (setupGen === webPlanGenRef.current && claimStoreSync(appUserId)) syncStorePlan(appUserId);
               } catch (error) {

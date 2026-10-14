@@ -117,3 +117,12 @@ test('the sync after sign-in runs once per account per launch', () => {
   assert.equal(claim('user-b'), true);
   assert.equal(claim(null), false);
 });
+
+test('after a sign-out the same account claims the sync again', () => {
+  const claim = oncePerAccount();
+  assert.equal(claim('user-a'), true);
+  assert.equal(claim('user-a'), false);
+  claim.reset();
+  assert.equal(claim('user-a'), true);
+  assert.equal(claim('user-a'), false);
+});

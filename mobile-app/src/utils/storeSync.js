@@ -89,14 +89,19 @@ export function strongerPlan(a, b) {
 
 /**
  * A claim for the sync after Purchases.logIn, which runs at most once per
- * account per launch. The returned function is true the first time it's
- * called for an account, and false after that.
+ * account per sign-in. The returned function is true the first time it's
+ * called for an account, and false after that, until reset() at sign-out.
+ * A guest who buys or restores after signing out and then signs back in to
+ * the same account gets RevenueCat's transfer at that login, so the sync
+ * has to run again then.
  */
 export function oncePerAccount() {
   const claimed = new Set();
-  return (userId) => {
+  const claim = (userId) => {
     if (!userId || claimed.has(userId)) return false;
     claimed.add(userId);
     return true;
   };
+  claim.reset = () => claimed.clear();
+  return claim;
 }
