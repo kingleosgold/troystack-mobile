@@ -19,7 +19,7 @@ import { deleteAccount } from '../utils/accountDelete';
 interface AccountScreenProps {
   apiBase: string;
   onClose: () => void;
-  onSignOut: () => void;
+  onSignOut: () => void | Promise<void>;
   hasGold: boolean;
   hasLifetime: boolean;
   colors: {
@@ -78,9 +78,10 @@ export default function AccountScreen({
     const result = await deleteAccount({ apiBase, token });
     setDeleting(false);
     if (result.kind === 'deleted') {
-      // Signed out and cleared first, so nothing of the deleted account is
-      // left on the phone if the app is closed while the alert is up.
-      onSignOut();
+      // Signed out and cleared first, and waited for, so nothing of the
+      // deleted account is left on the phone if the app is closed while the
+      // alert is up.
+      await onSignOut();
       Alert.alert('Account deleted', 'Your account and its synced data are gone.');
     } else if (result.kind === 'expired') {
       Alert.alert('Sign in again', 'Your session ran out. Sign out, sign back in, and then delete your account.');
