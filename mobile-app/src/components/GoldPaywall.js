@@ -45,11 +45,13 @@ const GOLD_FEATURES = [
   { icon: '🏦', text: 'COMEX Vault Watch' },
 ];
 
-// initialCycle ('yearly' or 'monthly') opens the screen on the plan whose free
-// trial a prompt just promised, so that trial is the first button shown. Any
-// other open starts on Yearly, the default, since the screen stays mounted and
-// would otherwise keep the plan from the last time it was shown.
-const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', initialCycle = null }) => {
+// onRestored runs as soon as a restore resolves, whatever it found, so the app
+// can have the server read the App Store plan again. initialCycle ('yearly' or
+// 'monthly') opens the screen on the plan whose free trial a prompt just
+// promised, so that trial is the first button shown. Any other open starts on
+// Yearly, the default, since the screen stays mounted and would otherwise keep
+// the plan from the last time it was shown.
+const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, onRestored, userTier = 'free', initialCycle = null }) => {
   const [offering, setOffering] = useState(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(null);
@@ -118,6 +120,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, userTier = 'free', i
     try {
       setRestoring(true);
       const restored = await restorePurchases();
+      onRestored?.();
 
       if (restored.hasGold || restored.hasSilver) {
         Alert.alert(
