@@ -204,3 +204,25 @@ test("a refused Listen pitches Gold only to a free account, and never to one tha
     for (const v of Object.values(p)) if (typeof v === 'string') assert.doesNotMatch(v, new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`), v);
   }
 });
+
+test("Stripe's own answer decides what a leftover Stripe customer id means", () => {
+  const lapsed = { revenueCatGold: false, lifetime: false, userTier: 'free', profile: { subscription_tier: 'free', stripe_customer_id: 'cus_123' } };
+  assert.equal(alreadyPaid(lapsed), true, 'before any check the id still counts');
+  assert.equal(alreadyPaid({ ...lapsed, webPlan: undefined }), true, "a check that couldn't tell keeps counting it");
+  assert.equal(alreadyPaid({ ...lapsed, webPlan: null }), false, 'Stripe holds no plan, so the id stops counting');
+  assert.equal(alreadyPaid({ ...lapsed, webPlan: 'gold' }), true);
+  assert.equal(alreadyPaid({ ...lapsed, profile: {}, webPlan: 'lifetime' }), true, 'a web Lifetime counts with nothing on the profile');
+  assert.equal(
+    alreadyPaid({ ...lapsed, profile: { subscription_tier: 'gold', stripe_customer_id: 'cus_123' }, webPlan: null }),
+    true,
+    'a gold tier on the profile still counts, since an App Store plan writes it too',
+  );
+  assert.equal(alreadyPaid({ ...lapsed, revenueCatGold: true, webPlan: null }), true, 'App Store Gold still counts');
+
+  const base = { revenueCatGold: false, lifetime: false, userTier: 'free', signedIn: true, profileRead: true, profile: lapsed.profile };
+  assert.equal(upsellPlan(base), 'paid');
+  assert.equal(upsellPlan({ ...base, webPlan: null }), 'free', 'a lapsed web customer or a dropped checkout can be offered the trial');
+  assert.equal(upsellPlan({ ...base, profileRead: false, profile: null, webPlan: 'gold' }), 'paid', 'the web plan alone can say paid');
+  assert.equal(upsellPlan({ ...base, profileRead: false, profile: null, webPlan: null }), 'unknown', 'still waiting on the profile');
+  assert.equal(upsellPlan({ ...base, signedIn: false, profileRead: false, profile: null, webPlan: 'gold' }), 'free', 'a guest has no web plan');
+});

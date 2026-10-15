@@ -74,12 +74,22 @@ export function offeringFreeTrial(offering, eligibility, eligibleStatus = INTRO_
  * subscription_tier at launch, while nothing in the app writes the id. The API
  * sets it when a web checkout starts, so it also catches a checkout that was
  * started and never finished. profile is null for a guest.
+ *
+ * The id stays on the profile after a web plan ends or a checkout is dropped,
+ * so it can't tell a web member from someone who no longer pays. webPlan is
+ * the API's answer from GET /v1/stripe/my-plan (src/utils/webPlan.js): 'gold'
+ * or 'lifetime' counts as paid, null means Stripe holds no plan and the id
+ * stops counting, and undefined (not asked yet, or an answer that couldn't
+ * tell) keeps counting it.
  */
-export function alreadyPaid({ revenueCatGold, lifetime, userTier, profile }) {
+export function alreadyPaid({ revenueCatGold, lifetime, userTier, profile, webPlan }) {
   if (revenueCatGold || lifetime) return true;
   if (userTier === 'gold' || userTier === 'lifetime') return true;
+  if (webPlan === 'gold' || webPlan === 'lifetime') return true;
   const tier = profile?.subscription_tier;
-  return tier === 'gold' || tier === 'lifetime' || Boolean(profile?.stripe_customer_id);
+  if (tier === 'gold' || tier === 'lifetime') return true;
+  // Stripe's own answer that it holds no plan beats the leftover id.
+  return webPlan === null ? false : Boolean(profile?.stripe_customer_id);
 }
 
 /**
@@ -90,9 +100,9 @@ export function alreadyPaid({ revenueCatGold, lifetime, userTier, profile }) {
  * an App Store trial started by someone already paying on the web is billed by
  * Apple on top of Stripe.
  */
-export function upsellPlan({ revenueCatGold, lifetime, userTier, signedIn, profileRead, profile }) {
+export function upsellPlan({ revenueCatGold, lifetime, userTier, signedIn, profileRead, profile, webPlan }) {
   const known = !signedIn || profileRead;
-  if (alreadyPaid({ revenueCatGold, lifetime, userTier, profile: signedIn && known ? profile : null })) return 'paid';
+  if (alreadyPaid({ revenueCatGold, lifetime, userTier, profile: signedIn && known ? profile : null, webPlan: signedIn ? webPlan : undefined })) return 'paid';
   return known ? 'free' : 'unknown';
 }
 
