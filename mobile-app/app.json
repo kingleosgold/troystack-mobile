@@ -65,7 +65,7 @@
         "backgroundColor": "#1a1d2e"
       },
       "package": "com.stacktrackerpro.app",
-      "versionCode": 4,
+      "versionCode": 6,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
