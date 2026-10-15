@@ -491,7 +491,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 - **Port:** `process.env.PORT || 3000`
 
 ### Key Native Dependencies (require new build when changed)
-- `react-native-track-player` — TTS audio playback. Patched by `mobile-app/patches/react-native-track-player+4.1.2.patch`, which `patch-package` applies on every install (the `postinstall` script). React Native 0.81 made `Arguments.fromBundle` take a non-null Bundle, so 4.1.2's Android build fails until `getTrack` and `getActiveTrack` pass a track's `originalItem` only when it's there. Upgrading track-player means checking the patch still applies.
+- `react-native-track-player` — TTS audio playback. Patched by `mobile-app/patches/react-native-track-player+4.1.2.patch`, which `patch-package` applies on every install (the `postinstall` script). React Native 0.81 made `Arguments.fromBundle` take a non-null Bundle, so 4.1.2's Android build fails until `getTrack` and `getActiveTrack` pass a track's `originalItem` only when it's there. Expo 54 runs the new architecture, where React Native's interop layer refuses any async `@ReactMethod` that doesn't return void (`TurboModuleInteropUtils`), so the patch also gives each of `MusicModule`'s 37 `fun x(...) = scope.launch { }` methods a block body that returns Unit. Upgrading track-player means checking the patch still applies.
 - `expo-av` — Audio recording
 - `react-native-purchases` — RevenueCat
 - `react-native-cloud-storage` — iCloud sync
