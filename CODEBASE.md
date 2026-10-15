@@ -140,6 +140,18 @@ Bottom sheet content for each preview type:
 - **Tests:** `node --test mobile-app/src/utils/freeWeekOffer.test.mjs`
 - **Last modified:** 2026-10-10
 
+### mobile-app/src/utils/troyReport.js
+- **Purpose:** Reporting one of Troy's replies, which Google Play's AI-generated content policy asks for. Each assistant message in Troy's chat has a Report button beside Listen. `reportTroyReply` in App.js asks for a reason and sends the reply to `POST /v1/troy/report` with the Supabase session token when there is one. When the route can't take it (404 before it's live, any other non-2xx, a timeout or no connection) the app offers a support email with the reply in it, and if no email app opens it copies the report and shows the address
+- **Exports:** `sendTroyReport({ apiBase, token, userId, conversationId, message, reason })` answers `'sent'` or `'unavailable'`. `reportText` is the report as text and `reportEmailUrl` the mailto built from it. `reportContent` cuts the reply to the cap without splitting an emoji. Ids go to the API only as UUIDs, so a report on a daily brief or fallback reply goes without a message id instead of being refused. `REPORT_REASONS` ('offensive', 'wrong'), `SUPPORT_EMAIL`, `REPORT_CONTENT_MAX` (4000 characters of the reply), `REPORT_TIMEOUT_MS`
+- **Tests:** `node --test mobile-app/src/utils/troyReport.test.mjs`
+- **Last modified:** 2026-10-14
+
+### mobile-app/src/utils/accountDelete.js
+- **Purpose:** Deleting the account from inside the app, which Google Play and Apple's guideline 5.1.1(v) ask for. AccountScreen's Delete Account confirms, says a plan bought in the App Store or Google Play is the store's to cancel, and calls `DELETE /v1/account` with the Supabase session token. On success it signs out through App.js's `performSignOut`
+- **Exports:** `deleteAccount({ apiBase, token })` answers `{ kind: 'deleted' }` on 200, `'expired'` with no token or on 401, `{ kind: 'plan', message }` on 409 when a troystack.ai plan would charge again, `{ kind: 'retry', message }` on any other answer, and `{ kind: 'unknown', message }` on a timeout or no connection, since the server may have deleted the account before the answer was lost. `DELETE_TIMEOUT_MS` is thirty seconds
+- **Tests:** `node --test mobile-app/src/utils/accountDelete.test.mjs`
+- **Last modified:** 2026-10-14
+
 ### mobile-app/src/utils/webPlan.js
 - **Purpose:** Plans bought on troystack.ai. Asks the API's `GET /v1/stripe/my-plan` what Stripe holds for the signed-in account, so a web subscriber has Gold in the app and the app never writes free over a plan it didn't sell
 - **Exports:** `fetchWebPlan({ apiBase, token })` returns `'gold'`, `'lifetime'`, `null` for none, or `undefined` when it couldn't tell. `mergePlans({ rcGold, rcLifetime, rcTier, webPlan })` adds a web plan on top of RevenueCat. `readCachedWebPlan` and `cacheWebPlan` keep the last confirmed answer per account under `stack_web_plan_<userId>`, cleared at sign-out. `shouldRecheckWebPlan` decides the foreground re-check, `revenueCatAnswerCounts` says whether a customer info answer is about the person using the app, `revenueCatReadCounts` says the same for a read the app asked for itself (`checkEntitlements`), which also needs the account to be the one it was asked for, `revenueCatListenerCounts` says the same for the customer info listener, which also needs the account signed in after its wait to be the one it belongs to, `withTimeout` bounds the session read, `WEB_PLAN_TIMEOUT_MS` is six seconds
@@ -350,6 +362,7 @@ sidebarNavItems = [
 
 ### RevenueCat
 - **Apple API Key:** `appl_WDKPrWsOHfWzfJhxOGluQYsniLW` (public, in App.js)
+- **Google Play API Key:** `REVENUECAT_GOOGLE_KEY` near the top of App.js, empty until the Play app is added to the RevenueCat project. Android uses it and iOS the Apple key. With it empty, setup stops on Android and the app shows free. `checkTrialOrIntroductoryPriceEligibility` is iOS only, so Android shows no trial wording until the app reads Play's offers
 - **Products:** the App Store sells `monthly` ($4.99 a month), `yearly_gold` ($39.99 a year) and `lifetime_gold` (Lifetime Gold Pass, $99.99 once), per RevenueCat's catalog on 10/9. RevenueCat's Test Store has `monthly` and `lifetime`. Lifetime on troystack.ai goes through Stripe at its own price
 - **Entitlement:** `Gold` — any active subscription or lifetime
 - **User ID:** Tied to Supabase user ID via `loginRevenueCat(supabaseUser.id)`
@@ -430,6 +443,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 - `registerForPushNotifications()` in App.js
 - Sends `POST /v1/push/register` with `{ expo_push_token, platform, app_version, user_id, device_id }`
 - Triggered on auth + periodically on app foreground
+- Android creates the `default` channel before asking permission, since Android 13 and later shows the prompt only once a channel exists. Android push needs FCM: a `google-services.json` from the Firebase project, `android.googleServicesFile` in app.json and the FCM key in EAS. Until then `getExpoPushTokenAsync` throws on Android and registration stops quietly
 
 ### Notification Types
 | Type | Source | Trigger |
@@ -463,12 +477,13 @@ App Launch → Supabase session check → Biometric auth (optional)
 - **Entitlements:** App Groups (`group.com.stacktrackerpro.shared`), In-App Purchase, iCloud
 - **Splash:** Solid `#0A0A0E` background (no logo)
 - **Plugins:** `withWidgetNativeModule`, `@bacons/apple-targets`
+- **Android:** package `com.stacktrackerpro.app`. `RECORD_AUDIO` is requested for Troy's voice and isn't blocked. Android registers an empty React Native Track Player playback service at the top of App.js, since its player runs in a service that needs a registered task. The remote controls stay on the in-app handlers
 
 ### mobile-app/eas.json
 - **development:** iOS simulator + dev client
 - **preview:** Internal distribution
-- **production:** App Store submission with auto-submit
-- **Last modified:** 2026-03-01
+- **production:** App Store submission with auto-submit. Android builds an app bundle and EAS raises `android.versionCode` in app.json each build (`autoIncrement`, with `appVersionSource` local). `eas submit` sends Android to the Play internal track with `google-service-account.json`, which is gitignored
+- **Last modified:** 2026-10-14
 
 ### Backend Deployment
 - **Host:** Railway (auto-deploys from `main` branch)
@@ -497,6 +512,7 @@ App Launch → Supabase session check → Biometric auth (optional)
 | POST | `/v1/troy/conversations/:id/messages` | Send message, get Troy response |
 | POST | `/v1/troy/speak` | ElevenLabs TTS (voice caps enforced) |
 | POST | `/v1/troy/transcribe` | OpenAI Whisper STT (voice caps enforced) |
+| POST | `/v1/troy/report` | Report a Troy reply for review (asked of troystack-api 10/14, not live yet) |
 
 ### Prices & Data
 | Method | Route | Purpose |

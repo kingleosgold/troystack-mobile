@@ -48,6 +48,8 @@ local.properties
 
 # API Keys - NEVER commit these
 secrets.json
+# The Play Console service account key eas submit reads. It can publish to the store.
+google-service-account.json
 api-keys.txt
 
 # IDE

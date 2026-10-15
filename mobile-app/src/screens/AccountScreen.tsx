@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,19 @@ import {
   ScrollView,
   Alert,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { ProfileIcon, GoogleLogo, AppleLogo } from '../components/icons';
 import { logoutRevenueCat } from '../utils/entitlements';
+import { supabase } from '../lib/supabase';
+import { deleteAccount } from '../utils/accountDelete';
 
 interface AccountScreenProps {
+  apiBase: string;
   onClose: () => void;
-  onSignOut: () => void;
+  onSignOut: () => void | Promise<void>;
   hasGold: boolean;
   hasLifetime: boolean;
   colors: {
@@ -31,6 +35,7 @@ interface AccountScreenProps {
 }
 
 export default function AccountScreen({
+  apiBase,
   onClose,
   onSignOut,
   hasGold,
@@ -38,6 +43,7 @@ export default function AccountScreen({
   colors,
 }: AccountScreenProps) {
   const { user, linkedProviders, linkWithGoogle, linkWithApple, signOut } = useAuth();
+  const [deleting, setDeleting] = useState(false);
 
   const email = user?.email || 'Unknown';
 
@@ -58,11 +64,45 @@ export default function AccountScreen({
     onSignOut();
   };
 
+  // Deletes the account through DELETE /v1/account (src/utils/accountDelete.js),
+  // which Google Play and the App Store both ask for inside the app. A plan
+  // bought in the App Store or Google Play is the store's to cancel, so the
+  // confirm says so before anything is deleted.
+  const runDelete = async () => {
+    setDeleting(true);
+    let token = null;
+    try {
+      const { data } = await supabase.auth.getSession();
+      token = data?.session?.access_token || null;
+    } catch {}
+    const result = await deleteAccount({ apiBase, token });
+    setDeleting(false);
+    if (result.kind === 'deleted') {
+      // Signed out and cleared first, and waited for, so nothing of the
+      // deleted account is left on the phone if the app is closed while the
+      // alert is up.
+      await onSignOut();
+      Alert.alert('Account deleted', 'Your account and its synced data are gone.');
+    } else if (result.kind === 'expired') {
+      Alert.alert('Sign in again', 'Your session ran out. Sign out, sign back in, and then delete your account.');
+    } else if (result.kind === 'plan') {
+      Alert.alert('Cancel your plan first', result.message);
+    } else if (result.kind === 'unknown') {
+      Alert.alert('No answer yet', result.message);
+    } else {
+      Alert.alert('Not deleted', result.message);
+    }
+  };
+
   const handleDeleteAccount = () => {
+    if (deleting) return;
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account and all synced data. This action cannot be undone.\n\nTo delete your account, please contact support@troystack.com',
-      [{ text: 'OK' }]
+      'This permanently deletes your account, your holdings and your Troy conversations. It can\'t be undone.\n\nA Gold plan bought in the App Store or Google Play keeps billing until you cancel it in that store.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: runDelete },
+      ]
     );
   };
 
@@ -203,8 +243,12 @@ export default function AccountScreen({
         </TouchableOpacity>
 
         {/* Delete Account */}
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
-          <Text style={[styles.deleteText, { color: colors.muted }]}>Delete Account</Text>
+        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting}>
+          {deleting ? (
+            <ActivityIndicator color={colors.muted} />
+          ) : (
+            <Text style={[styles.deleteText, { color: colors.muted }]}>Delete Account</Text>
+          )}
         </TouchableOpacity>
 
         {/* Footer */}

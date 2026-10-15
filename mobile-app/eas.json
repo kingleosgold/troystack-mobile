@@ -44,7 +44,8 @@
       },
       "android": {
         "buildType": "app-bundle",
-        "gradleCommand": ":app:bundleRelease"
+        "gradleCommand": ":app:bundleRelease",
+        "autoIncrement": true
       },
       "env": {
         "API_URL": "https://api.stacktrackergold.com"
