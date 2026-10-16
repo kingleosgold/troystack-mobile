@@ -5408,7 +5408,7 @@ function AppContent() {
         : { deviceId: await getDeviceId() };
       const res = await fetch(`${API_BASE_URL}/v1/articles/${articleId}/view`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -5433,7 +5433,7 @@ function AppContent() {
     try {
       const res = await fetch(`${API_BASE_URL}/v1/articles/${articleId}/like`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: supabaseUser.id }),
       });
       const data = await res.json();
@@ -5451,7 +5451,9 @@ function AppContent() {
 
   const fetchArticleLikeStatus = async (articleId) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/v1/articles/${articleId}/likes?userId=${supabaseUser?.id || ''}`);
+      const res = await fetch(`${API_BASE_URL}/v1/articles/${articleId}/likes?userId=${supabaseUser?.id || ''}`, {
+        headers: await withSession(),
+      });
       const data = await res.json();
       if (data.like_count !== undefined) {
         setLikedArticles(prev => ({ ...prev, [articleId]: { liked: !!data.user_liked, count: data.like_count } }));
@@ -6139,6 +6141,12 @@ function AppContent() {
         const newConv = await troyAPI.createConversation();
         if (troySessionRef.current !== session) return;
         if (__DEV__) console.log('💬 [Troy] Created conversation:', newConv?.id, 'error:', newConv?.error);
+        // No id means the server refused or failed, so don't post to /conversations/undefined
+        if (!newConv?.id) {
+          if (!messageText) setTroyInputText(text);
+          Alert.alert('Troy', typeof newConv?.error === 'string' && newConv.error ? newConv.error : "Couldn't start a conversation. Try again.");
+          return;
+        }
         convId = newConv.id;
         setActiveConversationId(convId);
         setTroyConversations(prev => [newConv, ...prev]);
