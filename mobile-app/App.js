@@ -34,6 +34,7 @@ import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
+import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -1081,6 +1082,14 @@ const ICLOUD_HOLDINGS_KEY = 'stack_tracker_holdings.json';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'https://api.stacktrackergold.com';
+
+// Headers for an API call that names a user: the given headers plus the
+// signed-in session's token, which the API checks the user id against, or
+// no token when signed out (src/utils/sessionAuth.js).
+const withSession = async (headers = {}) => ({
+  ...headers,
+  ...(await sessionAuthHeader({ getSession: () => supabase.auth.getSession() })),
+});
 // RevenueCat's public Google Play key (goog_...). Empty until the Play app exists in RevenueCat.
 const REVENUECAT_GOOGLE_KEY = '';
 
@@ -4300,7 +4309,7 @@ function AppContent() {
 
         const response = await fetch(`${API_BASE_URL}/v1/push/register`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await withSession({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             expo_push_token: token,
             platform: Platform.OS,
@@ -4347,7 +4356,9 @@ function AppContent() {
   const fetchNotifPrefs = async () => {
     if (!supabaseUser?.id) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/push/notification-preferences?userId=${supabaseUser.id}`);
+      const response = await fetch(`${API_BASE_URL}/v1/push/notification-preferences?userId=${supabaseUser.id}`, {
+        headers: await withSession(),
+      });
       if (response.ok) {
         const data = await response.json();
         setNotifPrefs({
@@ -4369,7 +4380,7 @@ function AppContent() {
     try {
       await fetch(`${API_BASE_URL}/v1/push/notification-preferences`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: supabaseUser.id, ...updated }),
       });
     } catch (err) {
@@ -5271,29 +5282,34 @@ function AppContent() {
     async createConversation() {
       const res = await fetch(`${API_BASE_URL}/v1/troy/conversations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: supabaseUser?.id || null })
       });
       return res.json();
     },
     async listConversations() {
-      const res = await fetch(`${API_BASE_URL}/v1/troy/conversations?userId=${supabaseUser?.id || null}`);
+      const res = await fetch(`${API_BASE_URL}/v1/troy/conversations?userId=${supabaseUser?.id || null}`, {
+        headers: await withSession(),
+      });
       return res.json();
     },
     async getConversation(conversationId) {
-      const res = await fetch(`${API_BASE_URL}/v1/troy/conversations/${conversationId}?userId=${supabaseUser?.id || null}`);
+      const res = await fetch(`${API_BASE_URL}/v1/troy/conversations/${conversationId}?userId=${supabaseUser?.id || null}`, {
+        headers: await withSession(),
+      });
       return res.json();
     },
     async deleteConversation(conversationId) {
       const res = await fetch(`${API_BASE_URL}/v1/troy/conversations/${conversationId}?userId=${supabaseUser?.id || null}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: await withSession(),
       });
       return res.json();
     },
     async sendMessage(conversationId, message, signal) {
       const res = await fetch(`${API_BASE_URL}/v1/troy/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: supabaseUser?.id || null, message }),
         signal,
       });
@@ -5765,6 +5781,7 @@ function AppContent() {
 
       const response = await fetch(`${API_BASE_URL}/v1/troy/transcribe`, {
         method: 'POST',
+        headers: await withSession(),
         body: formData,
       });
       console.log('[Voice] STOP: Transcribe status:', response.status);
@@ -6383,7 +6400,9 @@ function AppContent() {
       const deviceId = await getDeviceId();
       const userId = supabaseUser?.id || null;
       const params = userId ? `user_id=${userId}&device_id=${deviceId}` : `device_id=${deviceId}`;
-      const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts?${params}`);
+      const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts?${params}`, {
+        headers: await withSession(),
+      });
       const result = await response.json();
 
       if (result.success && result.alerts) {
@@ -6409,7 +6428,7 @@ function AppContent() {
           try {
             const res = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: await withSession({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
                 id: alert.id,
                 userId: userId,
@@ -6453,7 +6472,7 @@ function AppContent() {
     try {
       const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           id: alertId,
           userId: supabaseUser?.id || null,
@@ -6569,7 +6588,10 @@ function AppContent() {
             const params = new URLSearchParams();
             if (supabaseUser?.id) params.append('user_id', supabaseUser.id);
             if (deviceId) params.append('device_id', deviceId);
-            await fetch(`${API_BASE_URL}/v1/push/price-alerts?${params.toString()}`, { method: 'DELETE' });
+            await fetch(`${API_BASE_URL}/v1/push/price-alerts?${params.toString()}`, {
+              method: 'DELETE',
+              headers: await withSession(),
+            });
           } catch (e) { /* silent */ }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         },
@@ -6705,7 +6727,7 @@ function AppContent() {
 
       const response = await fetch(`${API_BASE_URL}/v1/snapshots`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           userId: supabaseUser.id,
           totalValue,
@@ -7166,7 +7188,7 @@ function AppContent() {
           // Always fetch ALL data - we filter client-side
           const response = await fetch(
             `${API_BASE_URL}/v1/snapshots/${encodeURIComponent(supabaseUser.id)}?range=ALL`,
-            { signal: controller.signal }
+            { signal: controller.signal, headers: await withSession() }
           );
           clearTimeout(timeoutId);
 

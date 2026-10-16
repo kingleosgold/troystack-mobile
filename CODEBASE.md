@@ -164,6 +164,12 @@ Bottom sheet content for each preview type:
 - **Tests:** `node --test mobile-app/src/utils/profileWrites.test.mjs`
 - **Last modified:** 2026-10-09
 
+### mobile-app/src/utils/sessionAuth.js
+- **Purpose:** Puts the signed-in session's Supabase access token on every API call that names a user, so the API can check the user id against it (troystack-api `src/middleware/user-token.js`). Those calls are push registration, price alerts, notification preferences, Troy's conversations and messages, transcribe, and snapshots, all through `withSession(headers)` in App.js. Signed out, no token goes. Calls on one alert by its id name no user and go without it
+- **Exports:** `sessionAuthHeader({ getSession, timeoutMs })` answers `{ Authorization: 'Bearer <token>' }` while signed in and `{}` signed out, or when the session can't be read within `SESSION_TOKEN_TIMEOUT_MS` (3 seconds), so the call still goes
+- **Tests:** `node --test mobile-app/src/utils/sessionAuth.test.mjs`
+- **Last modified:** 2026-10-16
+
 ### mobile-app/src/utils/storeSync.js
 - **Purpose:** Asks the API to read the signed-in account's App Store plan from RevenueCat's REST API and write it to profiles, with `POST /v1/revenuecat/sync` and the Supabase session token, after `Purchases.logIn` resolves and after a restore. Once migration 006 guards the plan columns, that's how a guest's purchase, or one a restore moved to the account, reaches profiles. The app never writes the answer to profiles
 - **Exports:** `requestStoreSync({ apiBase, token })` answers `{ kind: 'plan', tier, expiresAt }` on 200, `'expired'` on 401, `'not-ready'` on 404 or 503 (ignored), and `'retry'` on 429, 500, a timeout or no connection (tried again next launch). `syncStorePlanFor({ userId, getSession, stillSignedIn, apiBase })` asks only with that account's own session and drops an answer that comes back once another account is signed in. `strongerPlan` adds the server's plan to the web plan's, and `oncePerAccount` limits the sync after sign-in to once per account per sign-in, with `reset()` at sign-out so the same account syncs again after a guest purchase or restore
