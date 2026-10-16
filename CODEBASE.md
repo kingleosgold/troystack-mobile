@@ -165,7 +165,7 @@ Bottom sheet content for each preview type:
 - **Last modified:** 2026-10-09
 
 ### mobile-app/src/utils/sessionAuth.js
-- **Purpose:** Puts the signed-in session's Supabase access token on every API call that names a user, so the API can check the user id against it (troystack-api `src/middleware/user-token.js`). Those calls are push registration, price alerts, notification preferences, Troy's conversations and messages, transcribe, Troy's spoken replies (`/v1/troy/speak`), and snapshots, all through `withSession(headers)` in App.js. Signed out, no token goes. Calls on one alert by its id name no user and go without it
+- **Purpose:** Puts the signed-in session's Supabase access token on every API call that names a user, so the API can check the user id against it (troystack-api `src/middleware/user-token.js`). Those calls are push registration, price alerts, notification preferences, Troy's conversations and messages, transcribe, Troy's spoken replies (`/v1/troy/speak`), snapshots, and a Signal article's view, like and like status (`/v1/articles/:id/...`), all through `withSession(headers)` in App.js. Signed out, no token goes. Calls on one alert by its id name no user and go without it
 - **Exports:** `sessionAuthHeader({ getSession, timeoutMs })` answers `{ Authorization: 'Bearer <token>' }` while signed in and `{}` signed out, or when the session can't be read within `SESSION_TOKEN_TIMEOUT_MS` (3 seconds), so the call still goes
 - **Tests:** `node --test mobile-app/src/utils/sessionAuth.test.mjs`
 - **Last modified:** 2026-10-16
