@@ -197,7 +197,7 @@ Your privacy policy should emphasize:
 
 The app supports a freemium model with in-app purchases:
 
-| Feature | Free | TroyStack Gold Monthly ($4.99/mo) | TroyStack Gold Yearly ($39.99/yr) | Lifetime Gold Pass ($149.99 one-time) |
+| Feature | Free | TroyStack Gold Monthly ($4.99/mo) | TroyStack Gold Yearly ($39.99/yr) | Lifetime Gold Pass ($99.99 one-time) |
 |---------|------|-----------------------------------|-----------------------------------|--------------------------------------|
 | Manual entry | 10 items | Unlimited | Unlimited | Unlimited |
 | Receipt scanning | ❌ | Unlimited | Unlimited | Unlimited |
