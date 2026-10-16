@@ -5888,7 +5888,7 @@ function AppContent() {
       // Audio.Sound migration switched to streaming and broke voice.
       const response = await fetch(`${API_BASE_URL}/v1/troy/speak`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text: truncatedText, userId }),
       });
       tFetch = Date.now();
