@@ -27,7 +27,6 @@ import { Audio, InterruptionModeIOS } from 'expo-av';
 import { setAudioModeAsync as setAudioModeAsyncV2 } from 'expo-audio';
 import TrackPlayer, { Capability, Event, State } from 'react-native-track-player';
 import Purchases from 'react-native-purchases';
-import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
 import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
@@ -41,6 +40,7 @@ import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, li
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
+import { checkMinVersion } from './src/utils/minVersion';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -1130,16 +1130,6 @@ const useSwipeBack = (onClose) => {
       return false;
     },
   });
-};
-
-const isVersionBelow = (current, minimum) => {
-  const cur = current.split('.').map(Number);
-  const min = minimum.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((cur[i] || 0) < (min[i] || 0)) return true;
-    if ((cur[i] || 0) > (min[i] || 0)) return false;
-  }
-  return false;
 };
 
 /**
@@ -3442,32 +3432,14 @@ function AppContent() {
     let _authOk = false;
     let _authError;
     try {
-      // Minimum version check — fail open
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const versionRes = await fetch('https://api.stacktrackergold.com/v1/min-version', {
-          signal: controller.signal
-        });
-        clearTimeout(timeout);
-        if (versionRes.ok) {
-          const versionData = await versionRes.json();
-          const platform = Platform.OS;
-          const platformData = versionData[platform];
-          if (versionData.enforced && platformData && isVersionBelow(appVersion, platformData.minVersion)) {
-            setForceUpdate({
-              message: versionData.message,
-              storeUrl: platformData.store_url
-            });
-            _authError = 'force_update_required';
-            logLifecycleEvent('app:authenticate_end', { ok: false, method: 'skipped', error: _authError });
-            return; // Stop all further initialization — app is blocked
-          }
+      // Minimum version check runs beside launch so a slow network never holds the
+      // loading screen. An enforced update still covers the app when it answers.
+      checkMinVersion({ fetchFn: fetch, platform: Platform.OS, appVersion }).then((update) => {
+        if (update) {
+          setForceUpdate(update);
+          logLifecycleEvent('app:force_update_required');
         }
-      } catch (e) {
-        // Fail open — if endpoint is unreachable, let the user in
-        console.log('Version check skipped:', e.message);
-      }
+      });
 
       // Wrap all authentication in defensive try-catch
       let shouldAuthenticate = false;
@@ -8753,6 +8725,8 @@ function AppContent() {
       }
 
       // Parse with XLSX - use raw:true to prevent date conversion to serial numbers
+      // Loaded on first import so the spreadsheet parser stays out of cold start
+      const XLSX = require('xlsx');
       const workbook = XLSX.read(bytes, { type: 'array', cellDates: true, raw: false });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
@@ -10051,6 +10025,80 @@ function AppContent() {
       </SafeAreaView>
     );
   }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics, supabaseUser, planForPrompts]);
+  // An enforced update covers every screen, the loading screen included
+  if (forceUpdate) {
+    return (
+      <View style={[styles.container, { backgroundColor: '#0A0A0E' }]}>
+        <StatusBar barStyle="light-content" />
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {}}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.95)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 32,
+          }}>
+            <View style={{
+              backgroundColor: '#1a1a1a',
+              borderRadius: 16,
+              padding: 32,
+              width: '100%',
+              maxWidth: 340,
+              alignItems: 'center',
+            }}>
+              <Text style={{
+                color: '#C9A84C',
+                fontSize: 22,
+                fontWeight: '700',
+                marginBottom: 16,
+                textAlign: 'center',
+              }}>
+                Update Required
+              </Text>
+              <Text style={{
+                color: '#ccc',
+                fontSize: 15,
+                lineHeight: 22,
+                textAlign: 'center',
+                marginBottom: 28,
+              }}>
+                {forceUpdate.message}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (forceUpdate.storeUrl) {
+                    Linking.openURL(forceUpdate.storeUrl);
+                  }
+                }}
+                style={{
+                  backgroundColor: '#C9A84C',
+                  borderRadius: 8,
+                  paddingVertical: 14,
+                  paddingHorizontal: 40,
+                  width: '100%',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{
+                  color: '#000',
+                  fontSize: 16,
+                  fontWeight: '700',
+                }}>
+                  Update Now
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  }
+
   if (showResetPasswordScreen) {
     return (
       <View style={[styles.container, { backgroundColor: '#09090b' }]}>
@@ -16167,73 +16215,6 @@ function AppContent() {
 
       {/* Old custom drawer removed — replaced by React Navigation drawer */}
 
-      {forceUpdate && (
-        <Modal
-          visible={true}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => {}}
-        >
-          <View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.95)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 32,
-          }}>
-            <View style={{
-              backgroundColor: '#1a1a1a',
-              borderRadius: 16,
-              padding: 32,
-              width: '100%',
-              maxWidth: 340,
-              alignItems: 'center',
-            }}>
-              <Text style={{
-                color: '#C9A84C',
-                fontSize: 22,
-                fontWeight: '700',
-                marginBottom: 16,
-                textAlign: 'center',
-              }}>
-                Update Required
-              </Text>
-              <Text style={{
-                color: '#ccc',
-                fontSize: 15,
-                lineHeight: 22,
-                textAlign: 'center',
-                marginBottom: 28,
-              }}>
-                {forceUpdate.message}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  if (forceUpdate.storeUrl) {
-                    Linking.openURL(forceUpdate.storeUrl);
-                  }
-                }}
-                style={{
-                  backgroundColor: '#C9A84C',
-                  borderRadius: 8,
-                  paddingVertical: 14,
-                  paddingHorizontal: 40,
-                  width: '100%',
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{
-                  color: '#000',
-                  fontSize: 16,
-                  fontWeight: '700',
-                }}>
-                  Update Now
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-      )}
     </SafeAreaView>
         )}
       </Drawer.Screen>
