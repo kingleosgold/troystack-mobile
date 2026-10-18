@@ -6,7 +6,7 @@
  * imports React Native, so it runs under `node --test`.
  */
 
-import { TROY_GOLD_DAILY_QUESTIONS, trialLabel } from './goldOffer.js';
+import { TROY_GOLD_DAILY_QUESTIONS, TROY_FREE_DAILY_QUESTIONS, trialLabel } from './goldOffer.js';
 
 const NY = 'America/New_York';
 
@@ -182,4 +182,53 @@ export function guestLimitPrompt(quota, now = new Date()) {
     message: `${limit ? `That's today's ${limit} free questions.` : "That's today's free questions."} They come back ${troyResetLabel(quota?.resetsAt, now)}. A free account gets you three more a day, with your stack in context.`,
     action: 'Create a free account',
   };
+}
+
+// ── The chat around the replies ───────────────────────────────────
+
+/** The chat header's line for a free account, as troystack.ai says it. */
+export const FREE_PLAN_LINE = `Free plan, ${TROY_FREE_DAILY_QUESTIONS} a day`;
+
+/**
+ * The time under one of Troy's replies, on the phone's own clock, as the
+ * webapp's timeLabel in src/ui/TroyChat.tsx shows it. Empty without one.
+ */
+export function replyTimeLabel(iso) {
+  const d = new Date(iso || NaN);
+  return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+}
+
+const DAY_MS = 86400000;
+
+/**
+ * Chats newest first and grouped Today, Yesterday, This week and Earlier,
+ * the same as groupConversations in the webapp's src/routes/Troy.tsx. This
+ * week is the five days before yesterday. Empty groups are left out.
+ */
+export function groupConversations(list, now = new Date()) {
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const when = (c) => new Date(c?.updated_at || c?.created_at).getTime() || 0;
+  const sorted = (Array.isArray(list) ? list : []).slice().sort((a, b) => when(b) - when(a));
+  const groups = [
+    { label: 'Today', items: [] },
+    { label: 'Yesterday', items: [] },
+    { label: 'This week', items: [] },
+    { label: 'Earlier', items: [] },
+  ];
+  for (const c of sorted) {
+    const t = when(c);
+    if (t >= startToday) groups[0].items.push(c);
+    else if (t >= startToday - DAY_MS) groups[1].items.push(c);
+    else if (t >= startToday - 6 * DAY_MS) groups[2].items.push(c);
+    else groups[3].items.push(c);
+  }
+  return groups.filter((g) => g.items.length);
+}
+
+// A free account sees its newest few chats, on the web and in the app.
+export const FREE_CHAT_HISTORY = 3;
+
+/** The note under a free account's chats when some are held back. */
+export function chatHistoryNote(count) {
+  return `You have ${count} chats with Troy. Gold keeps every one of them, on the web and in the app.`;
 }

@@ -36,7 +36,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
-import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt } from './src/utils/troyChat';
+import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -9860,28 +9860,6 @@ function AppContent() {
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: false }), 50);
   };
 
-  // Group conversations by date
-  const groupConversationsByDate = (convos) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-    const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 7);
-    const groups = [];
-    const todayItems = [], yesterdayItems = [], weekItems = [], earlierItems = [];
-    for (const c of convos) {
-      const d = new Date(c.updated_at || c.created_at);
-      if (d >= today) todayItems.push(c);
-      else if (d >= yesterday) yesterdayItems.push(c);
-      else if (d >= weekAgo) weekItems.push(c);
-      else earlierItems.push(c);
-    }
-    if (todayItems.length) groups.push({ label: 'Today', items: todayItems });
-    if (yesterdayItems.length) groups.push({ label: 'Yesterday', items: yesterdayItems });
-    if (weekItems.length) groups.push({ label: 'This Week', items: weekItems });
-    if (earlierItems.length) groups.push({ label: 'Earlier', items: earlierItems });
-    return groups;
-  };
-
   // CustomSidebar — rendered by React Navigation drawer
   const renderCustomSidebar = useCallback((drawerProps) => {
     // Store drawer navigation for use in header ☰ button
@@ -9890,8 +9868,12 @@ function AppContent() {
     }
 
     console.log('[Troy] Sidebar rendering, conversations:', troyConversations.length);
-    const conversationGroups = groupConversationsByDate(troyConversations);
     const isGoldUser = hasGoldAccess;
+    // A free account sees its newest few chats, as on troystack.ai. One whose
+    // plan isn't known yet may have Gold, so nothing is held back until it is.
+    const shownChats = planForPrompts !== 'free' ? troyConversations : groupConversations(troyConversations).flatMap((g) => g.items).slice(0, FREE_CHAT_HISTORY);
+    const hiddenChats = troyConversations.length - shownChats.length;
+    const conversationGroups = groupConversations(shownChats);
 
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0E' }}>
@@ -9959,66 +9941,48 @@ function AppContent() {
           <Text style={{ color: '#71717a', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>Recents</Text>
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
             {troyConversations.length === 0 ? (
-              <Text style={{ color: '#52525b', fontSize: 13, textAlign: 'center', marginTop: 20, paddingHorizontal: 16 }}>No conversations yet. Tap + to start.</Text>
-            ) : isGoldUser ? (
-              conversationGroups.map((group) => (
-                <View key={group.label}>
-                  <Text style={{ color: '#52525b', fontSize: 11, fontWeight: '600', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{group.label}</Text>
-                  {group.items.map((conv) => (
-                    <TouchableOpacity
-                      key={conv.id}
-                      onPress={() => {
-                        loadConversation(conv.id);
-                        setCurrentScreen('TroyChat');
-                        drawerProps.navigation.closeDrawer();
-                      }}
-                      onLongPress={() => {
-                        Alert.alert('Delete Conversation', 'Are you sure?', [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Delete', style: 'destructive', onPress: () => deleteConversation(conv.id) },
-                        ]);
-                      }}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 10,
-                        paddingHorizontal: 16, paddingVertical: 10,
-                        backgroundColor: conv.id === activeConversationId ? 'rgba(201,168,76,0.08)' : 'transparent',
-                      }}
-                    >
-                      <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
-                      <Text style={{ color: conv.id === activeConversationId ? '#C9A84C' : '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>
-                        {conv.title || 'New conversation'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ))
+              <Text style={{ color: '#52525b', fontSize: 13, textAlign: 'center', marginTop: 20, paddingHorizontal: 16 }}>{supabaseUser ? 'Your chats with Troy show up here, on the web and in the app.' : 'No conversations yet. Tap + to start.'}</Text>
             ) : (
-              // Free users: show last 3, then upgrade CTA
               <>
-                {troyConversations.slice(0, 3).map((conv) => (
-                  <TouchableOpacity
-                    key={conv.id}
-                    onPress={() => {
-                      loadConversation(conv.id);
-                      setCurrentScreen('TroyChat');
-                      drawerProps.navigation.closeDrawer();
-                    }}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, opacity: 0.6 }}
-                  >
-                    <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
-                    <Text style={{ color: '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>{conv.title || 'New conversation'}</Text>
-                  </TouchableOpacity>
+                {conversationGroups.map((group) => (
+                  <View key={group.label}>
+                    <Text style={{ color: '#52525b', fontSize: 11, fontWeight: '600', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{group.label}</Text>
+                    {group.items.map((conv) => (
+                      <TouchableOpacity
+                        key={conv.id}
+                        onPress={() => {
+                          loadConversation(conv.id);
+                          setCurrentScreen('TroyChat');
+                          drawerProps.navigation.closeDrawer();
+                        }}
+                        onLongPress={isGoldUser ? () => {
+                          Alert.alert('Delete Conversation', 'Are you sure?', [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Delete', style: 'destructive', onPress: () => deleteConversation(conv.id) },
+                          ]);
+                        } : undefined}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 10,
+                          paddingHorizontal: 16, paddingVertical: 10,
+                          backgroundColor: conv.id === activeConversationId ? 'rgba(201,168,76,0.08)' : 'transparent',
+                        }}
+                      >
+                        <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
+                        <Text style={{ color: conv.id === activeConversationId ? '#C9A84C' : '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>
+                          {conv.title || 'New chat'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 ))}
-                {troyConversations.length > 3 && (
+                {hiddenChats > 0 && (
                   <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-                    <Text style={{ color: '#71717a', fontSize: 13, lineHeight: 18 }}>
-                      You had {troyConversations.length} conversations with Troy. Upgrade to Gold to save and resume them.
-                    </Text>
+                    <Text style={{ color: '#71717a', fontSize: 13, lineHeight: 18 }}>{chatHistoryNote(troyConversations.length)}</Text>
                     <TouchableOpacity
                       onPress={() => { drawerProps.navigation.closeDrawer(); setShowPaywallModal(true); }}
                       style={{ marginTop: 8, backgroundColor: '#C9A84C', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}
                     >
-                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Upgrade for $4.99 a month</Text>
+                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>See Gold</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -10086,7 +10050,7 @@ function AppContent() {
         </View>
       </SafeAreaView>
     );
-  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics]);
+  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics, supabaseUser, planForPrompts]);
   if (showResetPasswordScreen) {
     return (
       <View style={[styles.container, { backgroundColor: '#09090b' }]}>
@@ -10210,7 +10174,14 @@ function AppContent() {
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginLeft: 6 }} />
                     )}
                   </View>
-                  <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : (!supabaseUser && guestQuestionsLine(guestTroyQuota)) || 'Your Stack Analyst'}</Text>
+                  {/* A free account sees its plan as troystack.ai shows it, and a tap opens Gold. */}
+                  {voiceState === 'idle' && supabaseUser && planForPrompts === 'free' ? (
+                    <TouchableOpacity onPress={() => setShowPaywallModal(true)} activeOpacity={0.7} accessibilityRole="button">
+                      <Text style={{ color: '#D4A843', fontSize: 12, fontWeight: '600' }}>{FREE_PLAN_LINE}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : (!supabaseUser && guestQuestionsLine(guestTroyQuota)) || 'Your Stack Analyst'}</Text>
+                  )}
                 </View>
               </View>
             </>
@@ -13330,6 +13301,9 @@ function AppContent() {
                   {/* Troy Voice pause, resume or listen per message, and Report */}
                   {item.role === 'assistant' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {!!replyTimeLabel(item.created_at) && (
+                      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 6, paddingLeft: 4, paddingRight: 4 }}>{replyTimeLabel(item.created_at)}</Text>
+                    )}
                     <TouchableOpacity
                       onPress={async () => {
                         if (playingMessageId === item.id && !isPaused) {

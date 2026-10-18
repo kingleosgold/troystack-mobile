@@ -118,3 +118,44 @@ test('guestQuestionsLeft forgets a count once its reset time has passed', async 
   assert.equal(guestQuestionsLeft(quota, new Date('2026-10-19T13:05:00Z')), null);
   assert.equal(guestQuestionsLine(quota, new Date('2026-10-19T14:00:00Z')), null);
 });
+
+test('the free plan line says what troystack.ai says', async () => {
+  const { FREE_PLAN_LINE } = await import('./troyChat.js');
+  assert.equal(FREE_PLAN_LINE, 'Free plan, 3 a day');
+});
+
+test('replyTimeLabel shows the time of a reply and nothing without one', async () => {
+  const { replyTimeLabel } = await import('./troyChat.js');
+  const d = new Date(2026, 9, 18, 14, 5);
+  assert.equal(replyTimeLabel(d.toISOString()), '2:05 PM');
+  assert.equal(replyTimeLabel(undefined), '');
+  assert.equal(replyTimeLabel('nope'), '');
+});
+
+test('groupConversations groups newest first the way the webapp does', async () => {
+  const { groupConversations } = await import('./troyChat.js');
+  const now = new Date(2026, 9, 18, 15, 0);
+  const at = (days, hour = 9) => new Date(2026, 9, 18 - days, hour).toISOString();
+  const list = [
+    { id: 'old', updated_at: at(30) },
+    { id: 'today-early', updated_at: at(0, 8) },
+    { id: 'yday', created_at: at(1) },
+    { id: 'six', updated_at: at(6) },
+    { id: 'seven', updated_at: at(7) },
+    { id: 'today-late', updated_at: at(0, 14) },
+    { id: 'none' },
+  ];
+  const groups = groupConversations(list, now);
+  assert.deepEqual(groups.map((g) => g.label), ['Today', 'Yesterday', 'This week', 'Earlier']);
+  assert.deepEqual(groups[0].items.map((c) => c.id), ['today-late', 'today-early']);
+  assert.deepEqual(groups[1].items.map((c) => c.id), ['yday']);
+  assert.deepEqual(groups[2].items.map((c) => c.id), ['six']);
+  assert.deepEqual(groups[3].items.map((c) => c.id), ['seven', 'old', 'none']);
+  assert.deepEqual(groupConversations([], now), []);
+  assert.deepEqual(groupConversations(null, now), []);
+});
+
+test('chatHistoryNote counts the chats a free account has', async () => {
+  const { chatHistoryNote } = await import('./troyChat.js');
+  assert.equal(chatHistoryNote(5), 'You have 5 chats with Troy. Gold keeps every one of them, on the web and in the app.');
+});
