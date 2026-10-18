@@ -37,7 +37,7 @@ import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/stor
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { GUEST_MODE_KEY, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
+import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
@@ -3534,7 +3534,7 @@ function AppContent() {
         AsyncStorage.getItem('stack_platinum_spot'),
         AsyncStorage.getItem('stack_palladium_spot'),
         AsyncStorage.getItem('stack_price_timestamp'),
-        AsyncStorage.getItem('stack_has_seen_tutorial'),
+        AsyncStorage.getItem(SEEN_FIRST_LAUNCH_KEY),
         AsyncStorage.getItem('stack_theme_preference'),
         AsyncStorage.getItem('stack_spot_change_display_mode'),
         AsyncStorage.getItem('stack_large_text'),
@@ -3592,8 +3592,15 @@ function AppContent() {
         setLastReachedGoldMilestone(parseFloat(storedLastGoldReached));
       }
 
-      // A guest stays a guest across launches, with their holdings saved on this phone
-      setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser));
+      // A guest stays a guest across launches, with their holdings saved on this phone.
+      // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
+      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial);
+      setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
+      if (firstLaunch) {
+        AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
+          if (__DEV__) console.error('Failed to save first launch:', error);
+        });
+      }
 
       // Load hide widget values preference
       if (storedHideWidgetValues === 'true') {
@@ -3611,8 +3618,8 @@ function AppContent() {
         } catch (e) { if (__DEV__) console.error('Failed to parse ai_consent'); }
       }
 
-      // Show tutorial if user hasn't seen it
-      if (!hasSeenTutorial) {
+      // Show tutorial if user hasn't seen it, never on a first launch
+      if (!hasSeenTutorial && !firstLaunch) {
         setShowTutorial(true);
       }
 
@@ -5266,7 +5273,7 @@ function AppContent() {
   // Tutorial completion handler
   const handleTutorialComplete = async () => {
     try {
-      await AsyncStorage.setItem('stack_has_seen_tutorial', 'true');
+      await AsyncStorage.setItem(SEEN_FIRST_LAUNCH_KEY, 'true');
       setShowTutorial(false);
     } catch (error) {
       if (__DEV__) console.error('Error saving tutorial status:', error);
@@ -10059,8 +10066,8 @@ function AppContent() {
         </View>
       </View>
 
-      {/* Guest Mode Banner */}
-      {guestMode && !supabaseUser && (
+      {/* Guest Mode Banner, once there's a stack worth backing up */}
+      {guestMode && !supabaseUser && (silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length) > 0 && (
         <TouchableOpacity
           onPress={() => disableGuestMode()}
           style={{
