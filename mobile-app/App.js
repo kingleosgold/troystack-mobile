@@ -6228,7 +6228,10 @@ function AppContent() {
       if (isQuotaRefusal(response)) {
         setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
         setTroyLoading(false);
-        if (!messageText) setTroyInputText(text);
+        // No answer is coming, so a spoken question's autoplay is dropped, and
+        // the question, typed or spoken, goes back in the box to ask again.
+        autoPlayNextResponseRef.current = false;
+        setTroyInputText(text);
         showTroyLimit(response);
         return;
       }

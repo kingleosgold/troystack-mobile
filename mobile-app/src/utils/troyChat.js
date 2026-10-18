@@ -43,6 +43,13 @@ function dayET(d) {
   return d.toLocaleDateString('en-CA', { timeZone: NY });
 }
 
+// The calendar day after a YYYY-MM-DD date. Counted on the calendar, not as
+// 24 hours, since a day with a clock change is 23 or 25.
+function nextDay(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
 /**
  * When the questions come back, as the webapp's LimitCard says it: "at 9:14
  * PM ET", "tomorrow at 9:14 PM ET" or "Tuesday at 9:14 PM ET". Without a time
@@ -53,7 +60,7 @@ export function troyResetLabel(iso, now = new Date()) {
   if (!Number.isFinite(t.getTime())) return 'tomorrow';
   const time = timeET(t);
   if (dayET(t) === dayET(now)) return `at ${time}`;
-  if (dayET(t) === dayET(new Date(now.getTime() + 86400000))) return `tomorrow at ${time}`;
+  if (dayET(t) === nextDay(dayET(now))) return `tomorrow at ${time}`;
   return `${t.toLocaleDateString('en-US', { weekday: 'long', timeZone: NY })} at ${time}`;
 }
 

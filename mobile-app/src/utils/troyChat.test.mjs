@@ -30,6 +30,13 @@ test('troyResetLabel says when the questions come back in New York time', () => 
   assert.equal(troyResetLabel('nope', now), 'tomorrow');
 });
 
+test('troyResetLabel counts tomorrow on the calendar across the clock change', () => {
+  // 12:30 AM EDT on November 1, 2026, the night the clocks fall back.
+  const now = new Date('2026-11-01T04:30:00Z');
+  assert.equal(troyResetLabel('2026-11-02T14:00:00Z', now), 'tomorrow at 9:00 AM ET');
+  assert.equal(troyResetLabel('2026-12-31T14:00:00Z', new Date('2026-12-30T15:00:00Z')), 'tomorrow at 9:00 AM ET');
+});
+
 test('troyLimitPrompt pitches Gold to a free account and the trial only when there is one', () => {
   const now = new Date('2026-10-18T14:00:00Z');
   const quota = { questionsLimit: 3, resetsAt: '2026-10-19T13:05:00Z' };
