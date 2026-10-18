@@ -5,6 +5,13 @@
  */
 
 import 'react-native-reanimated';
+// metro.config.js turns on inline requires, which load a module on first use.
+// These three have to run at launch: the gesture handler sets itself up, the
+// URL polyfill fills in globals before any fetch builds a URL, and the
+// background task has to be defined before iOS wakes the app to run it.
+import 'react-native-gesture-handler';
+import 'react-native-url-polyfill/auto';
+import './src/utils/backgroundTasks';
 import React, { useState, useEffect, useRef, Component, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
