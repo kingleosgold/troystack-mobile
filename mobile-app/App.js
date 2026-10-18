@@ -3474,15 +3474,12 @@ function AppContent() {
       // Only update state and load data if authentication succeeded or was skipped
       if (shouldAuthenticate) {
         setIsAuthenticated(true);
-        // Wrap loadData in setTimeout to ensure state update completes first
-        logLifecycleEvent('app:setTimeout_50ms_scheduled');
-        setTimeout(() => {
-          logLifecycleEvent('app:setTimeout_50ms_fired');
-          loadData().catch(err => {
-            if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
-            setIsLoading(false); // Still hide loading even if data fails
-          });
-        }, 50);
+        // loadData's first step is an await on storage, so the state update
+        // above lands without a timer in front of it.
+        loadData().catch(err => {
+          if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
+          setIsLoading(false); // Still hide loading even if data fails
+        });
       }
     } catch (e) {
       if (__DEV__) console.error('authenticate outer catch:', e?.message || e);
@@ -3622,10 +3619,11 @@ function AppContent() {
         durationMs: Date.now() - _loadDataStart,
       });
 
-      // Delay fetchSpotPrices to not block the main thread
-      logLifecycleEvent('app:setTimeout_100ms_scheduled');
-      setTimeout(() => {
-        logLifecycleEvent('app:setTimeout_100ms_fired');
+      // Live prices start now. fetchSpotPrices is async and its first step is
+      // the network call, so nothing here waits on it. It still starts after
+      // the cached prices above are set, so a cached price never lands over a
+      // live one.
+      {
         logLifecycleEvent('app:initial_spot_fetch_start');
         const _spotStart = Date.now();
         // fetchSpotPrices swallows errors internally, so promise resolution
@@ -3645,7 +3643,7 @@ function AppContent() {
           logLifecycleEvent('app:initial_spot_fetch_end', { ok: false, durationMs: Date.now() - _spotStart, error: err?.message || String(err) });
           if (__DEV__ && err?.name !== 'AbortError') console.error('fetchSpotPrices failed:', err?.message);
         });
-      }, 100);
+      }
     } catch (error) {
       if (__DEV__) console.error('Error loading data:', error?.message || error);
       logLifecycleEvent('app:load_data_end', {
