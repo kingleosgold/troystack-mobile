@@ -9593,14 +9593,10 @@ function AppContent() {
     });
   };
 
-  // Helper to disable guest mode (when user signs in)
-  const disableGuestMode = async () => {
+  // Helper to show the sign-in screen from guest mode. The stored flag stays
+  // until sign-in succeeds, so backing out keeps the guest stack next launch
+  const disableGuestMode = () => {
     setGuestMode(false);
-    try {
-      await AsyncStorage.removeItem(GUEST_MODE_KEY);
-    } catch (error) {
-      if (__DEV__) console.error('Failed to remove guest mode:', error);
-    }
   };
 
   // Handle successful auth from AuthScreen
@@ -9608,6 +9604,9 @@ function AppContent() {
   const handleAuthSuccess = () => {
     setShowAuthScreen(false);
     disableGuestMode();
+    AsyncStorage.removeItem(GUEST_MODE_KEY).catch((error) => {
+      if (__DEV__) console.error('Failed to remove guest mode:', error);
+    });
     setNeedsPostSignInSync(true); // Show loading until sync completes
   };
 
