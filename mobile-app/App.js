@@ -36,6 +36,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
+import { plainDashes, isQuotaRefusal, troyLimitPrompt } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -5521,6 +5522,8 @@ function AppContent() {
 
   const loadConversation = async (conversationId) => {
     const session = ++troySessionRef.current;
+    // Another chat doesn't hold the answer the free week offer was waiting on.
+    setTroyAnswered(false);
     setTroyLoading(true);
     try {
       const data = await troyAPI.getConversation(conversationId);
@@ -5533,9 +5536,21 @@ function AppContent() {
     if (troySessionRef.current === session) setTroyLoading(false);
   };
 
+  // Troy's questions for the day are used up. Said the way troystack.ai's
+  // limit card says it, and only an account known to be free is pitched Gold.
+  const showTroyLimit = (quota) => {
+    const prompt = troyLimitPrompt({ quota, plan: planForPrompts, trial: trialForPrompts });
+    Alert.alert(prompt.title, prompt.message, prompt.action ? [
+      { text: 'Not now', style: 'cancel' },
+      { text: prompt.action, onPress: () => openGoldScreen(trialForPrompts?.cycle) },
+    ] : undefined);
+  };
+
   const startNewConversation = () => {
     // Drop any send or load still in flight so it can't refill this chat.
     troySessionRef.current += 1;
+    // The free week offer waits on an answer on screen, and a new chat has none.
+    setTroyAnswered(false);
     if (troyAbortRef.current) {
       troyAbortRef.current.abort();
       troyAbortRef.current = null;
@@ -5563,6 +5578,7 @@ function AppContent() {
       if (activeConversationId === conversationId) {
         setActiveConversationId(null);
         setTroyMessages([]);
+        setTroyAnswered(false);
       }
     } catch (e) {
       console.error('Failed to delete conversation:', e);
@@ -6148,7 +6164,7 @@ function AppContent() {
     const isPaidUser = hasGoldAccess || userTier === 'gold' || userTier === 'lifetime' || hasLifetimeAccess;
     console.log('[Troy] Tier check:', { hasGold, hasLifetimeAccess, hasGoldAccess, userTier, isPaidUser, questions: advisorQuestionsToday });
     if (!isPaidUser && advisorQuestionsToday >= TROY_FREE_LIMIT) {
-      setShowPaywallModal(true);
+      showTroyLimit({ questionsLimit: TROY_FREE_LIMIT });
       return;
     }
 
@@ -6206,6 +6222,16 @@ function AppContent() {
       if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
+
+      // The day's questions are used up on the server's count, which the
+      // webapp shares, so it can come before the phone's own count does.
+      if (isQuotaRefusal(response)) {
+        setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+        setTroyLoading(false);
+        if (!messageText) setTroyInputText(text);
+        showTroyLimit(response);
+        return;
+      }
 
       // Handle API error responses (e.g. profanity filter, server error)
       if (response.error && !response.message?.content) {
@@ -13113,7 +13139,7 @@ function AppContent() {
                         bullet_list: { marginTop: 2, marginBottom: 2 },
                         ordered_list: { marginTop: 2, marginBottom: 2 },
                         list_item: { marginTop: 1, marginBottom: 1 },
-                      }}>{item.content}</Markdown>
+                      }}>{plainDashes(item.content)}</Markdown>
                     )}
                     {/* Inline rich content card — renders inside the bubble */}
                     {item.role === 'assistant' && item.preview && renderInlineCard(item.preview, openPreview)}
