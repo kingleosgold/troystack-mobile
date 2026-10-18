@@ -4932,7 +4932,7 @@ function AppContent() {
   // by sync, restore or a launch never set it.
   const [firstHoldingAdded, setFirstHoldingAdded] = useState(false);
   // The sheet, with the trial it offered.
-  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null });
+  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null, guest: false });
   const [alertOpen, setAlertOpen] = useState(() => alertWatch.isOpen());
   const [appActive, setAppActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -5004,7 +5004,6 @@ function AppContent() {
   const freeWeekOfferBlock = freeWeekOfferBlocker({
     shownBefore: freeWeekOfferShown,
     firstHoldingAdded,
-    guest: !supabaseUser,
     goldScreenSeen,
     planKnown: !subscriptionLoading && planForPrompts !== 'unknown',
     paid: planForPrompts === 'paid',
@@ -5056,7 +5055,7 @@ function AppContent() {
       freeWeekChoiceRef.current = null;
       setFreeWeekOfferShown(true);
       setFirstHoldingAdded(false);
-      setFreeWeekOffer({ visible: true, trial: trialForPrompts });
+      setFreeWeekOffer({ visible: true, trial: trialForPrompts, guest: !supabaseUser });
       AsyncStorage.setItem(FREE_WEEK_OFFER_KEY, new Date().toISOString()).catch(() => {});
       logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null });
     }, FREE_WEEK_OFFER_DELAY_MS);
@@ -5074,12 +5073,18 @@ function AppContent() {
     openGoldScreen(pending.cycle);
   };
 
-  // choice is 'start' or 'later'. The first tap is the one that counts.
+  // choice is 'start', 'restore' or 'later'. The first tap is the one that counts.
   const closeFreeWeekOffer = (choice) => {
     if (!freeWeekOffer.visible || freeWeekChoiceRef.current) return;
     freeWeekChoiceRef.current = choice;
     logLifecycleEvent(`free_week_offer:${choice}`);
     setFreeWeekOffer((offer) => ({ ...offer, visible: false }));
+    if (choice === 'restore') {
+      // Its result alert waits for the sheet to go, like the Gold screen does
+      if (Platform.OS === 'ios') setTimeout(handleRestore, 700);
+      else handleRestore();
+      return;
+    }
     if (choice !== 'start') return;
     freeWeekGoldRef.current = { cycle: freeWeekOffer.trial?.cycle || null };
     if (Platform.OS === 'ios') setTimeout(openGoldAfterFreeWeekOffer, 700);
@@ -15923,7 +15928,7 @@ function AppContent() {
 
       {/* Free week offer, once after the first holding (see FREE WEEK OFFER above) */}
       {freeWeekOffer.trial && (() => {
-        const copy = freeWeekOfferCopy(freeWeekOffer.trial);
+        const copy = freeWeekOfferCopy(freeWeekOffer.trial, { guest: freeWeekOffer.guest });
         const bodyLine = Math.round(scaledFonts.normal * 1.5);
         return (
           <Modal
@@ -15963,6 +15968,15 @@ function AppContent() {
                 >
                   <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.medium, fontWeight: '600' }}>{copy.later}</Text>
                 </TouchableOpacity>
+                {copy.restore && (
+                  <TouchableOpacity
+                    onPress={() => closeFreeWeekOffer('restore')}
+                    style={{ paddingVertical: 10, alignItems: 'center' }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>{copy.restore}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </Modal>
