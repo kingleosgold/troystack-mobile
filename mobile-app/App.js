@@ -2563,6 +2563,8 @@ function AppContent() {
   const [playingMessageId, setPlayingMessageId] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  // 'idle', 'recording' or 'transcribing'
+  const [voiceState, setVoiceState] = useState('idle');
   const currentRecordingRef = useRef(null);
   const recordingStartInFlightRef = useRef(false);
   // Local cache-file URI of the Troy-voice clip TrackPlayer is currently playing,
@@ -5020,7 +5022,7 @@ function AppContent() {
     screen: currentScreen,
     livePrices: spotPricesLive,
     stackValue: totalMeltValue,
-    troyBusy: troyLoading || !!playingMessageId || isRecording || troyInputText.trim().length > 0,
+    troyBusy: troyLoading || !!playingMessageId || isRecording || voiceState !== 'idle' || troyInputText.trim().length > 0,
     sheets: {
       gold: showPaywallModal,
       tutorial: showTutorial,
@@ -5593,8 +5595,8 @@ function AppContent() {
     setIsPaused(false);
   };
 
-  // Voice recording state: 'idle' | 'recording' | 'transcribing'
-  const [voiceState, setVoiceState] = useState('idle');
+  // Sets voiceState ('idle' | 'recording' | 'transcribing', declared with the
+  // Troy state above) and logs the change
   const setVoiceStateLog = (newState) => {
     console.log('[Voice] voiceState →', newState);
     setVoiceState(newState);
