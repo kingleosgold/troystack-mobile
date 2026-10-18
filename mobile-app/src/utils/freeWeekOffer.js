@@ -1,20 +1,27 @@
 /**
- * TroyStack - The one-time free week offer after a first holding
+ * TroyStack - The one-time free week offer
  *
- * Right after someone adds their first holding (by hand, from a receipt scan
- * or from an import) and is back on the dashboard looking at the stack's live
- * value, the app offers Gold's free trial once. This file holds the rules and
- * the words, and App.js holds the sheet. Nothing here imports React Native,
- * so it runs under `node --test`.
+ * The app offers Gold's free trial once per device, at whichever of two
+ * moments comes first. One is right after someone adds their first holding
+ * (by hand, from a receipt scan or from an import) and is back on the
+ * dashboard looking at the stack's live value. The other is for someone who
+ * talks to Troy before adding anything: after an answer from Troy, once they
+ * have had a moment to read it. This file holds the rules and the words, and
+ * App.js holds the sheet. Nothing here imports React Native, so it runs
+ * under `node --test`.
  */
 
-import { TROY_GOLD_DAILY_QUESTIONS, TROY_GOLD_DAILY_VOICE, trialLabel } from './goldOffer.js';
+import { TROY_FREE_DAILY_QUESTIONS, TROY_GOLD_DAILY_QUESTIONS, TROY_GOLD_DAILY_VOICE, trialLabel } from './goldOffer.js';
 
 // Set once the offer has shown on this device, whatever was tapped.
 export const FREE_WEEK_OFFER_KEY = 'stack_free_week_offer_shown';
 
 // How long the dashboard shows the stack's value before the offer comes up.
 export const FREE_WEEK_OFFER_DELAY_MS = 1500;
+
+// How long Troy's answer sits on screen, with nothing else going on in the
+// chat, before the offer comes up. Long enough to read a short answer.
+export const FREE_WEEK_OFFER_TROY_DELAY_MS = 6000;
 
 /**
  * Whether an add made the stack's first holding. holdingsBefore is how many
@@ -30,9 +37,20 @@ export function isFirstHolding({ holdingsBefore, added, signedIn, cloudStackRead
 }
 
 /**
+ * Which moment the screen showing is for: 'holding' on the dashboard after a
+ * first holding, 'troy' in Troy's chat after an answer from him, or null.
+ */
+export function freeWeekOfferMoment({ firstHoldingAdded, troyAnswered, screen } = {}) {
+  if (firstHoldingAdded && screen === 'Dashboard') return 'holding';
+  if (troyAnswered && screen === 'TroyChat') return 'troy';
+  return null;
+}
+
+/**
  * Why the offer can't show right now, or null when it can. Takes:
  *   shownBefore        true once shown on this device, null until that's known
  *   firstHoldingAdded  an add made the stack's first holding (isFirstHolding)
+ *   troyAnswered       Troy answered a question sent this session
  *   goldScreenSeen     the Gold screen has opened this session, so the person
  *                      has just seen Gold and doesn't need a second pitch
  *   planKnown          RevenueCat and the account's profile have answered
@@ -40,9 +58,12 @@ export function isFirstHolding({ holdingsBefore, added, signedIn, cloudStackRead
  *   trial              the trial loadGoldOffering found for this Apple ID, or null
  *   demo               screenshot mode
  *   mainScreen         the app is past its loading, sign-in and lock screens
- *   screen             the screen showing ('Dashboard' is the one)
+ *   screen             the screen showing, 'Dashboard' after a first holding
+ *                      and 'TroyChat' after an answer from Troy
  *   livePrices         spot prices came from the API this session
  *   stackValue         the stack's value at those prices
+ *   troyBusy           in Troy's chat, a question is being typed, sent or
+ *                      spoken, or an answer is being read out loud
  *   sheets             { name: open } for every sheet, screen or drawer that
  *                      can sit over the dashboard, the Gold screen and the
  *                      onboarding steps among them
@@ -52,16 +73,20 @@ export function isFirstHolding({ holdingsBefore, added, signedIn, cloudStackRead
 export function freeWeekOfferBlocker(state) {
   const s = state || {};
   if (s.shownBefore !== false) return s.shownBefore ? 'shown-before' : 'flag-unknown';
-  if (!s.firstHoldingAdded) return 'no-first-holding';
+  if (!s.firstHoldingAdded && !s.troyAnswered) return 'no-moment';
   if (s.goldScreenSeen) return 'gold-screen-seen';
   if (!s.planKnown) return 'plan-unknown';
   if (s.paid) return 'gold';
   if (!s.trial) return 'no-trial';
   if (s.demo) return 'demo';
   if (!s.mainScreen) return 'not-ready';
-  if (s.screen !== 'Dashboard') return 'not-dashboard';
-  if (!s.livePrices) return 'no-live-prices';
-  if (!(s.stackValue > 0)) return 'no-value';
+  const moment = freeWeekOfferMoment(s);
+  if (!moment) return s.firstHoldingAdded ? 'not-dashboard' : 'not-troy-chat';
+  if (moment === 'holding') {
+    if (!s.livePrices) return 'no-live-prices';
+    if (!(s.stackValue > 0)) return 'no-value';
+  }
+  if (moment === 'troy' && s.troyBusy) return 'troy-busy';
   const sheet = Object.entries(s.sheets || {}).find(([, open]) => Boolean(open));
   if (sheet) return `sheet:${sheet[0]}`;
   if (s.alertOpen) return 'alert';
@@ -72,17 +97,20 @@ export function freeWeekOfferBlocker(state) {
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a
  * week and a one month trial as a month; any other length is named as it is.
- * A guest also gets a Restore line. Only RevenueCat can say a guest pays, and
- * it doesn't know about a Lifetime bought on an earlier install until Restore,
- * while the Apple ID still reads trial eligible.
+ * The lead names the moment, 'holding' or 'troy'. A guest also gets a Restore
+ * line. Only RevenueCat can say a guest pays, and it doesn't know about a
+ * Lifetime bought on an earlier install until Restore, while the Apple ID
+ * still reads trial eligible.
  */
-export function freeWeekOfferCopy(trial, { guest = false } = {}) {
+export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } = {}) {
   const week = trial?.unit === 'day' && trial.count === 7;
   const month = trial?.unit === 'month' && trial.count === 1;
   const span = week ? 'a week' : month ? 'a month' : trialLabel(trial);
   return {
     title: `Try Gold free for ${span}`,
-    lead: "Now that you've started your stack, here's what Gold adds.",
+    lead: moment === 'troy'
+      ? `Free accounts get ${TROY_FREE_DAILY_QUESTIONS} questions to Troy a day. Here's what Gold adds.`
+      : "Now that you've started your stack, here's what Gold adds.",
     points: [
       'A brief each morning on the metals and your stack',
       `Up to ${TROY_GOLD_DAILY_QUESTIONS} questions to Troy a day and ${TROY_GOLD_DAILY_VOICE} voice uses, spoken questions and answers together`,

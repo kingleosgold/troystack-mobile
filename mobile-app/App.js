@@ -36,9 +36,9 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
-import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
+import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
-import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
+import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
@@ -3787,7 +3787,7 @@ function AppContent() {
   const hasPaidAccess = hasGoldAccess;
 
   // Troy daily question limits
-  const TROY_FREE_LIMIT = 3;
+  const TROY_FREE_LIMIT = TROY_FREE_DAILY_QUESTIONS;
 
   // Save holdings to iCloud
   const syncToCloud = async (silver = silverItems, gold = goldItems, platinum = platinumItems, palladium = palladiumItems) => {
@@ -4921,8 +4921,10 @@ function AppContent() {
   // FREE WEEK OFFER
   // Once per device, right after someone adds their first holding (by hand,
   // from a receipt scan or from an import), the app offers Gold's free trial
-  // when they're back on the dashboard looking at the stack's live value. The
-  // rules and the words are in src/utils/freeWeekOffer.js.
+  // when they're back on the dashboard looking at the stack's live value.
+  // Someone who talks to Troy first gets it in the chat instead, once they've
+  // had a moment with his answer. The rules and the words are in
+  // src/utils/freeWeekOffer.js.
   // ============================================
 
   // Whether this device has shown the offer: null until the flag is read, and
@@ -4931,8 +4933,11 @@ function AppContent() {
   // Set by an add that made the stack's first holding. Holdings that arrive
   // by sync, restore or a launch never set it.
   const [firstHoldingAdded, setFirstHoldingAdded] = useState(false);
-  // The sheet, with the trial it offered.
-  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null, guest: false });
+  // Set when Troy answers a question sent this session. Conversations loaded
+  // from the server never set it.
+  const [troyAnswered, setTroyAnswered] = useState(false);
+  // The sheet, with the trial it offered and the moment it came up at.
+  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null, guest: false, moment: 'holding' });
   const [alertOpen, setAlertOpen] = useState(() => alertWatch.isOpen());
   const [appActive, setAppActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -4975,6 +4980,7 @@ function AppContent() {
   // switches accounts it mustn't come back on the next account, which may pay.
   useEffect(() => {
     setFirstHoldingAdded(false);
+    setTroyAnswered(false);
     freeWeekGoldRef.current = null;
     setFreeWeekOffer((offer) => (offer.visible ? { ...offer, visible: false } : offer));
   }, [supabaseUser?.id]);
@@ -5004,6 +5010,7 @@ function AppContent() {
   const freeWeekOfferBlock = freeWeekOfferBlocker({
     shownBefore: freeWeekOfferShown,
     firstHoldingAdded,
+    troyAnswered,
     goldScreenSeen,
     planKnown: !subscriptionLoading && planForPrompts !== 'unknown',
     paid: planForPrompts === 'paid',
@@ -5013,6 +5020,7 @@ function AppContent() {
     screen: currentScreen,
     livePrices: spotPricesLive,
     stackValue: totalMeltValue,
+    troyBusy: troyLoading || !!playingMessageId || isRecording || troyInputText.trim().length > 0,
     sheets: {
       gold: showPaywallModal,
       tutorial: showTutorial,
@@ -5045,22 +5053,26 @@ function AppContent() {
     appActive,
   });
 
-  // Shows the sheet once the dashboard has been on screen for a moment, as
-  // long as nothing above changes first. It's marked shown as it opens, so
-  // it never shows again whatever's tapped.
+  // Shows the sheet once the dashboard, or Troy's answer, has been on screen
+  // for a moment, as long as nothing above changes first. It's marked shown
+  // as it opens, so it never shows again whatever's tapped.
+  const freeWeekMoment = freeWeekOfferMoment({ firstHoldingAdded, troyAnswered, screen: currentScreen });
   useEffect(() => {
     if (freeWeekOfferBlock !== null) return undefined;
+    const moment = freeWeekMoment;
     const timer = setTimeout(() => {
       if (alertWatch.isOpen()) return; // an alert that came up since this render
       freeWeekChoiceRef.current = null;
       setFreeWeekOfferShown(true);
       setFirstHoldingAdded(false);
-      setFreeWeekOffer({ visible: true, trial: trialForPrompts, guest: !supabaseUser });
+      setTroyAnswered(false);
+      if (moment === 'troy') Keyboard.dismiss(); // the chat's input may still have it up
+      setFreeWeekOffer({ visible: true, trial: trialForPrompts, guest: !supabaseUser, moment });
       AsyncStorage.setItem(FREE_WEEK_OFFER_KEY, new Date().toISOString()).catch(() => {});
-      logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null });
-    }, FREE_WEEK_OFFER_DELAY_MS);
+      logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null, moment });
+    }, moment === 'troy' ? FREE_WEEK_OFFER_TROY_DELAY_MS : FREE_WEEK_OFFER_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [freeWeekOfferBlock, trialForPrompts, supabaseUser?.id]);
+  }, [freeWeekOfferBlock, freeWeekMoment, trialForPrompts, supabaseUser?.id]);
 
   // The start button opens the Gold screen on the plan whose trial the sheet
   // offered. On iOS that waits for the sheet to finish closing, since a new
@@ -6234,6 +6246,7 @@ function AppContent() {
         ];
       });
       Animated.spring(assistAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+      setTroyAnswered(true);
 
       // Update conversation title if it changed (first message auto-titles)
       if (response.title) {
@@ -15926,9 +15939,9 @@ function AppContent() {
         onComplete={handleTutorialComplete}
       />
 
-      {/* Free week offer, once after the first holding (see FREE WEEK OFFER above) */}
+      {/* Free week offer, once after the first holding or a Troy answer (see FREE WEEK OFFER above) */}
       {freeWeekOffer.trial && (() => {
-        const copy = freeWeekOfferCopy(freeWeekOffer.trial, { guest: freeWeekOffer.guest });
+        const copy = freeWeekOfferCopy(freeWeekOffer.trial, { guest: freeWeekOffer.guest, moment: freeWeekOffer.moment });
         const bodyLine = Math.round(scaledFonts.normal * 1.5);
         return (
           <Modal
