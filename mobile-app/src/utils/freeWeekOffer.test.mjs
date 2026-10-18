@@ -19,7 +19,6 @@ function ready(overrides = {}) {
   return {
     shownBefore: false,
     firstHoldingAdded: true,
-    guest: false,
     goldScreenSeen: false,
     planKnown: true,
     paid: false,
@@ -68,8 +67,8 @@ test('only after a first holding the person added', () => {
   assert.equal(freeWeekOfferBlocker(ready({ firstHoldingAdded: false })), 'no-first-holding');
 });
 
-test("never for a guest: RevenueCat alone can't see a Lifetime bought on an earlier install", () => {
-  assert.equal(freeWeekOfferBlocker(ready({ guest: true })), 'guest');
+test('a guest gets it too, since every new install opens as a guest', () => {
+  assert.equal(freeWeekOfferBlocker(ready({ guest: true })), null);
 });
 
 test('a Gold screen opened this session cancels it', () => {
@@ -144,16 +143,22 @@ test("what Gold adds, as the server and the Gold screen have it", () => {
   assert.doesNotMatch(points.join(' '), /unlimited (questions|troy|voice)/i);
 });
 
-test('the sheet has no guest wording, since guests never see it', () => {
-  assert.equal('note' in freeWeekOfferCopy(WEEK), false);
+test('a signed-in account gets no Restore line and no account wording', () => {
+  assert.equal(freeWeekOfferCopy(WEEK).restore, null);
   assert.doesNotMatch(JSON.stringify(freeWeekOfferCopy(WEEK)), /account/);
+});
+
+test('a guest gets a Restore line, so a Lifetime from an earlier install is one tap away', () => {
+  const copy = freeWeekOfferCopy(WEEK, { guest: true });
+  assert.equal(copy.restore, 'Already have Gold? Restore purchases');
+  assert.equal(copy.title, 'Try Gold free for a week');
 });
 
 test('no long dashes or exclamation marks in anything a person reads', () => {
   const longDash = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
   for (const trial of [WEEK, { count: 1, unit: 'month' }, { count: 14, unit: 'day' }]) {
-    const copy = freeWeekOfferCopy(trial);
-    for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later]) {
+    const copy = freeWeekOfferCopy(trial, { guest: true });
+    for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore]) {
       assert.doesNotMatch(s, longDash, s);
       assert.doesNotMatch(s, /!/, s);
     }

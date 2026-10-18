@@ -33,10 +33,6 @@ export function isFirstHolding({ holdingsBefore, added, signedIn, cloudStackRead
  * Why the offer can't show right now, or null when it can. Takes:
  *   shownBefore        true once shown on this device, null until that's known
  *   firstHoldingAdded  an add made the stack's first holding (isFirstHolding)
- *   guest              no account. A guest is never offered it, since only
- *                      RevenueCat could say they pay, and it doesn't know about
- *                      a Lifetime bought on an earlier install until Restore,
- *                      while the Apple ID still reads trial eligible
  *   goldScreenSeen     the Gold screen has opened this session, so the person
  *                      has just seen Gold and doesn't need a second pitch
  *   planKnown          RevenueCat and the account's profile have answered
@@ -57,7 +53,6 @@ export function freeWeekOfferBlocker(state) {
   const s = state || {};
   if (s.shownBefore !== false) return s.shownBefore ? 'shown-before' : 'flag-unknown';
   if (!s.firstHoldingAdded) return 'no-first-holding';
-  if (s.guest) return 'guest';
   if (s.goldScreenSeen) return 'gold-screen-seen';
   if (!s.planKnown) return 'plan-unknown';
   if (s.paid) return 'gold';
@@ -77,9 +72,11 @@ export function freeWeekOfferBlocker(state) {
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a
  * week and a one month trial as a month; any other length is named as it is.
- * Only signed-in accounts see it, so it needs no guest wording.
+ * A guest also gets a Restore line. Only RevenueCat can say a guest pays, and
+ * it doesn't know about a Lifetime bought on an earlier install until Restore,
+ * while the Apple ID still reads trial eligible.
  */
-export function freeWeekOfferCopy(trial) {
+export function freeWeekOfferCopy(trial, { guest = false } = {}) {
   const week = trial?.unit === 'day' && trial.count === 7;
   const month = trial?.unit === 'month' && trial.count === 1;
   const span = week ? 'a week' : month ? 'a month' : trialLabel(trial);
@@ -94,6 +91,7 @@ export function freeWeekOfferCopy(trial) {
     ],
     start: week ? 'Start my free week' : month ? 'Start my free month' : 'Start my free trial',
     later: 'Not now',
+    restore: guest ? 'Already have Gold? Restore purchases' : null,
   };
 }
 

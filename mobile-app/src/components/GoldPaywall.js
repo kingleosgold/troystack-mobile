@@ -122,7 +122,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, onRestored, userTier
       const restored = await restorePurchases();
       onRestored?.();
 
-      if (restored.hasGold || restored.hasSilver) {
+      if (restored.hasGold || restored.hasSilver || restored.hasLifetime) {
         Alert.alert(
           'Purchases Restored!',
           'Your subscription has been restored.',
