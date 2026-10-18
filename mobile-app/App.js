@@ -37,6 +37,7 @@ import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/stor
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
+import { GUEST_MODE_KEY, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
@@ -3591,12 +3592,8 @@ function AppContent() {
         setLastReachedGoldMilestone(parseFloat(storedLastGoldReached));
       }
 
-      // Guest mode is session-only now — always start at auth screen on cold launch
-      // Clear any legacy persisted guest mode flag
-      if (storedGuestMode) {
-        AsyncStorage.removeItem('stack_guest_mode');
-      }
-      setGuestMode(false);
+      // A guest stays a guest across launches, with their holdings saved on this phone
+      setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser));
 
       // Load hide widget values preference
       if (storedHideWidgetValues === 'true') {
@@ -3932,22 +3929,22 @@ function AppContent() {
 
   useEffect(() => {
     // Only save after initial data has been loaded to prevent overwriting with empty arrays
-    // Skip saving for guest mode — data is session-only
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_silver', silverItems);
-  }, [silverItems, isAuthenticated, dataLoaded, guestMode]);
+    // A guest's holdings save on this phone too
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_silver', silverItems);
+  }, [silverItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
     // Only save after initial data has been loaded to prevent overwriting with empty arrays
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_gold', goldItems);
-  }, [goldItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_gold', goldItems);
+  }, [goldItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_platinum', platinumItems);
-  }, [platinumItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_platinum', platinumItems);
+  }, [platinumItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_palladium', palladiumItems);
-  }, [palladiumItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_palladium', palladiumItems);
+  }, [palladiumItems, isAuthenticated, dataLoaded]);
 
   // Manual sync function - can be called on pull-to-refresh or button press
   const syncHoldingsWithSupabase = async (force = false) => {
@@ -9588,24 +9585,26 @@ function AppContent() {
   // LOADING & AUTH SCREENS
   // ============================================
 
-  // Helper to enable guest mode (session-only — not persisted, so reopening app shows auth screen)
+  // Helper to enable guest mode, kept across launches until sign in or sign out
   const enableGuestMode = () => {
     setGuestMode(true);
+    AsyncStorage.setItem(GUEST_MODE_KEY, 'true').catch((error) => {
+      if (__DEV__) console.error('Failed to save guest mode:', error);
+    });
   };
 
   // Helper to disable guest mode (when user signs in)
   const disableGuestMode = async () => {
     setGuestMode(false);
     try {
-      await AsyncStorage.removeItem('stack_guest_mode');
+      await AsyncStorage.removeItem(GUEST_MODE_KEY);
     } catch (error) {
       if (__DEV__) console.error('Failed to remove guest mode:', error);
     }
   };
 
   // Handle successful auth from AuthScreen
-  // If guest had in-memory holdings, they'll be persisted now that guestMode is false
-  // (the save effects trigger when guestMode changes)
+  // A new account's first sync moves the guest's holdings to the cloud
   const handleAuthSuccess = () => {
     setShowAuthScreen(false);
     disableGuestMode();
@@ -9920,8 +9919,8 @@ function AppContent() {
             }}
             onPress={enableGuestMode}
           >
-            <Text style={{ color: colors.muted, fontSize: scaledFonts.medium }}>
-              Continue without signing in
+            <Text style={{ color: colors.gold, fontSize: scaledFonts.medium, fontWeight: '600' }}>
+              {GUEST_CONTINUE}
             </Text>
           </TouchableOpacity>
         </View>
@@ -10078,7 +10077,7 @@ function AppContent() {
           }}
         >
           <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>
-            Create an account to save your stack
+            {GUEST_BANNER}
           </Text>
           <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny }}>→</Text>
         </TouchableOpacity>
@@ -14155,7 +14154,7 @@ function AppContent() {
                 <View style={{ backgroundColor: isDarkMode ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)', paddingVertical: 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={{ fontSize: scaledFonts.small }}>⚠️</Text>
                   <Text style={{ color: colors.gold, fontSize: scaledFonts.small, flex: 1 }}>
-                    You're not signed in. This data won't be saved when you close the app.
+                    {GUEST_SAVE_NOTE}
                   </Text>
                 </View>
               )}

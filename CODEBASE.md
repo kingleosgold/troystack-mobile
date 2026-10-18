@@ -133,6 +133,12 @@ Bottom sheet content for each preview type:
 - **Tests:** `node --test mobile-app/src/utils/goldOffer.test.mjs`
 - **Last modified:** 2026-10-10
 
+### mobile-app/src/utils/guestMode.js
+- **Purpose:** Guest mode kept on the phone. Continue without an account sets `stack_guest_mode` to 'true', so a guest stays a guest across launches and their holdings save to AsyncStorage like a signed-in account's (`canSaveHoldings` only waits for the stored holdings to load). Signing in removes the flag, and a new account's first sync moves the holdings to the cloud. Sign out clears both. Also the guest copy on the auth screen, the dashboard banner and Add Purchase
+- **Exports:** `GUEST_MODE_KEY`, `guestModeAtLaunch`, `canSaveHoldings`, `GUEST_SAVE_NOTE`, `GUEST_BANNER`, `GUEST_CONTINUE`
+- **Tests:** `node --test mobile-app/src/utils/guestMode.test.mjs`
+- **Last modified:** 2026-10-18
+
 ### mobile-app/src/utils/freeWeekOffer.js
 - **Purpose:** The one-time free week offer. Right after someone adds their first holding (by hand, receipt scan or import), once they're back on the dashboard with the stack's live value showing, App.js shows a short sheet offering Gold's free trial. Only to a signed-in account (a guest's Lifetime from an earlier install is invisible to RevenueCat until Restore, while the Apple ID still reads trial eligible), only when `loadGoldOffering` found a trial this Apple ID can get and `upsellPlan` (goldOffer.js) says the account is 'free'; not after the Gold screen has opened this session; at most once per device (AsyncStorage `stack_free_week_offer_shown`, written as it opens, whatever's tapped); never over another sheet, the Gold screen, the tutorial, the drawer, an alert or a system prompt; never for holdings that arrived by sync, restore or launch. Its start button opens the Gold screen on the plan the trial is on. A sheet that's up closes for good when the account changes or the main screen goes (a session that ends, a reset password link), so it never comes back on the next account
 - **Exports:** `isFirstHolding`, `freeWeekOfferBlocker` (why it can't show yet, or null), `freeWeekOfferCopy`, `watchAlerts`, `FREE_WEEK_OFFER_KEY`, `FREE_WEEK_OFFER_DELAY_MS`
