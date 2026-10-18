@@ -11,7 +11,8 @@
     "build:android": "eas build --platform android",
     "submit:ios": "eas submit --platform ios",
     "submit:android": "eas submit --platform android",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "test": "node --test src/utils/*.test.mjs"
   },
   "dependencies": {
     "@bacons/apple-targets": "^3.0.7",

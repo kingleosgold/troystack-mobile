@@ -491,6 +491,10 @@ App Launch → Supabase session check → Biometric auth (optional)
 - **production:** App Store submission with auto-submit. Android builds an app bundle and EAS raises `android.versionCode` in app.json each build (`autoIncrement`, with `appVersionSource` local). `eas submit` sends Android to the Play internal track with `google-service-account.json`, which is gitignored
 - **Last modified:** 2026-10-14
 
+### .github/workflows/tests.yml
+- **Runs:** on every pull request and every push to `main`. Node 22 runs `npm test` in `mobile-app`, which is `node --test src/utils/*.test.mjs`. The tests import plain JS and need no `npm install`, so the job takes seconds
+- **Last modified:** 2026-10-18
+
 ### Backend Deployment
 - **Host:** Railway (auto-deploys from `main` branch)
 - **URL:** `https://api.stacktrackergold.com`
