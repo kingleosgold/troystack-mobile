@@ -110,3 +110,11 @@ test('guestLimitPrompt points a guest to a free account in the webapp words', as
   assert.equal(p.action, 'Create a free account');
   assert.match(guestLimitPrompt(null, now).message, /^That's today's free questions\. They come back tomorrow\./);
 });
+
+test('guestQuestionsLeft forgets a count once its reset time has passed', async () => {
+  const { guestQuestionsLeft, guestQuestionsLine } = await import('./troyChat.js');
+  const quota = { questionsUsed: 3, questionsLimit: 3, resetsAt: '2026-10-19T13:05:00Z' };
+  assert.equal(guestQuestionsLeft(quota, new Date('2026-10-19T13:00:00Z')), 0);
+  assert.equal(guestQuestionsLeft(quota, new Date('2026-10-19T13:05:00Z')), null);
+  assert.equal(guestQuestionsLine(quota, new Date('2026-10-19T14:00:00Z')), null);
+});

@@ -152,15 +152,21 @@ export function guestQuota(body) {
   };
 }
 
-/** How many questions a guest has left today, or null when unknown. */
-export function guestQuestionsLeft(quota) {
+/**
+ * How many questions a guest has left today, or null when unknown. A count
+ * read before its reset time has passed is unknown, so a guest who waited
+ * out the limit with the chat open isn't held to it. The server decides.
+ */
+export function guestQuestionsLeft(quota, now = new Date()) {
   if (!quota || !quota.questionsLimit) return null;
+  const resets = new Date(quota.resetsAt || NaN).getTime();
+  if (Number.isFinite(resets) && resets <= now.getTime()) return null;
   return Math.max(0, quota.questionsLimit - quota.questionsUsed);
 }
 
 /** The chat header's line for a guest, as troystack.ai says it. */
-export function guestQuestionsLine(quota) {
-  const left = guestQuestionsLeft(quota);
+export function guestQuestionsLine(quota, now = new Date()) {
+  const left = guestQuestionsLeft(quota, now);
   return left == null ? null : `${left} of ${quota.questionsLimit} free questions left today`;
 }
 
