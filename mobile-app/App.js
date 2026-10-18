@@ -36,7 +36,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
-import { plainDashes, isQuotaRefusal, troyLimitPrompt } from './src/utils/troyChat';
+import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -2558,6 +2558,8 @@ function AppContent() {
   const [troyConversations, setTroyConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [troyMessages, setTroyMessages] = useState([]);
+  // A guest's questions left today from /v1/troy/ask, null until read.
+  const [guestTroyQuota, setGuestTroyQuota] = useState(null);
   const [troyLoading, setTroyLoading] = useState(false);
   const [troyInputText, setTroyInputText] = useState('');
   const [advisorQuestionsToday, setAdvisorQuestionsToday] = useState(0);
@@ -5338,7 +5340,24 @@ function AppContent() {
         signal,
       });
       return res.json();
-    }
+    },
+    // A guest has no account, so Troy answers through the visitor route and
+    // keeps nothing. The chat so far rides along for context.
+    async ask(message, history, signal) {
+      const res = await fetch(`${API_BASE_URL}/v1/troy/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history }),
+        signal,
+      });
+      const body = await res.json().catch(() => null);
+      return readGuestAsk(res.status, body);
+    },
+    async askStatus() {
+      const res = await fetch(`${API_BASE_URL}/v1/troy/ask/status`);
+      if (!res.ok) return null;
+      return guestQuota(await res.json().catch(() => null));
+    },
   };
 
   // Stack Signal API
@@ -5546,6 +5565,15 @@ function AppContent() {
     ] : undefined);
   };
 
+  // A guest's questions are used up. The way on is a free account.
+  const showGuestTroyLimit = (quota) => {
+    const prompt = guestLimitPrompt(quota);
+    Alert.alert(prompt.title, prompt.message, [
+      { text: 'Not now', style: 'cancel' },
+      { text: prompt.action, onPress: () => disableGuestMode() },
+    ]);
+  };
+
   const startNewConversation = () => {
     // Drop any send or load still in flight so it can't refill this chat.
     troySessionRef.current += 1;
@@ -5624,6 +5652,14 @@ function AppContent() {
     if (!aiConsentGivenRef.current) {
       pendingTroyActionRef.current = () => startVoiceRecording();
       setShowAiConsentModal(true);
+      return;
+    }
+    // Speech to text needs an account on the server, so a guest types instead.
+    if (!supabaseUser) {
+      Alert.alert('Troy', 'Asking Troy out loud needs a free account. You can still type your question.', [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Create a free account', onPress: () => disableGuestMode() },
+      ]);
       return;
     }
     // In-flight start lock: prevent concurrent starts from a fast double-tap.
@@ -6157,6 +6193,11 @@ function AppContent() {
       return;
     }
 
+    if (!supabaseUser) {
+      await sendGuestTroyMessage(text, !messageText);
+      return;
+    }
+
     // Daily limit check. Free gets 3 a day here. Gold and Lifetime aren't
     // capped in the app, but the server stops them at 30 a day
     // (GOLD_DAILY_LIMIT in the API's troy-chat.js).
@@ -6306,6 +6347,120 @@ function AppContent() {
 
     setTroyLoading(false);
   };
+
+  // A guest's question goes to /v1/troy/ask with the answered turns so far,
+  // and the chat stays on this phone. fromInput is whether it came from the box.
+  const sendGuestTroyMessage = async (text, fromInput) => {
+    const left = guestQuestionsLeft(guestTroyQuota);
+    if (left === 0) {
+      if (!fromInput) setTroyInputText(text);
+      autoPlayNextResponseRef.current = false;
+      showGuestTroyLimit(guestTroyQuota);
+      return;
+    }
+    if (text.length > GUEST_MESSAGE_MAX) {
+      // A spoken or handed-over question waits in the box to be cut down.
+      if (!fromInput) setTroyInputText(text);
+      autoPlayNextResponseRef.current = false;
+      Alert.alert('Troy', `Keep it under ${GUEST_MESSAGE_MAX} characters, or create a free account for longer questions.`);
+      return;
+    }
+    if (fromInput) setTroyInputText('');
+
+    const session = troySessionRef.current;
+    const history = answeredTurns(troyMessages);
+    const userMsg = { id: 'guest-user-' + Date.now(), role: 'user', content: text, created_at: new Date().toISOString() };
+    const userAnim = new Animated.Value(0);
+    messageAnimsRef.current.set(userMsg.id, userAnim);
+    setTroyMessages(prev => [...prev, userMsg]);
+    Animated.spring(userAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+    setTroyLoading(true);
+
+    // No answer is coming, so the question comes off the chat, a spoken
+    // question's autoplay is dropped and the question goes back in the box.
+    const giveBack = () => {
+      setTroyMessages(prev => prev.filter(m => m.id !== userMsg.id));
+      autoPlayNextResponseRef.current = false;
+      setTroyInputText(text);
+      setTroyLoading(false);
+    };
+
+    let result;
+    try {
+      troyAbortRef.current = new AbortController();
+      result = await troyAPI.ask(text, history, troyAbortRef.current.signal);
+    } catch (e) {
+      if (troySessionRef.current !== session) return;
+      troyAbortRef.current = null;
+      if (e.name === 'AbortError') {
+        autoPlayNextResponseRef.current = false;
+        setTroyLoading(false);
+        return;
+      }
+      giveBack();
+      Alert.alert('Troy', "Troy couldn't answer that just now. Try again in a moment.");
+      return;
+    }
+    if (troySessionRef.current !== session) return;
+    troyAbortRef.current = null;
+
+    if (result.kind === 'limit') {
+      giveBack();
+      setGuestTroyQuota(result.quota);
+      showGuestTroyLimit(result.quota);
+      return;
+    }
+    if (result.kind === 'unavailable') {
+      giveBack();
+      Alert.alert('Troy', 'Create a free account to ask Troy.', [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Create a free account', onPress: () => disableGuestMode() },
+      ]);
+      return;
+    }
+    if (result.kind !== 'reply') {
+      giveBack();
+      Alert.alert('Troy', result.error || "Troy couldn't answer that just now. Try again in a moment.");
+      return;
+    }
+
+    if (result.quota) setGuestTroyQuota(result.quota);
+    const assistantMsg = { id: 'guest-troy-' + Date.now(), role: 'assistant', content: result.reply, created_at: new Date().toISOString(), preview: null };
+    const assistAnim = new Animated.Value(0);
+    messageAnimsRef.current.set(assistantMsg.id, assistAnim);
+    setTroyMessages(prev => [...prev, assistantMsg]);
+    Animated.spring(assistAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+    setTroyAnswered(true);
+    setTroyLoading(false);
+
+    if (autoPlayNextResponseRef.current) {
+      autoPlayNextResponseRef.current = false;
+      playTroyVoice(assistantMsg.content, assistantMsg.id, { auto: true });
+    }
+  };
+
+  // A guest's questions left, read each time the chat opens.
+  useEffect(() => {
+    if (currentScreen !== 'TroyChat' || supabaseUser) return undefined;
+    let cancelled = false;
+    troyAPI.askStatus()
+      .then(quota => { if (!cancelled && quota) setGuestTroyQuota(quota); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentScreen, supabaseUser?.id]);
+
+  // A guest's chat is on this phone only, and an account's chat is that
+  // account's. When someone signs in or out the chat on screen goes, along
+  // with any answer still on its way.
+  const troyAccountRef = useRef(supabaseUser?.id || null);
+  useEffect(() => {
+    const id = supabaseUser?.id || null;
+    if (troyAccountRef.current === id) return;
+    troyAccountRef.current = id;
+    startNewConversation();
+    setTroyConversations([]);
+    setGuestTroyQuota(null);
+  }, [supabaseUser?.id]);
 
   useEffect(() => {
     if (currentScreen !== 'TroyChat' || !pendingTroyPrompt || activeConversationId || troyLoading) return;
@@ -10055,7 +10210,7 @@ function AppContent() {
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginLeft: 6 }} />
                     )}
                   </View>
-                  <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : 'Your Stack Analyst'}</Text>
+                  <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : (!supabaseUser && guestQuestionsLine(guestTroyQuota)) || 'Your Stack Analyst'}</Text>
                 </View>
               </View>
             </>
@@ -13062,16 +13217,24 @@ function AppContent() {
                     <Image source={TROY_AVATAR} style={{ width: 64, height: 64, borderRadius: 32 }} />
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', marginTop: 16 }}>Ask Troy anything</Text>
                     <Text style={{ color: '#999', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-                      Your personal stack analyst. I know your stack{'\n'}and can help you make smarter decisions.
+                      {supabaseUser
+                        ? <>Your personal stack analyst. I know your stack{'\n'}and can help you make smarter decisions.</>
+                        : <>Your stack analyst. Ask about prices,{'\n'}the ratio or what's moving the market.</>}
                     </Text>
                     <View style={{ marginTop: 24, gap: 10, alignSelf: 'stretch', paddingHorizontal: 16 }}>
-                      {[
+                      {/* A guest's stack and brief aren't on the server, so a guest gets market questions. */}
+                      {(supabaseUser ? [
                         { label: "Today's Brief", action: 'brief' },
                         { label: "How's my stack?", action: 'send', text: "How's my stack performing?" },
                         { label: 'Gold/Silver Ratio', action: 'send', text: 'Analyze my gold-to-silver ratio' },
                         { label: 'Purchasing Power', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
                         { label: 'Scan a receipt', action: 'scan' },
-                      ].map((chip, i) => (
+                      ] : [
+                        { label: "What's moving gold today?", action: 'send', text: "What's moving gold today?" },
+                        { label: 'Gold/Silver Ratio', action: 'send', text: 'What is the gold-to-silver ratio telling us right now?' },
+                        { label: 'Silver this week', action: 'send', text: 'How has silver done this week?' },
+                        { label: 'Scan a receipt', action: 'scan' },
+                      ]).map((chip, i) => (
                         <TouchableOpacity
                           key={i}
                           style={{
@@ -13293,6 +13456,7 @@ function AppContent() {
                 placeholderTextColor="#666"
                 value={troyInputText}
                 onChangeText={setTroyInputText}
+                maxLength={supabaseUser ? undefined : GUEST_MESSAGE_MAX}
                 multiline={true}
                 textAlignVertical="top"
                 returnKeyType="default"
