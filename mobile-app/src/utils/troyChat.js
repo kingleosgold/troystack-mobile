@@ -198,15 +198,18 @@ export function replyTimeLabel(iso) {
   return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
 }
 
-const DAY_MS = 86400000;
-
 /**
  * Chats newest first and grouped Today, Yesterday, This week and Earlier,
  * the same as groupConversations in the webapp's src/routes/Troy.tsx. This
- * week is the five days before yesterday. Empty groups are left out.
+ * week is the five days before yesterday. Days start at local midnight on the
+ * calendar, so a day with a clock change still lands right. Empty groups are
+ * left out.
  */
 export function groupConversations(list, now = new Date()) {
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const midnight = (daysBack) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysBack).getTime();
+  const startToday = midnight(0);
+  const startYesterday = midnight(1);
+  const startWeek = midnight(6);
   const when = (c) => new Date(c?.updated_at || c?.created_at).getTime() || 0;
   const sorted = (Array.isArray(list) ? list : []).slice().sort((a, b) => when(b) - when(a));
   const groups = [
@@ -218,8 +221,8 @@ export function groupConversations(list, now = new Date()) {
   for (const c of sorted) {
     const t = when(c);
     if (t >= startToday) groups[0].items.push(c);
-    else if (t >= startToday - DAY_MS) groups[1].items.push(c);
-    else if (t >= startToday - 6 * DAY_MS) groups[2].items.push(c);
+    else if (t >= startYesterday) groups[1].items.push(c);
+    else if (t >= startWeek) groups[2].items.push(c);
     else groups[3].items.push(c);
   }
   return groups.filter((g) => g.items.length);

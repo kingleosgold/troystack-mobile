@@ -159,3 +159,14 @@ test('chatHistoryNote counts the chats a free account has', async () => {
   const { chatHistoryNote } = await import('./troyChat.js');
   assert.equal(chatHistoryNote(5), 'You have 5 chats with Troy. Gold keeps every one of them, on the web and in the app.');
 });
+
+test('groupConversations counts days on the calendar across a clock change', async () => {
+  const { groupConversations } = await import('./troyChat.js');
+  // Under TZ=America/New_York clocks spring forward on 3/8/2026, so the
+  // Sunday is 23 hours long. Saturday night is two days back on Monday.
+  const now = new Date(2026, 2, 9, 9, 0);
+  const sat = { id: 'sat', updated_at: new Date(2026, 2, 7, 23, 30).toISOString() };
+  const sun = { id: 'sun', updated_at: new Date(2026, 2, 8, 0, 30).toISOString() };
+  const groups = groupConversations([sat, sun], now);
+  assert.deepEqual(groups.map((g) => [g.label, g.items.map((c) => c.id)]), [['Yesterday', ['sun']], ['This week', ['sat']]]);
+});
