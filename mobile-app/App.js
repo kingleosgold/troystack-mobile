@@ -4635,7 +4635,7 @@ function AppContent() {
     try {
       const restored = await restorePurchases();
       syncStoreAfterRestore();
-      if (restored.hasGold || restored.hasSilver) {
+      if (restored.hasGold || restored.hasSilver || restored.hasLifetime) {
         await checkEntitlements(); // Re-check all entitlements to set correct tier
         Alert.alert('Purchases Restored!', 'Your subscription has been restored.');
       } else {
