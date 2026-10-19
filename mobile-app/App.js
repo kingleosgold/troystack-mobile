@@ -2430,6 +2430,9 @@ function AppContent() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
+  // Counts restores, so a sync that was already running when one landed
+  // leaves the restored stack for the next sync instead of replacing it
+  const restoreCountRef = useRef(0);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -3873,7 +3876,12 @@ function AppContent() {
                   if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
                   if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, supabaseUser?.id || null));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
-                  if (supabaseUser) setHasSyncedOnce(false); // send it up to the account now
+                  restoreCountRef.current += 1;
+                  if (supabaseUser) {
+                    // Send it up to the account now, even after a failed sync
+                    setSyncError(null);
+                    setHasSyncedOnce(false);
+                  }
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
@@ -3971,6 +3979,7 @@ function AppContent() {
 
     setIsSyncing(true);
     setSyncError(null);
+    const restoresAtStart = restoreCountRef.current;
 
     try {
       // Check if this user has ever synced before (for first-time migration)
@@ -4040,6 +4049,11 @@ function AppContent() {
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
         if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
+
+        // A restore that landed while this sync ran isn't in what it sent up,
+        // so the cloud's copy would drop it. Leave the stack as it is and
+        // hasSyncedOnce false, and the auto sync sends it up next.
+        if (restoreCountRef.current !== restoresAtStart) return false;
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
@@ -7700,7 +7714,12 @@ function AppContent() {
               if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
               if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, supabaseUser?.id || null));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
-              if (supabaseUser) setHasSyncedOnce(false); // send it up to the account now
+              restoreCountRef.current += 1;
+              if (supabaseUser) {
+                // Send it up to the account now, even after a failed sync
+                setSyncError(null);
+                setHasSyncedOnce(false);
+              }
               Alert.alert('Success', 'Backup restored!');
             }
           }
