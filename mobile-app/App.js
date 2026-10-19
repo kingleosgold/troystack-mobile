@@ -2422,6 +2422,7 @@ function AppContent() {
   // Supabase Auth
   const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
+  const [authStartMode, setAuthStartMode] = useState('signIn'); // the tab AuthScreen opens on
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showAccountScreen, setShowAccountScreen] = useState(false);
   const [showResetPasswordScreen, setShowResetPasswordScreen] = useState(false);
@@ -5156,8 +5157,8 @@ function AppContent() {
     setFreeWeekOffer((offer) => ({ ...offer, visible: false }));
     if (choice === 'account') {
       // Sign up takes the screen once the sheet has gone, as the Gold screen waits
-      if (Platform.OS === 'ios') setTimeout(disableGuestMode, 700);
-      else disableGuestMode();
+      if (Platform.OS === 'ios') setTimeout(openSignUp, 700);
+      else openSignUp();
       return;
     }
     if (choice === 'restore') {
@@ -9906,6 +9907,13 @@ function AppContent() {
   // Helper to show the sign-in screen from guest mode. The stored flag stays
   // until sign-in succeeds, so backing out keeps the guest stack next launch
   const disableGuestMode = () => {
+    setAuthStartMode('signIn');
+    setGuestMode(false);
+  };
+
+  // The same, opened on the sign up tab for a guest who asked to make an account
+  const openSignUp = () => {
+    setAuthStartMode('signUp');
     setGuestMode(false);
   };
 
@@ -10248,7 +10256,7 @@ function AppContent() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-        <AuthScreen onAuthSuccess={handleAuthSuccess} />
+        <AuthScreen initialMode={authStartMode} onAuthSuccess={handleAuthSuccess} />
         {/* Skip for now button */}
         <View style={{
           position: 'absolute',

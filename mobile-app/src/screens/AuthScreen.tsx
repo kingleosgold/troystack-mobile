@@ -27,12 +27,13 @@ type AuthMode = 'signIn' | 'signUp';
 
 interface AuthScreenProps {
   onAuthSuccess?: () => void;
+  initialMode?: AuthMode;
 }
 
-export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
+export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: AuthScreenProps) {
   const { signIn, signUp, signInWithGoogle, signInWithApple, resetPassword, loading } = useAuth();
 
-  const [mode, setMode] = useState<AuthMode>('signIn');
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
