@@ -60,12 +60,13 @@ export function asAddedBy(item, signedIn) {
  * signed in they're the guest's choice of stack, whatever account they came
  * from, so they carry the guest mark like anything else a guest adds.
  * Restored while signed in they're that account's, so a backup made as a
- * guest loses its marks.
+ * guest loses its marks, and each one carries restoredFor with the account's
+ * id so the next sync sends it up to that account and no other.
  */
-export function asRestoredBy(items, signedIn) {
+export function asRestoredBy(items, userId) {
   if (!Array.isArray(items)) return items;
-  if (signedIn) return withoutGuestMark(items);
-  return items.map((item) => asAddedBy(item, false));
+  if (userId) return withoutGuestMark(items).map((item) => ({ ...item, restoredFor: userId }));
+  return items.map(({ restoredFor, ...item }) => asAddedBy(item, false));
 }
 
 /**
@@ -83,11 +84,17 @@ export function withoutGuestMark(items) {
  * this phone a stack with no owner, or this account's own, goes up whole. Of
  * a stack that belongs to another account, and on any later sync, only the
  * holdings added as a guest go up, as when a session expired and someone
- * added to its stack before signing back in.
+ * added to its stack before signing back in, and those this account restored
+ * from a backup. A holding restored for another account never goes up, even
+ * in a stack with no owner, as when that account's session ended before its
+ * first sync claimed the stack.
  */
 export function localHoldingsToSync(items, owner, userId, firstSync = true) {
-  if (firstSync && mayUploadLocalStack(owner, userId)) return items || [];
-  return (items || []).filter((item) => item.addedAsGuest === true);
+  if (firstSync && mayUploadLocalStack(owner, userId)) {
+    return (items || []).filter((item) => !item.restoredFor || item.restoredFor === userId);
+  }
+  return (items || []).filter((item) => item.addedAsGuest === true
+    || (!!userId && item.restoredFor === userId));
 }
 
 /**
