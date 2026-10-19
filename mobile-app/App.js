@@ -4019,18 +4019,21 @@ function AppContent() {
     // 1. User is signed in with Supabase
     // 2. Data has been loaded from local storage
     // 3. Haven't synced yet this session
-    if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing) {
+    // 4. The last try didn't fail. Pull to refresh tries again, so a failure
+    //    doesn't retry in a loop each time isSyncing turns back to false.
+    if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing && !syncError) {
       if (__DEV__) console.log('Auto-sync triggered: user signed in, data loaded');
       syncHoldingsWithSupabase().finally(() => {
         setNeedsPostSignInSync(false);
       });
     }
-  }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing]);
+  }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
 
   // Reset sync flag when user signs out
   useEffect(() => {
     if (!supabaseUser) {
       setHasSyncedOnce(false);
+      setSyncError(null);
     }
   }, [supabaseUser]);
 

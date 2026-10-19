@@ -3,8 +3,9 @@
  *
  * Someone who taps Continue without an account stays a guest across launches,
  * and the holdings they add save on this phone like a signed-in account's do.
- * Signing in turns guest mode off, and a new account's first sync moves those
- * holdings to the cloud. Signing out clears both. A fresh install opens as a
+ * Signing in turns guest mode off, and the account's first sync on this phone
+ * adds those holdings to it, even one that already has some. Signing out
+ * clears both. A fresh install opens as a
  * guest on the Dashboard, so a new user values a stack before any sign-in.
  * Nothing here imports React Native, so it runs under `node --test`.
  */

@@ -385,7 +385,9 @@ export async function syncLocalToSupabase(
 }
 
 // Full sync: Supabase is source of truth when signed in
-// Only uploads local holdings if Supabase is empty (first-time migration)
+// An account's first sync on this phone uploads the local holdings first. Sign
+// out clears them, so they're a guest's stack or one from before accounts, and
+// syncLocalToSupabase skips any whose local id the account already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
@@ -410,11 +412,11 @@ export async function fullSync(
     const hasRemoteData = remoteSilver.length > 0 || remoteGold.length > 0 || remotePlatinum.length > 0 || remotePalladium.length > 0;
     const hasLocalData = localSilver.length > 0 || localGold.length > 0 || localPlatinum.length > 0 || localPalladium.length > 0;
 
-    // If this is first sync AND Supabase is empty AND we have local data,
-    // migrate local holdings to Supabase
+    // On this account's first sync here, add the local holdings to it, whether
+    // or not it already has some, so a guest who signs in keeps their stack
     let syncedCount = 0;
-    if (isFirstSync && !hasRemoteData && hasLocalData) {
-      console.log('First sync with empty Supabase - migrating local holdings...');
+    if (isFirstSync && hasLocalData) {
+      console.log(`First sync (cloud ${hasRemoteData ? 'has holdings' : 'empty'}) - adding local holdings...`);
       const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,
@@ -423,21 +425,22 @@ export async function fullSync(
         localPalladium
       );
 
-      if (syncError) {
-        console.warn('Migration to cloud had errors:', syncError);
-      } else {
-        syncedCount = uploaded;
-        // Re-fetch after migration to get the items with supabase_ids
-        const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium } = await fetchHoldings(userId);
-        return {
-          silverItems: newSilver,
-          goldItems: newGold,
-          platinumItems: newPlatinum,
-          palladiumItems: newPalladium,
-          syncedToCloud: syncedCount,
-          error: null,
-        };
-      }
+      // A failed upload keeps the local stack on screen and this sync unmarked,
+      // so the holdings aren't replaced by the cloud's and a later sync retries
+      if (syncError) throw syncError;
+      syncedCount = uploaded;
+      // Re-fetch after migration to get the items with supabase_ids. If that
+      // fails, the error keeps the local stack on screen instead of empty lists.
+      const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium, error: refetchError } = await fetchHoldings(userId);
+      if (refetchError) throw refetchError;
+      return {
+        silverItems: newSilver,
+        goldItems: newGold,
+        platinumItems: newPlatinum,
+        palladiumItems: newPalladium,
+        syncedToCloud: syncedCount,
+        error: null,
+      };
     }
 
     // Return Supabase holdings as source of truth
