@@ -9644,6 +9644,9 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
+      // A sync running now can still be about to hand the stack to this
+      // account, so an edit's add waits for it rather than read the new owner
+      const syncingAtSave = isSyncing;
       (async () => {
         try {
           if (editingItem && editingItem.supabase_id) {
@@ -9666,7 +9669,7 @@ function AppContent() {
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone
-              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
+              if (ownerRead && !syncingAtSave && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
                 const { data } = await addHolding(supabaseUser.id, item, targetMetal);
                 if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
               }
