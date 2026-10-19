@@ -189,3 +189,11 @@ test("an edit adds a holding with no row to this account only when it's this acc
   assert.equal(mayAddEditedHolding(local, 'a', 'b'), false);
   assert.equal(mayAddEditedHolding(local, stackOwnerOf(null, ['stack_synced_a'], 'b'), 'b'), false);
 });
+
+test("an edit adds a restored holding only to the account that restored it", () => {
+  const [forA] = asRestoredBy([{ id: 2 }], 'a');
+  assert.equal(mayAddEditedHolding(forA, null, 'b'), false);
+  assert.equal(mayAddEditedHolding(forA, 'b', 'b'), false);
+  assert.equal(mayAddEditedHolding(forA, 'b', 'a'), true);
+  assert.equal(mayAddEditedHolding(forA, null, 'a'), true);
+});

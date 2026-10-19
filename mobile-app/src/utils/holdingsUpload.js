@@ -123,9 +123,12 @@ export function mayUploadLocalStack(owner, userId) {
  * Whether an edit may add a holding that has no row yet to this account. One
  * a guest added may, as may any holding of a stack that's unowned or this
  * account's. One from another account's stack stays out of this one, as
- * after that account's session expired with holdings it never sent up.
+ * after that account's session expired with holdings it never sent up. A
+ * restored holding goes to the account that restored it and no other,
+ * whoever owns the stack.
  */
 export function mayAddEditedHolding(item, owner, userId) {
+  if (item?.restoredFor) return item.restoredFor === userId;
   return item?.addedAsGuest === true || mayUploadLocalStack(owner, userId);
 }
 
