@@ -95,7 +95,7 @@ export function freeWeekOfferBlocker(state) {
 }
 
 // Under a guest's list of what Gold adds, so the first two read true.
-export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions and voice come with a free account.";
+export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions and voice also need a free account.";
 
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a

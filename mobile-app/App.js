@@ -5906,6 +5906,18 @@ function AppContent() {
       return;
     }
 
+    // Troy's voice needs an account on the server, Gold or not, so a guest is
+    // asked for a free account instead of being offered Gold's trial
+    if (!supabaseUser) {
+      if (!auto) {
+        Alert.alert('Troy', "Hearing Troy's answers out loud needs a free account.", [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Create a free account', onPress: () => disableGuestMode() },
+        ]);
+      }
+      return;
+    }
+
     // Unload any existing sound + clean its cache file before starting a new one
     await unloadCurrentTroySound();
 

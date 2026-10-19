@@ -216,7 +216,7 @@ test("a guest is told the brief and Gold's Troy need a free account", () => {
   // On a phone with no account Troy goes through the guest route whatever the
   // plan, voice is off and the brief is only for accounts.
   const copy = freeWeekOfferCopy(WEEK, { guest: true });
-  assert.equal(copy.account, "The morning brief and Gold's Troy questions and voice come with a free account.");
+  assert.equal(copy.account, "The morning brief and Gold's Troy questions and voice also need a free account.");
   assert.equal(copy.account, GUEST_ACCOUNT_LINE);
   assert.equal(freeWeekOfferCopy(WEEK, { guest: true, moment: 'troy' }).account, GUEST_ACCOUNT_LINE);
   assert.equal(freeWeekOfferCopy(WEEK).account, null);
@@ -233,7 +233,7 @@ test('no long dashes or exclamation marks in anything a person reads', () => {
   for (const trial of [WEEK, { count: 1, unit: 'month' }, { count: 14, unit: 'day' }]) {
     for (const moment of ['holding', 'troy']) {
       const copy = freeWeekOfferCopy(trial, { guest: true, moment });
-      for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore]) {
+      for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore, copy.account]) {
         assert.doesNotMatch(s, longDash, s);
         assert.doesNotMatch(s, /!/, s);
       }
