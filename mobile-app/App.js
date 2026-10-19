@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -9138,9 +9138,8 @@ function AppContent() {
         }, !!supabaseUser);
 
         const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
-        const metalKey = (item.metal || 'silver').toLowerCase();
-        const setter = scanSetters[metalKey] || setSilverItems;
-        setter(prev => [...prev, newItem]);
+        const metalKey = holdingMetal(item.metal);
+        scanSetters[metalKey](prev => [...prev, newItem]);
         if (metalKey === 'silver') silverCount++;
         else if (metalKey === 'gold') goldCount++;
         newItems.push({ ...newItem, metal: metalKey });
@@ -9200,12 +9199,22 @@ function AppContent() {
       premium: item.premium,
     }, !!supabaseUser);
 
-    if (item.metal === 'silver') {
-      setSilverItems(prev => [...prev, newItem]);
-    } else {
-      setGoldItems(prev => [...prev, newItem]);
-    }
+    const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    const metalKey = holdingMetal(item.metal);
+    scanSetters[metalKey](prev => [...prev, newItem]);
     noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, 1);
+
+    // Sync to Supabase if signed in
+    if (supabaseUser) {
+      (async () => {
+        try {
+          await addHolding(supabaseUser.id, newItem, metalKey);
+          if (__DEV__) console.log('Synced scanned item to Supabase');
+        } catch (err) {
+          if (__DEV__) console.error('Failed to sync scanned item to Supabase:', err);
+        }
+      })();
+    }
 
     // Remove this item from scannedItems
     const remainingItems = scannedItems.filter((_, i) => i !== index);
