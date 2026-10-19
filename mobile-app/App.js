@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3868,10 +3868,10 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  if (cloudData.silverItems) setSilverItems(cloudData.silverItems);
-                  if (cloudData.goldItems) setGoldItems(cloudData.goldItems);
-                  if (cloudData.platinumItems) setPlatinumItems(cloudData.platinumItems);
-                  if (cloudData.palladiumItems) setPalladiumItems(cloudData.palladiumItems);
+                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, !!supabaseUser));
+                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, !!supabaseUser));
+                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, !!supabaseUser));
+                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, !!supabaseUser));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -7694,10 +7694,10 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
-              if (backup.data.silverItems) setSilverItems(backup.data.silverItems);
-              if (backup.data.goldItems) setGoldItems(backup.data.goldItems);
-              if (backup.data.platinumItems) setPlatinumItems(backup.data.platinumItems);
-              if (backup.data.palladiumItems) setPalladiumItems(backup.data.palladiumItems);
+              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, !!supabaseUser));
+              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, !!supabaseUser));
+              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, !!supabaseUser));
+              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, !!supabaseUser));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
               Alert.alert('Success', 'Backup restored!');
             }

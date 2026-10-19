@@ -43,6 +43,16 @@ export function asAddedBy(item, signedIn) {
 }
 
 /**
+ * Holdings restored from iCloud or a backup file. Restored with no account
+ * signed in they're the guest's choice of stack, whatever account they came
+ * from, so they carry the guest mark like anything else a guest adds.
+ */
+export function asRestoredBy(items, signedIn) {
+  if (signedIn || !Array.isArray(items)) return items;
+  return items.map((item) => asAddedBy(item, false));
+}
+
+/**
  * The holdings with the guest mark taken off, once an account has claimed
  * the stack they're in, so a mark only ever names a holding no account owns.
  * The same array comes back when nothing carries the mark.

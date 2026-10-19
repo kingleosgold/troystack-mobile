@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -120,4 +120,17 @@ test("a guest's additions to an expired session's stack go up when that account 
   const added = asAddedBy({ id: 2 }, false);
   assert.deepEqual(localHoldingsToSync([fromA, added], 'a', 'a', false), [added]);
   assert.deepEqual(localHoldingsToSync([fromA], 'a', 'a', false), []);
+});
+
+test("a backup restored with no account signed in goes up to the next account, beside another's stack too", () => {
+  // a's session expired. A guest restores a backup, from any account, and signs in as b.
+  const restored = asRestoredBy([{ id: 1, supabase_id: 'row-from-a' }, { id: 2 }], false);
+  assert.ok(restored.every((item) => item.addedAsGuest === true));
+  assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), restored);
+});
+
+test('a backup restored while signed in stays as it was', () => {
+  const items = [{ id: 1 }];
+  assert.equal(asRestoredBy(items, true), items);
+  assert.equal(asRestoredBy(undefined, false), undefined);
 });
