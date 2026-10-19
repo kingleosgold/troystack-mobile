@@ -20,20 +20,35 @@ export const SYNCED_KEY_PREFIX = 'stack_synced_';
  * Who the phone's stack belongs to. The recorded owner if there is one.
  * Builds before the owner was recorded only wrote stack_synced_<user id>, so
  * a key left on the phone names the account whose stack it is, this
- * account's own over another's. But 3.0.7's sign out left other accounts'
- * keys behind, so a key doesn't count for a guest's stack, which 3.0.7 never
- * had a signed-in stack become, since sign in and sign out cleared the guest
- * flag. With neither, the stack is a guest's or from before accounts, and the
- * owner is null.
+ * account's own over another's. With neither, the stack is a guest's or from
+ * before accounts, and the owner is null.
  */
-export function stackOwnerOf(recordedOwner, storageKeys, userId, guestStack = false) {
+export function stackOwnerOf(recordedOwner, storageKeys, userId) {
   if (recordedOwner) return recordedOwner;
-  if (guestStack) return null;
   const synced = (storageKeys || [])
     .filter((key) => typeof key === 'string' && key.startsWith(SYNCED_KEY_PREFIX))
     .map((key) => key.slice(SYNCED_KEY_PREFIX.length));
   if (synced.includes(userId)) return userId;
   return synced[0] || null;
+}
+
+/**
+ * A holding added while no account is signed in carries addedAsGuest, so a
+ * guest's holdings can be told apart from an account's stack they sit beside,
+ * as when a session expired and its stack stayed on the phone.
+ */
+export function asAddedBy(item, signedIn) {
+  return signedIn ? item : { ...item, addedAsGuest: true };
+}
+
+/**
+ * The local holdings an account's first sync on this phone may add to it. A
+ * stack with no owner, or this account's own, goes up whole. On a stack that
+ * belongs to another account only the holdings added as a guest go up.
+ */
+export function localHoldingsToSync(items, owner, userId) {
+  if (mayUploadLocalStack(owner, userId)) return items || [];
+  return (items || []).filter((item) => item.addedAsGuest === true);
 }
 
 /**

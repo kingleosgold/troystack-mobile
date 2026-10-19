@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, localHoldingsToSync, stackOwnerOf, syncedKeys } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -2422,13 +2422,6 @@ function AppContent() {
   // Supabase Auth
   const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
-  // Whether the stack on the phone was built in guest mode, this session or
-  // with the guest flag still stored. Sign in turns guest mode off before the
-  // sync reads it, so this keeps it.
-  const guestStackRef = useRef(false);
-  useEffect(() => {
-    if (guestMode) guestStackRef.current = true;
-  }, [guestMode]);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showAccountScreen, setShowAccountScreen] = useState(false);
   const [showResetPasswordScreen, setShowResetPasswordScreen] = useState(false);
@@ -3594,10 +3587,6 @@ function AppContent() {
 
       // A guest stays a guest across launches, with their holdings saved on this phone.
       // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
-      // A stored guest flag means the stack was built as a guest, even when a
-      // session came back from a sign in that was cut off before
-      // handleAuthSuccess cleared the flag
-      if (storedGuestMode === 'true') guestStackRef.current = true;
       const hasStoredHoldings = _silverCount + _goldCount + _platinumCount + _palladiumCount > 0;
       const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial, hasStoredHoldings);
       setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
@@ -3989,15 +3978,17 @@ function AppContent() {
         AsyncStorage.getItem(syncKey),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
         // A failed listing fails the sync, since without the keys an older
-        // build's stack would read as a guest's and could go up to this account
+        // build's stack would read as unowned and could go up to this account
         AsyncStorage.getAllKeys(),
       ]);
       // An older build left no owner, only stack_synced_<id> keys, so those
-      // name the owner of a stack that isn't a guest's until one is recorded
-      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id, guestStackRef.current);
-      // The phone's stack goes up on the first sync only if it's a guest's,
-      // from before accounts, or this account's own
-      const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      // name the owner until one is recorded
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
+      // On the first sync the phone's stack goes up whole if it's a guest's,
+      // from before accounts, or this account's own. Of another account's
+      // stack only what was added as a guest goes up.
+      const isFirstSync = !hasEverSynced;
+      const toSync = (items) => (isFirstSync ? localHoldingsToSync(items, stackOwner, supabaseUser.id) : items);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take
       if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
@@ -4009,11 +4000,11 @@ function AppContent() {
       // - Otherwise: just fetch from Supabase (source of truth)
       const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
         supabaseUser.id,
-        silverItems,
-        goldItems,
+        toSync(silverItems),
+        toSync(goldItems),
         isFirstSync,
-        platinumItems,
-        palladiumItems
+        toSync(platinumItems),
+        toSync(palladiumItems)
       );
 
       if (error) {
@@ -9042,7 +9033,7 @@ function AppContent() {
         }
         existingKeys.add(itemKey); // Prevent duplicates within the same import batch
 
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -9055,7 +9046,7 @@ function AppContent() {
           shipping: item.shipping || 0,
           spotPrice: item.spotPrice || 0,
           premium: item.premium || 0,
-        };
+        }, !!supabaseUser);
 
         const importSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
         const metalKey = (item.metal || 'silver').toLowerCase();
@@ -9111,7 +9102,7 @@ function AppContent() {
       const newItems = [];
 
       scannedItems.forEach((item, index) => {
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -9124,7 +9115,7 @@ function AppContent() {
           shipping: item.shipping,
           spotPrice: item.spotPrice,
           premium: item.premium,
-        };
+        }, !!supabaseUser);
 
         const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
         const metalKey = (item.metal || 'silver').toLowerCase();
@@ -9174,7 +9165,7 @@ function AppContent() {
   // Add a single scanned item and go to next or close
   const addScannedItemIndividually = (index) => {
     const item = scannedItems[index];
-    const newItem = {
+    const newItem = asAddedBy({
       id: Date.now(),
       productName: item.productName,
       source: item.source,
@@ -9187,7 +9178,7 @@ function AppContent() {
       shipping: item.shipping,
       spotPrice: item.spotPrice,
       premium: item.premium,
-    };
+    }, !!supabaseUser);
 
     if (item.metal === 'silver') {
       setSilverItems(prev => [...prev, newItem]);
@@ -9339,7 +9330,7 @@ function AppContent() {
       return;
     }
 
-    const item = {
+    const item = asAddedBy({
       id: editingItem?.id || Date.now(),
       productName: form.productName, source: form.source, datePurchased: form.datePurchased,
       timePurchased: form.timePurchased || undefined, // Optional time field
@@ -9348,7 +9339,7 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
-    };
+    }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
     if (editingItem && editingItem.scannedIndex !== undefined) {

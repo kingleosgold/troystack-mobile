@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, holdingsToUpload, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -42,7 +42,7 @@ test('nothing to upload from nothing', () => {
 });
 
 test('a recorded owner wins', () => {
-  assert.equal(stackOwnerOf('a', ['stack_synced_b'], 'b', true), 'a');
+  assert.equal(stackOwnerOf('a', ['stack_synced_b'], 'b'), 'a');
 });
 
 test("an older build's synced key names the owner of a stack with none recorded", () => {
@@ -75,16 +75,29 @@ test("a sync clears other accounts' synced keys and keeps its own", () => {
   assert.deepEqual(syncedKeys(undefined, 'b'), []);
 });
 
-test("a key 3.0.7 left behind doesn't claim a guest's stack", () => {
-  // On 3.0.7: a's session ended without a sign out, b synced and signed out
-  // and left stack_synced_a. After the update a guest builds a stack, or
-  // restores a backup carrying another account's supabase_ids.
-  assert.equal(stackOwnerOf(null, ['stack_synced_a'], 'c', true), null);
-  // A recorded owner counts whatever the stack is
-  assert.equal(stackOwnerOf('a', [], 'c', true), 'a');
+test("of another account's stack only what was added as a guest goes up", () => {
+  // a's session expired with its stack on the phone. Someone continues as a
+  // guest, adds a holding and signs in as b.
+  const fromA = { id: 1 };
+  const guestAdded = asAddedBy({ id: 2 }, false);
+  const owner = stackOwnerOf(null, ['stack_synced_a'], 'b');
+  assert.equal(owner, 'a');
+  assert.deepEqual(localHoldingsToSync([fromA, guestAdded], owner, 'b'), [guestAdded]);
 });
 
-test("a signed-in stack from 3.0.7 is its account's even with nothing from the cloud yet", () => {
-  // Every holding added since a's last sync, then a's session expired
-  assert.equal(stackOwnerOf(null, ['stack_synced_a'], 'b', false), 'a');
+test('a stack with no owner, or this account\'s own, goes up whole', () => {
+  const items = [{ id: 1 }, asAddedBy({ id: 2 }, false)];
+  assert.deepEqual(localHoldingsToSync(items, null, 'b'), items);
+  assert.deepEqual(localHoldingsToSync(items, 'b', 'b'), items);
+  assert.deepEqual(localHoldingsToSync(undefined, 'a', 'b'), []);
+});
+
+test('a key 3.0.7 left behind still lets a guest\'s holdings go up', () => {
+  const guestAdded = asAddedBy({ id: 3 }, false);
+  assert.deepEqual(localHoldingsToSync([guestAdded], stackOwnerOf(null, ['stack_synced_a'], 'c'), 'c'), [guestAdded]);
+});
+
+test('only a holding added with no account signed in is marked', () => {
+  assert.equal(asAddedBy({ id: 1 }, false).addedAsGuest, true);
+  assert.equal('addedAsGuest' in asAddedBy({ id: 1 }, true), false);
 });
