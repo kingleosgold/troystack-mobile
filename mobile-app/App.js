@@ -3865,7 +3865,9 @@ function AppContent() {
           // Cloud data is newer - ask user or auto-apply
           Alert.alert(
             'iCloud Data Found',
-            'Found newer data in iCloud. Would you like to use it?',
+            supabaseUser
+              ? 'Found newer data in iCloud. Would you like to use it? Its holdings are added to your account. Holdings already in your account stay.'
+              : 'Found newer data in iCloud. Would you like to use it?',
             [
               { text: 'Keep Local', style: 'cancel', onPress: () => syncToCloud() },
               {
@@ -7703,7 +7705,9 @@ function AppContent() {
 
       Alert.alert(
         'Restore Backup',
-        `Replace current data with backup from ${backup.timestamp}?`,
+        supabaseUser
+          ? `Restore the backup from ${backup.timestamp}? Its holdings are added to your account. Holdings already in your account stay.`
+          : `Replace current data with backup from ${backup.timestamp}?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -9389,6 +9393,9 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
+      // A restored holding keeps its restore mark and row through an edit, so
+      // the next sync still sends it up to the account that restored it
+      ...(editingItem?.restoredFor ? { restoredFor: editingItem.restoredFor, supabase_id: editingItem.supabase_id } : {}),
     }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
