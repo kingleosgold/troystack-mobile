@@ -5920,6 +5920,19 @@ function AppContent() {
       return;
     }
 
+    // Troy's voice needs an account on the server, Gold or not, so a guest is
+    // asked for a free account instead of being offered Gold's trial, whatever
+    // the reply's length
+    if (!supabaseUser) {
+      if (!auto) {
+        Alert.alert('Troy', "Hearing Troy's answers out loud needs a free account.", [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Create a free account', onPress: () => disableGuestMode() },
+        ]);
+      }
+      return;
+    }
+
     // Skip TTS for empty, error, or very short responses
     if (!text || text.length < 20 || text === 'No response') {
       return;
@@ -16212,6 +16225,9 @@ function AppContent() {
                       <Text style={{ flex: 1, color: '#e4e4e7', fontSize: scaledFonts.normal, lineHeight: bodyLine }}>{point}</Text>
                     </View>
                   ))}
+                  {copy.account && (
+                    <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.small, lineHeight: Math.round(scaledFonts.small * 1.5), marginTop: 6 }}>{copy.account}</Text>
+                  )}
                 </ScrollView>
                 <TouchableOpacity
                   onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); closeFreeWeekOffer('start'); }}
