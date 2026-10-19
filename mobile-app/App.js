@@ -2423,6 +2423,11 @@ function AppContent() {
   const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
   const [authStartMode, setAuthStartMode] = useState('signIn'); // the tab AuthScreen opens on
+  // Once anyone is signed in the next AuthScreen opens on sign in again, since an
+  // email sign up confirmed by its link never reaches handleAuthSuccess
+  useEffect(() => {
+    if (supabaseUser?.id) setAuthStartMode('signIn');
+  }, [supabaseUser?.id]);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showAccountScreen, setShowAccountScreen] = useState(false);
   const [showResetPasswordScreen, setShowResetPasswordScreen] = useState(false);
