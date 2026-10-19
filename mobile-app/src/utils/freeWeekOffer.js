@@ -100,7 +100,9 @@ export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions a
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a
  * week and a one month trial as a month; any other length is named as it is.
- * The lead names the moment, 'holding' or 'troy'. A guest also gets a Restore
+ * The lead names the moment, 'holding' or 'troy'. After Troy's answer a guest
+ * isn't told what free accounts get, since they have none and their own
+ * questions come from the guest count. A guest also gets a Restore
  * line. Only RevenueCat can say a guest pays, and it doesn't know about a
  * Lifetime bought on an earlier install until Restore, while the Apple ID
  * still reads trial eligible. And a guest gets an account line, since on a
@@ -113,9 +115,11 @@ export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } =
   const span = week ? 'a week' : month ? 'a month' : trialLabel(trial);
   return {
     title: `Try Gold free for ${span}`,
-    lead: moment === 'troy'
-      ? `Free accounts get ${TROY_FREE_DAILY_QUESTIONS} questions to Troy a day. Here's what Gold adds.`
-      : "Now that you've started your stack, here's what Gold adds.",
+    lead: moment !== 'troy'
+      ? "Now that you've started your stack, here's what Gold adds."
+      : guest
+        ? "Now that you've asked Troy, here's what Gold adds."
+        : `Free accounts get ${TROY_FREE_DAILY_QUESTIONS} questions to Troy a day. Here's what Gold adds.`,
     points: [
       'A brief each morning on the metals and your stack',
       `Up to ${TROY_GOLD_DAILY_QUESTIONS} questions to Troy a day and ${TROY_GOLD_DAILY_VOICE} voice uses, spoken questions and answers together`,

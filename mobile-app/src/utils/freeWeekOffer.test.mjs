@@ -130,6 +130,14 @@ test("after Troy's answer the lead names the free limit truthfully", () => {
   assert.equal(freeWeekOfferCopy(WEEK, { moment: 'troy', guest: true }).restore, 'Already have Gold? Restore purchases');
 });
 
+test("after Troy's answer a guest isn't told what free accounts get", () => {
+  const copy = freeWeekOfferCopy(WEEK, { moment: 'troy', guest: true });
+  assert.equal(copy.lead, "Now that you've asked Troy, here's what Gold adds.");
+  assert.doesNotMatch(copy.lead, /account|stack/);
+  assert.equal(copy.account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK, { moment: 'holding', guest: true }).lead, freeWeekOfferCopy(WEEK).lead);
+});
+
 test('a guest gets it too, since every new install opens as a guest', () => {
   assert.equal(freeWeekOfferBlocker(ready({ guest: true })), null);
 });
