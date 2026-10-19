@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { holdingsToUpload } from '../utils/holdingsUpload';
+import { purchaseDateForCloud } from '../utils/purchaseDate';
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -48,35 +49,6 @@ interface HoldingNotes {
   cost_basis?: number;
 }
 
-// Validate and format date for Supabase (must be YYYY-MM-DD or null)
-function formatDateForSupabase(dateStr: string | undefined | null): string | null {
-  if (!dateStr || dateStr.trim() === '') return null;
-
-  // Check if already in YYYY-MM-DD format
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return dateStr;
-  }
-
-  // Try to parse and reformat
-  try {
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      if (y >= 1900 && y <= 2100) {
-        return `${y}-${m}-${d}`;
-      }
-    }
-  } catch (e) {
-    // Ignore parse errors
-  }
-
-  // Invalid date - return null to prevent Supabase error 22008
-  console.warn('Invalid date format, setting to null:', dateStr);
-  return null;
-}
-
 // Convert local holding to Supabase format
 export function localToSupabase(
   holding: LocalHolding,
@@ -103,7 +75,7 @@ export function localToSupabase(
     weight_unit: 'oz',
     quantity: holding.quantity,
     purchase_price: holding.unitPrice,
-    purchase_date: formatDateForSupabase(holding.datePurchased),
+    purchase_date: purchaseDateForCloud(holding.datePurchased),
     notes: JSON.stringify(notesData),
   };
 }
@@ -232,7 +204,7 @@ export async function updateHolding(
       weight: holding.ozt,
       quantity: holding.quantity,
       purchase_price: holding.unitPrice,
-      purchase_date: formatDateForSupabase(holding.datePurchased),
+      purchase_date: purchaseDateForCloud(holding.datePurchased),
       metal,
       notes: JSON.stringify(notesData),
       updated_at: new Date().toISOString(),
