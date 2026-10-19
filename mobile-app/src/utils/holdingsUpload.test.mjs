@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -100,4 +100,17 @@ test('a key 3.0.7 left behind still lets a guest\'s holdings go up', () => {
 test('only a holding added with no account signed in is marked', () => {
   assert.equal(asAddedBy({ id: 1 }, false).addedAsGuest, true);
   assert.equal('addedAsGuest' in asAddedBy({ id: 1 }, true), false);
+});
+
+test("a claimed stack loses its guest marks, so a failed first sync can't hand it on", () => {
+  // A guest signs in as a, a's first sync fails, a's session expires, b signs in
+  const claimed = withoutGuestMark([asAddedBy({ id: 1 }, false), { id: 2 }]);
+  assert.deepEqual(claimed, [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(localHoldingsToSync(claimed, 'a', 'b'), []);
+});
+
+test('nothing marked keeps the same array', () => {
+  const items = [{ id: 1 }];
+  assert.equal(withoutGuestMark(items), items);
+  assert.equal(withoutGuestMark(undefined), undefined);
 });

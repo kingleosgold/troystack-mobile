@@ -42,6 +42,16 @@ export function asAddedBy(item, signedIn) {
 }
 
 /**
+ * The holdings with the guest mark taken off, once an account has claimed
+ * the stack they're in, so a mark only ever names a holding no account owns.
+ * The same array comes back when nothing carries the mark.
+ */
+export function withoutGuestMark(items) {
+  if (!(items || []).some((item) => item.addedAsGuest)) return items;
+  return items.map(({ addedAsGuest, ...item }) => item);
+}
+
+/**
  * The local holdings an account's first sync on this phone may add to it. A
  * stack with no owner, or this account's own, goes up whole. On a stack that
  * belongs to another account only the holdings added as a guest go up.

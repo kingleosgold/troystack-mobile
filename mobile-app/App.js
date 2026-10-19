@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, localHoldingsToSync, stackOwnerOf, syncedKeys } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3990,8 +3990,15 @@ function AppContent() {
       const isFirstSync = !hasEverSynced;
       const toSync = (items) => (isFirstSync ? localHoldingsToSync(items, stackOwner, supabaseUser.id) : items);
       // An unowned stack is this account's from here, before anything that can
-      // fail, so a failed sync can't leave it for the next account to take
+      // fail, so a failed sync can't leave it for the next account to take.
+      // Its guest marks come off too, or they'd let the next account take it.
       if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
+      if (mayUploadLocalStack(stackOwner, supabaseUser.id)) {
+        setSilverItems(withoutGuestMark);
+        setGoldItems(withoutGuestMark);
+        setPlatinumItems(withoutGuestMark);
+        setPalladiumItems(withoutGuestMark);
+      }
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
