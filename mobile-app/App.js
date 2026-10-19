@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -9648,9 +9648,17 @@ function AppContent() {
               await updateHolding(existingHolding.id, item, targetMetal);
               if (__DEV__) console.log('Updated existing holding in Supabase');
             } else {
-              // Not in Supabase yet, add it
-              const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-              if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              // Not in Supabase yet. Add it if it's this account's to take, never
+              // a holding of another account's stack left on the phone
+              const [recordedOwner, storageKeys] = await Promise.all([
+                AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+                AsyncStorage.getAllKeys(),
+              ]);
+              const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
+              if (mayAddEditedHolding(item, stackOwner, supabaseUser.id)) {
+                const { data } = await addHolding(supabaseUser.id, item, targetMetal);
+                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              }
             }
           } else {
             // New item - add to Supabase
