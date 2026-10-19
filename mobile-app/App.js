@@ -4041,7 +4041,9 @@ function AppContent() {
 
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
-        setSyncError(error.message);
+        // A restore that landed while this sync ran is sent up by the next
+        // auto sync, so its failure doesn't hold that one back
+        if (restoreCountRef.current === restoresAtStart) setSyncError(error.message);
         return false;
       } else {
         // Mark that this user has synced at least once, and that the stack on
@@ -4072,7 +4074,7 @@ function AppContent() {
       return true;
     } catch (err) {
       if (__DEV__) console.error('Supabase sync failed:', err);
-      setSyncError(err.message || 'Sync failed');
+      if (restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
       return false;
     } finally {
       setIsSyncing(false);
