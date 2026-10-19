@@ -3868,11 +3868,12 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, !!supabaseUser));
-                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, !!supabaseUser));
-                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, !!supabaseUser));
-                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, !!supabaseUser));
+                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
+                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
+                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
+                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, supabaseUser?.id || null));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+                  if (supabaseUser) setHasSyncedOnce(false); // send it up to the account now
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
@@ -7694,11 +7695,12 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
-              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, !!supabaseUser));
-              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, !!supabaseUser));
-              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, !!supabaseUser));
-              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, !!supabaseUser));
+              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
+              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
+              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
+              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, supabaseUser?.id || null));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+              if (supabaseUser) setHasSyncedOnce(false); // send it up to the account now
               Alert.alert('Success', 'Backup restored!');
             }
           }

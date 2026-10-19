@@ -124,19 +124,38 @@ test("a guest's additions to an expired session's stack go up when that account 
 
 test("a backup restored with no account signed in goes up to the next account, beside another's stack too", () => {
   // a's session expired. A guest restores a backup, from any account, and signs in as b.
-  const restored = asRestoredBy([{ id: 1, supabase_id: 'row-from-a' }, { id: 2 }], false);
+  const restored = asRestoredBy([{ id: 1, supabase_id: 'row-from-a' }, { id: 2 }], null);
   assert.ok(restored.every((item) => item.addedAsGuest === true));
   assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), restored);
 });
 
 test('a backup restored while signed in is that account\'s, so a guest backup loses its marks', () => {
-  const items = [{ id: 1 }];
-  assert.equal(asRestoredBy(items, true), items);
-  assert.equal(asRestoredBy(undefined, false), undefined);
+  assert.equal(asRestoredBy(undefined, null), undefined);
+  assert.equal(asRestoredBy(undefined, 'a'), undefined);
   // Made as a guest, restored while a is signed in, then a's session expires and b signs in
-  const restored = asRestoredBy([asAddedBy({ id: 2 }, false)], true);
-  assert.deepEqual(restored, [{ id: 2 }]);
+  const restored = asRestoredBy([asAddedBy({ id: 2 }, false)], 'a');
+  assert.deepEqual(restored, [{ id: 2, restoredFor: 'a' }]);
   assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), []);
+  assert.deepEqual(localHoldingsToSync(restored, 'a', 'b', false), []);
+});
+
+test('a backup restored while signed in goes up on that account\'s next sync', () => {
+  const fromCloud = { id: 1, supabase_id: 'row-1' };
+  const restored = asRestoredBy([{ id: 2 }, { id: 3, supabase_id: 'row-3' }], 'a');
+  assert.ok(restored.every((item) => item.restoredFor === 'a'));
+  assert.deepEqual(localHoldingsToSync([fromCloud, ...restored], 'a', 'a', false), restored);
+});
+
+test("a backup restored for one account never goes up to another", () => {
+  const restored = asRestoredBy([{ id: 2 }], 'a');
+  assert.deepEqual(localHoldingsToSync(restored, 'a', 'b', false), []);
+  assert.deepEqual(localHoldingsToSync(restored, 'a', null, false), []);
+});
+
+test('a backup made after a restore takes the new restorer, or the guest mark with no account', () => {
+  const restoredForA = asRestoredBy([{ id: 2 }], 'a');
+  assert.deepEqual(asRestoredBy(restoredForA, 'b'), [{ id: 2, restoredFor: 'b' }]);
+  assert.deepEqual(asRestoredBy(restoredForA, null), [{ id: 2, addedAsGuest: true }]);
 });
 
 test('a scanned holding is filed under its own metal', () => {
