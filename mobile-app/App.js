@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, mayUploadLocalStack, stackOwnerOf } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3079,7 +3079,10 @@ function AppContent() {
         HOLDINGS_OWNER_KEY,
       ];
       if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
-      await AsyncStorage.multiRemove(userKeys);
+      // Every account's synced key goes with the stack, a key left by a
+      // session that ended without a sign out included
+      const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
+      await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -4007,6 +4010,10 @@ function AppContent() {
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs
         await AsyncStorage.multiSet([[syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        // Other accounts' synced keys named the owner only until one was
+        // recorded, and the stack they named is gone from the phone now
+        const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
+        if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced);
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);

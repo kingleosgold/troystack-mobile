@@ -33,6 +33,18 @@ export function stackOwnerOf(recordedOwner, storageKeys, userId) {
 }
 
 /**
+ * The stack_synced_ keys among storageKeys, all of them, or all but this
+ * account's. A key left by a session that ended without a sign out outlives
+ * its stack once another account syncs or signs out, and would then block a
+ * guest's, so sign out clears them all and a sync clears the others.
+ */
+export function syncedKeys(storageKeys, exceptUserId = null) {
+  return (storageKeys || []).filter((key) => typeof key === 'string'
+    && key.startsWith(SYNCED_KEY_PREFIX)
+    && key !== `${SYNCED_KEY_PREFIX}${exceptUserId}`);
+}
+
+/**
  * Whether the phone's stack may go up to this account. A stack with no owner
  * is a guest's or from before accounts. One owned by this account is its own.
  * One owned by another account stays out of this one, as after a session

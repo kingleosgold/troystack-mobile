@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, holdingsToUpload, mayUploadLocalStack, stackOwnerOf } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, holdingsToUpload, mayUploadLocalStack, stackOwnerOf, syncedKeys } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -60,4 +60,17 @@ test("this account's own synced key wins over another's", () => {
 test('no owner and no synced key is a guest stack', () => {
   assert.equal(stackOwnerOf(null, ['stack_silver', 'stack_guest_mode'], 'b'), null);
   assert.equal(stackOwnerOf(undefined, undefined, 'b'), null);
+});
+
+test('sign out clears every synced key, so a later guest stack has no owner', () => {
+  // a's session ended without a sign out, b synced and then signed out
+  const keys = ['stack_synced_a', 'stack_synced_b', 'stack_theme'];
+  assert.deepEqual(syncedKeys(keys), ['stack_synced_a', 'stack_synced_b']);
+  const left = keys.filter((key) => !syncedKeys(keys).includes(key));
+  assert.equal(stackOwnerOf(null, left, 'c'), null);
+});
+
+test("a sync clears other accounts' synced keys and keeps its own", () => {
+  assert.deepEqual(syncedKeys(['stack_synced_a', 'stack_synced_b', 'stack_gold'], 'b'), ['stack_synced_a']);
+  assert.deepEqual(syncedKeys(undefined, 'b'), []);
 });
