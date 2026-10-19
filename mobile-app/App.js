@@ -3593,7 +3593,8 @@ function AppContent() {
 
       // A guest stays a guest across launches, with their holdings saved on this phone.
       // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
-      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial);
+      const hasStoredHoldings = _silverCount + _goldCount + _platinumCount + _palladiumCount > 0;
+      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial, hasStoredHoldings);
       setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
       if (firstLaunch) {
         AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {

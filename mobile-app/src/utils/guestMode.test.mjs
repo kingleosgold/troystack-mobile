@@ -62,3 +62,11 @@ test('a first launch opens as a guest', () => {
 test('a signed-in session wins over a first launch', () => {
   assert.equal(guestModeAtLaunch(null, true, true), false);
 });
+
+test("saved holdings mean it isn't a first launch, so an account's stack never opens as a guest's", () => {
+  // 3.0.7 cleared the guest flag at sign in and wrote the mark only when the
+  // tutorial closed, so an account's stack could have neither
+  assert.equal(isFirstLaunch(null, null, true), false);
+  assert.equal(isFirstLaunch(null, null, false), true);
+  assert.equal(isFirstLaunch(null, null), true);
+});
