@@ -129,8 +129,12 @@ test("a backup restored with no account signed in goes up to the next account, b
   assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), restored);
 });
 
-test('a backup restored while signed in stays as it was', () => {
+test('a backup restored while signed in is that account\'s, so a guest backup loses its marks', () => {
   const items = [{ id: 1 }];
   assert.equal(asRestoredBy(items, true), items);
   assert.equal(asRestoredBy(undefined, false), undefined);
+  // Made as a guest, restored while a is signed in, then a's session expires and b signs in
+  const restored = asRestoredBy([asAddedBy({ id: 2 }, false)], true);
+  assert.deepEqual(restored, [{ id: 2 }]);
+  assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), []);
 });

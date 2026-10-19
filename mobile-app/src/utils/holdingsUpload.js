@@ -46,9 +46,12 @@ export function asAddedBy(item, signedIn) {
  * Holdings restored from iCloud or a backup file. Restored with no account
  * signed in they're the guest's choice of stack, whatever account they came
  * from, so they carry the guest mark like anything else a guest adds.
+ * Restored while signed in they're that account's, so a backup made as a
+ * guest loses its marks.
  */
 export function asRestoredBy(items, signedIn) {
-  if (signedIn || !Array.isArray(items)) return items;
+  if (!Array.isArray(items)) return items;
+  if (signedIn) return withoutGuestMark(items);
   return items.map((item) => asAddedBy(item, false));
 }
 
