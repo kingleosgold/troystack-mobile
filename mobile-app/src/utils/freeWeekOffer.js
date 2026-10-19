@@ -94,13 +94,18 @@ export function freeWeekOfferBlocker(state) {
   return null;
 }
 
+// Under a guest's list of what Gold adds, so the first two read true.
+export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions and voice come with a free account.";
+
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a
  * week and a one month trial as a month; any other length is named as it is.
  * The lead names the moment, 'holding' or 'troy'. A guest also gets a Restore
  * line. Only RevenueCat can say a guest pays, and it doesn't know about a
  * Lifetime bought on an earlier install until Restore, while the Apple ID
- * still reads trial eligible.
+ * still reads trial eligible. And a guest gets an account line, since on a
+ * phone with no account Troy stays on the guest questions, voice is off and
+ * no morning brief comes, Gold or not.
  */
 export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } = {}) {
   const week = trial?.unit === 'day' && trial.count === 7;
@@ -120,6 +125,7 @@ export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } =
     start: week ? 'Start my free week' : month ? 'Start my free month' : 'Start my free trial',
     later: 'Not now',
     restore: guest ? 'Already have Gold? Restore purchases' : null,
+    account: guest ? GUEST_ACCOUNT_LINE : null,
   };
 }
 

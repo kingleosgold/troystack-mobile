@@ -6,6 +6,7 @@ import {
   FREE_WEEK_OFFER_KEY,
   FREE_WEEK_OFFER_TROY_DELAY_MS,
   freeWeekOfferBlocker,
+  GUEST_ACCOUNT_LINE,
   freeWeekOfferCopy,
   freeWeekOfferMoment,
   isFirstHolding,
@@ -207,7 +208,18 @@ test("what Gold adds, as the server and the Gold screen have it", () => {
 
 test('a signed-in account gets no Restore line and no account wording', () => {
   assert.equal(freeWeekOfferCopy(WEEK).restore, null);
-  assert.doesNotMatch(JSON.stringify(freeWeekOfferCopy(WEEK)), /account/);
+  assert.equal(freeWeekOfferCopy(WEEK).account, null);
+  assert.doesNotMatch(JSON.stringify(Object.values(freeWeekOfferCopy(WEEK))), /account/);
+});
+
+test("a guest is told the brief and Gold's Troy need a free account", () => {
+  // On a phone with no account Troy goes through the guest route whatever the
+  // plan, voice is off and the brief is only for accounts.
+  const copy = freeWeekOfferCopy(WEEK, { guest: true });
+  assert.equal(copy.account, "The morning brief and Gold's Troy questions and voice come with a free account.");
+  assert.equal(copy.account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true, moment: 'troy' }).account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK).account, null);
 });
 
 test('a guest gets a Restore line, so a Lifetime from an earlier install is one tap away', () => {

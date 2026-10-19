@@ -16193,6 +16193,9 @@ function AppContent() {
                       <Text style={{ flex: 1, color: '#e4e4e7', fontSize: scaledFonts.normal, lineHeight: bodyLine }}>{point}</Text>
                     </View>
                   ))}
+                  {copy.account && (
+                    <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.small, lineHeight: Math.round(scaledFonts.small * 1.5), marginTop: 6 }}>{copy.account}</Text>
+                  )}
                 </ScrollView>
                 <TouchableOpacity
                   onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); closeFreeWeekOffer('start'); }}
