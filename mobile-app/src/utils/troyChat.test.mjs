@@ -81,6 +81,12 @@ test('answeredTurns keeps only answered questions, newest six turns', async () =
   assert.deepEqual(answeredTurns(null), []);
 });
 
+test("guestAskBody marks a guest's question as the app's", async () => {
+  const { guestAskBody } = await import('./troyChat.js');
+  const history = [{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'a1' }];
+  assert.deepEqual(guestAskBody('Is silver cheap?', history), { message: 'Is silver cheap?', history, source: 'app' });
+});
+
 test('readGuestAsk tells a reply, the limit, a missing route and an error apart', async () => {
   const { readGuestAsk } = await import('./troyChat.js');
   const quota = { questionsUsed: 1, questionsLimit: 3, resetsAt: '2026-10-19T14:00:00.000Z' };
