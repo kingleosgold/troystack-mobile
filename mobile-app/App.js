@@ -9614,6 +9614,12 @@ function AppContent() {
     }
 
     // Normal add/edit flow for holdings
+    // A running sync uploads the stack as it read it and then swaps in the
+    // cloud's copy, which would roll an edit back, so the edit waits for it
+    if (editingItem && isSyncing) {
+      Alert.alert('Syncing', 'Your stack is syncing. Please save again in a moment.');
+      return;
+    }
     // A sync that replaced the stack while the sheet was open can take the
     // holding off the phone, as when it was another account's. Its edit then
     // has nothing to save, and must not go up to the signed-in account.
@@ -9644,9 +9650,6 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
-      // A sync running now can still be about to hand the stack to this
-      // account, so an edit's add waits for it rather than read the new owner
-      const syncingAtSave = isSyncing;
       (async () => {
         try {
           if (editingItem && editingItem.supabase_id) {
@@ -9669,7 +9672,7 @@ function AppContent() {
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone
-              if (ownerRead && !syncingAtSave && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
+              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
                 const { data } = await addHolding(supabaseUser.id, item, targetMetal);
                 if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
               }
