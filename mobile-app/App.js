@@ -8666,7 +8666,7 @@ function AppContent() {
         // Process ALL items and prepare them for preview
         const processedItems = [];
         for (const item of items) {
-          const extractedMetal = item.metal === 'gold' ? 'gold' : 'silver';
+          const extractedMetal = holdingMetal(item.metal);
 
           // Get historical spot price for this item (with time if available)
           let spotPrice = '';
