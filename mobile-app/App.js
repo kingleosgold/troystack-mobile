@@ -9614,6 +9614,15 @@ function AppContent() {
     }
 
     // Normal add/edit flow for holdings
+    // A sync that replaced the stack while the sheet was open can take the
+    // holding off the phone, as when it was another account's. Its edit then
+    // has nothing to save, and must not go up to the signed-in account.
+    if (editingItem && ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id))) {
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Holding Changed', 'This holding changed while you were editing it. Please open it again.');
+      return;
+    }
     // IMPORTANT: metalTab can be 'silver', 'gold', 'platinum', 'palladium', or 'both' - we must check explicitly
     const targetMetal = metalTab === 'both' ? 'silver' : metalTab; // Default to silver if 'both' (shouldn't happen but safety)
 
