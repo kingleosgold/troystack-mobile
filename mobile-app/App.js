@@ -16314,7 +16314,7 @@ function AppContent() {
                   {copy.accountAction && (
                     <TouchableOpacity
                       onPress={() => closeFreeWeekOffer('account')}
-                      style={{ paddingVertical: 8, alignSelf: 'flex-start' }}
+                      style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
                       accessibilityRole="button"
                     >
                       <Text style={{ color: '#C9A84C', fontSize: scaledFonts.small, fontWeight: '600' }}>{copy.accountAction}</Text>
