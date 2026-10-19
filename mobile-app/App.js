@@ -2422,8 +2422,9 @@ function AppContent() {
   // Supabase Auth
   const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
-  // Whether the stack on the phone was built in guest mode this session. Sign
-  // in turns guest mode off before the sync reads it, so this keeps it.
+  // Whether the stack on the phone was built in guest mode, this session or
+  // with the guest flag still stored. Sign in turns guest mode off before the
+  // sync reads it, so this keeps it.
   const guestStackRef = useRef(false);
   useEffect(() => {
     if (guestMode) guestStackRef.current = true;
@@ -3593,6 +3594,10 @@ function AppContent() {
 
       // A guest stays a guest across launches, with their holdings saved on this phone.
       // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
+      // A stored guest flag means the stack was built as a guest, even when a
+      // session came back from a sign in that was cut off before
+      // handleAuthSuccess cleared the flag
+      if (storedGuestMode === 'true') guestStackRef.current = true;
       const hasStoredHoldings = _silverCount + _goldCount + _platinumCount + _palladiumCount > 0;
       const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial, hasStoredHoldings);
       setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
