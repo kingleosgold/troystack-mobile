@@ -5901,13 +5901,9 @@ function AppContent() {
       return;
     }
 
-    // Skip TTS for empty, error, or very short responses
-    if (!text || text.length < 20 || text === 'No response') {
-      return;
-    }
-
     // Troy's voice needs an account on the server, Gold or not, so a guest is
-    // asked for a free account instead of being offered Gold's trial
+    // asked for a free account instead of being offered Gold's trial, whatever
+    // the reply's length
     if (!supabaseUser) {
       if (!auto) {
         Alert.alert('Troy', "Hearing Troy's answers out loud needs a free account.", [
@@ -5915,6 +5911,11 @@ function AppContent() {
           { text: 'Create a free account', onPress: () => disableGuestMode() },
         ]);
       }
+      return;
+    }
+
+    // Skip TTS for empty, error, or very short responses
+    if (!text || text.length < 20 || text === 'No response') {
       return;
     }
 
