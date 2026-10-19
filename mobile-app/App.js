@@ -23,19 +23,14 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import ErrorBoundary from './ErrorBoundary';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import * as ImagePicker from 'expo-image-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
-import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio, InterruptionModeIOS } from 'expo-av';
 import { setAudioModeAsync as setAudioModeAsyncV2 } from 'expo-audio';
 import TrackPlayer, { Capability, Event, State } from 'react-native-track-player';
 import Purchases from 'react-native-purchases';
 import * as Notifications from 'expo-notifications';
-import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
@@ -1041,12 +1036,7 @@ import Tutorial from './src/components/Tutorial';
 import TroyCoinIcon from './src/components/TroyCoinIcon';
 import GlobeIcon from './src/components/GlobeIcon';
 import StackSignalIcon from './src/components/StackSignalIcon';
-import ViewShot from 'react-native-view-shot';
-import Markdown from 'react-native-markdown-display';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
-import AuthScreen from './src/screens/AuthScreen';
-import AccountScreen from './src/screens/AccountScreen';
-import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import { AppleLogo, GoogleLogo, ProfileIcon, DashboardIcon, HoldingsIcon, AnalyticsIcon, SettingsIcon, SortIcon, TodayIcon, BellIcon, TrendingUpIcon, CalculatorIcon, TrophyIcon } from './src/components/icons';
 import {
   fetchHoldings,
@@ -1057,6 +1047,21 @@ import {
   findHoldingByLocalId,
 } from './src/services/supabaseHoldings';
 import { supabase } from './src/lib/supabase';
+import { lazyModule, lazyComponent } from './src/utils/lazyLoad';
+
+// Screens and libraries the dashboard doesn't need load the first time they're
+// used. Receipt scanning, export and import, the share card, Troy's markdown
+// and the account screens stay out of the cold start (src/utils/lazyLoad.js).
+const ImagePicker = lazyModule(() => require('expo-image-picker'));
+const FileSystem = lazyModule(() => require('expo-file-system/legacy'));
+const Sharing = lazyModule(() => require('expo-sharing'));
+const DocumentPicker = lazyModule(() => require('expo-document-picker'));
+const StoreReview = lazyModule(() => require('expo-store-review'));
+const ViewShot = lazyComponent(React, () => require('react-native-view-shot'));
+const Markdown = lazyComponent(React, () => require('react-native-markdown-display'));
+const AuthScreen = lazyComponent(React, () => require('./src/screens/AuthScreen'));
+const AccountScreen = lazyComponent(React, () => require('./src/screens/AccountScreen'));
+const ResetPasswordScreen = lazyComponent(React, () => require('./src/screens/ResetPasswordScreen'));
 
 // Counts open alerts so the free week offer never comes up on top of one.
 // React Native can't say whether an alert is showing, and AppState stays
