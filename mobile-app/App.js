@@ -39,6 +39,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
+import { HOLDINGS_OWNER_KEY, mayUploadLocalStack } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3073,6 +3074,7 @@ function AppContent() {
         'stack_review_prompts', 'stack_first_open_date',
         'lastSnapshotDate',
         'stack_guest_mode',
+        HOLDINGS_OWNER_KEY,
       ];
       if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
       await AsyncStorage.multiRemove(userKeys);
@@ -3966,8 +3968,13 @@ function AppContent() {
     try {
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
-      const hasEverSynced = await AsyncStorage.getItem(syncKey);
-      const isFirstSync = !hasEverSynced;
+      const [hasEverSynced, stackOwner] = await Promise.all([
+        AsyncStorage.getItem(syncKey),
+        AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+      ]);
+      // The phone's stack goes up on the first sync only if it's a guest's,
+      // from before accounts, or this account's own
+      const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
@@ -3988,8 +3995,9 @@ function AppContent() {
         setSyncError(error.message);
         return false;
       } else {
-        // Mark that this user has synced at least once
-        await AsyncStorage.setItem(syncKey, 'true');
+        // Mark that this user has synced at least once, and that the stack on
+        // this phone is now theirs
+        await AsyncStorage.multiSet([[syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
@@ -4029,13 +4037,11 @@ function AppContent() {
     }
   }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
 
-  // Reset sync flag when user signs out
+  // Reset sync flag when the account changes, a sign out included
   useEffect(() => {
-    if (!supabaseUser) {
-      setHasSyncedOnce(false);
-      setSyncError(null);
-    }
-  }, [supabaseUser]);
+    setHasSyncedOnce(false);
+    setSyncError(null);
+  }, [supabaseUser?.id]);
 
   // Milestone Reached Detection
   useEffect(() => {

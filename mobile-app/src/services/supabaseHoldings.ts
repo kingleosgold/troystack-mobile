@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { holdingsToUpload } from '../utils/holdingsUpload';
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -357,11 +358,9 @@ export async function syncLocalToSupabase(
     ];
 
     for (const { items, metal } of metalGroups) {
-      for (const item of items) {
-        if (existingLocalIds.has(item.id)) {
-          skippedCount++;
-          continue;
-        }
+      const toUpload = holdingsToUpload(items, existingLocalIds);
+      skippedCount += items.length - toUpload.length;
+      for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));
       }
     }
@@ -385,9 +384,9 @@ export async function syncLocalToSupabase(
 }
 
 // Full sync: Supabase is source of truth when signed in
-// An account's first sync on this phone uploads the local holdings first. Sign
-// out clears them, so they're a guest's stack or one from before accounts, and
-// syncLocalToSupabase skips any whose local id the account already has.
+// An account's first sync on this phone uploads the local holdings first, when
+// App.js says they may go to this account (src/utils/holdingsUpload.js), and
+// syncLocalToSupabase skips any the cloud already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
