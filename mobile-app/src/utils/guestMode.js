@@ -18,11 +18,13 @@ export const SEEN_FIRST_LAUNCH_KEY = 'stack_has_seen_tutorial';
 
 /**
  * Whether this is the phone's first launch of the app. Neither the guest flag
- * nor the first-launch mark has ever been written. Sign out clears the guest
- * flag but keeps the mark, so a signed-out phone still opens at sign in.
+ * nor the first-launch mark has ever been written, and no holdings are saved.
+ * Sign out clears the guest flag but keeps the mark, so a signed-out phone
+ * still opens at sign in. 3.0.7 could leave an account's stack with neither
+ * written, if its tutorial never closed, and that stack isn't a guest's.
  */
-export function isFirstLaunch(storedGuestMode, storedSeenFirstLaunch) {
-  return storedGuestMode == null && storedSeenFirstLaunch == null;
+export function isFirstLaunch(storedGuestMode, storedSeenFirstLaunch, hasStoredHoldings = false) {
+  return storedGuestMode == null && storedSeenFirstLaunch == null && !hasStoredHoldings;
 }
 
 /**

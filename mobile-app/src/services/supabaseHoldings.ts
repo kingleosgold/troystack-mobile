@@ -332,13 +332,12 @@ export async function syncLocalToSupabase(
 
     if (fetchError) throw fetchError;
 
-    // This account's row ids, and the local_ids (stored in notes JSON) of the
-    // rows it still has
+    // This account's row ids and their local_ids (stored in notes JSON),
+    // deleted rows included
     const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
     (existingHoldings || []).forEach((h: any) => {
       existingRowIds.add(h.id);
-      if (h.deleted_at) return;
       if (h.notes) {
         try {
           const notesData = JSON.parse(h.notes);
@@ -388,14 +387,14 @@ export async function syncLocalToSupabase(
 }
 
 // Full sync: Supabase is source of truth when signed in
-// An account's first sync on this phone uploads the local holdings first, when
-// App.js says they may go to this account (src/utils/holdingsUpload.js), and
-// syncLocalToSupabase skips any the cloud already has.
+// With uploadLocal it first uploads the local holdings App.js picked for this
+// account (src/utils/holdingsUpload.js), and syncLocalToSupabase skips any the
+// cloud already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
   localGold: LocalHolding[],
-  isFirstSync: boolean = false,
+  uploadLocal: boolean = false,
   localPlatinum: LocalHolding[] = [],
   localPalladium: LocalHolding[] = []
 ): Promise<{
@@ -415,11 +414,12 @@ export async function fullSync(
     const hasRemoteData = remoteSilver.length > 0 || remoteGold.length > 0 || remotePlatinum.length > 0 || remotePalladium.length > 0;
     const hasLocalData = localSilver.length > 0 || localGold.length > 0 || localPlatinum.length > 0 || localPalladium.length > 0;
 
-    // On this account's first sync here, add the local holdings to it, whether
-    // or not it already has some, so a guest who signs in keeps their stack
+    // Add the local holdings App.js picked for this account (src/utils/
+    // holdingsUpload.js), whether or not it already has some, so a guest who
+    // signs in keeps their stack
     let syncedCount = 0;
-    if (isFirstSync && hasLocalData) {
-      console.log(`First sync (cloud ${hasRemoteData ? 'has holdings' : 'empty'}) - adding local holdings...`);
+    if (uploadLocal && hasLocalData) {
+      console.log(`Adding local holdings (cloud ${hasRemoteData ? 'has holdings' : 'empty'})...`);
       const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,

@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, mayUploadLocalStack } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3079,7 +3079,10 @@ function AppContent() {
         HOLDINGS_OWNER_KEY,
       ];
       if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
-      await AsyncStorage.multiRemove(userKeys);
+      // Every account's synced key goes with the stack, a key left by a
+      // session that ended without a sign out included
+      const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
+      await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -3584,7 +3587,8 @@ function AppContent() {
 
       // A guest stays a guest across launches, with their holdings saved on this phone.
       // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
-      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial);
+      const hasStoredHoldings = _silverCount + _goldCount + _platinumCount + _palladiumCount > 0;
+      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial, hasStoredHoldings);
       setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
       if (firstLaunch) {
         AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
@@ -3864,10 +3868,10 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  if (cloudData.silverItems) setSilverItems(cloudData.silverItems);
-                  if (cloudData.goldItems) setGoldItems(cloudData.goldItems);
-                  if (cloudData.platinumItems) setPlatinumItems(cloudData.platinumItems);
-                  if (cloudData.palladiumItems) setPalladiumItems(cloudData.palladiumItems);
+                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, !!supabaseUser));
+                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, !!supabaseUser));
+                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, !!supabaseUser));
+                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, !!supabaseUser));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -3970,29 +3974,57 @@ function AppContent() {
     try {
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
-      const [hasEverSynced, stackOwner] = await Promise.all([
+      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
         AsyncStorage.getItem(syncKey),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+        // A failed listing fails the sync, since without the keys an older
+        // build's stack would read as unowned and could go up to this account
+        AsyncStorage.getAllKeys(),
       ]);
-      // The phone's stack goes up on the first sync only if it's a guest's,
-      // from before accounts, or this account's own
-      const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      // An older build left no owner, only stack_synced_<id> keys, so those
+      // name the owner until one is recorded
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
+      // On the first sync the phone's stack goes up whole if it's a guest's,
+      // from before accounts, or this account's own. Of another account's
+      // stack, and on any later sync, only what was added as a guest goes up.
+      const isFirstSync = !hasEverSynced;
+      const toSync = (items) => localHoldingsToSync(items, stackOwner, supabaseUser.id, isFirstSync);
+      const toUpload = [silverItems, goldItems, platinumItems, palladiumItems].map(toSync);
+      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
-      // fail, so a failed sync can't leave it for the next account to take
-      if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
+      // fail, so a failed sync can't leave it for the next account to take.
+      // Its guest marks come off too, or they'd let the next account take it,
+      // and both are stored in one write so a kill between them can't split
+      // them. On a later sync the marks stay until the cloud's copy replaces
+      // them, so a failed upload is tried again.
+      const claimWrites = stackOwner ? [] : [[HOLDINGS_OWNER_KEY, supabaseUser.id]];
+      const claimsStack = isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      if (claimsStack) {
+        [['stack_silver', silverItems], ['stack_gold', goldItems], ['stack_platinum', platinumItems], ['stack_palladium', palladiumItems]]
+          .forEach(([key, items]) => {
+            const cleaned = withoutGuestMark(items);
+            if (cleaned !== items) claimWrites.push([key, JSON.stringify(cleaned)]);
+          });
+      }
+      if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
+      if (claimsStack) {
+        setSilverItems(withoutGuestMark);
+        setGoldItems(withoutGuestMark);
+        setPlatinumItems(withoutGuestMark);
+        setPalladiumItems(withoutGuestMark);
+      }
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
-      // fullSync will:
-      // - If first sync AND Supabase empty: migrate local holdings to Supabase
-      // - Otherwise: just fetch from Supabase (source of truth)
+      // fullSync uploads toUpload when uploadLocal is set, then fetches the
+      // account's holdings from Supabase (source of truth)
       const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
         supabaseUser.id,
-        silverItems,
-        goldItems,
-        isFirstSync,
-        platinumItems,
-        palladiumItems
+        toUpload[0],
+        toUpload[1],
+        uploadLocal,
+        toUpload[2],
+        toUpload[3]
       );
 
       if (error) {
@@ -4003,6 +4035,10 @@ function AppContent() {
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs
         await AsyncStorage.multiSet([[syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        // Other accounts' synced keys named the owner only until one was
+        // recorded, and the stack they named is gone from the phone now
+        const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
+        if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
@@ -7658,10 +7694,10 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
-              if (backup.data.silverItems) setSilverItems(backup.data.silverItems);
-              if (backup.data.goldItems) setGoldItems(backup.data.goldItems);
-              if (backup.data.platinumItems) setPlatinumItems(backup.data.platinumItems);
-              if (backup.data.palladiumItems) setPalladiumItems(backup.data.palladiumItems);
+              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, !!supabaseUser));
+              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, !!supabaseUser));
+              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, !!supabaseUser));
+              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, !!supabaseUser));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
               Alert.alert('Success', 'Backup restored!');
             }
@@ -9017,7 +9053,7 @@ function AppContent() {
         }
         existingKeys.add(itemKey); // Prevent duplicates within the same import batch
 
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -9030,7 +9066,7 @@ function AppContent() {
           shipping: item.shipping || 0,
           spotPrice: item.spotPrice || 0,
           premium: item.premium || 0,
-        };
+        }, !!supabaseUser);
 
         const importSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
         const metalKey = (item.metal || 'silver').toLowerCase();
@@ -9086,7 +9122,7 @@ function AppContent() {
       const newItems = [];
 
       scannedItems.forEach((item, index) => {
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -9099,7 +9135,7 @@ function AppContent() {
           shipping: item.shipping,
           spotPrice: item.spotPrice,
           premium: item.premium,
-        };
+        }, !!supabaseUser);
 
         const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
         const metalKey = (item.metal || 'silver').toLowerCase();
@@ -9149,7 +9185,7 @@ function AppContent() {
   // Add a single scanned item and go to next or close
   const addScannedItemIndividually = (index) => {
     const item = scannedItems[index];
-    const newItem = {
+    const newItem = asAddedBy({
       id: Date.now(),
       productName: item.productName,
       source: item.source,
@@ -9162,7 +9198,7 @@ function AppContent() {
       shipping: item.shipping,
       spotPrice: item.spotPrice,
       premium: item.premium,
-    };
+    }, !!supabaseUser);
 
     if (item.metal === 'silver') {
       setSilverItems(prev => [...prev, newItem]);
@@ -9314,7 +9350,7 @@ function AppContent() {
       return;
     }
 
-    const item = {
+    const item = asAddedBy({
       id: editingItem?.id || Date.now(),
       productName: form.productName, source: form.source, datePurchased: form.datePurchased,
       timePurchased: form.timePurchased || undefined, // Optional time field
@@ -9323,7 +9359,7 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
-    };
+    }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
     if (editingItem && editingItem.scannedIndex !== undefined) {
