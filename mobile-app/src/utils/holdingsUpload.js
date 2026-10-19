@@ -85,10 +85,14 @@ export function withoutGuestMark(items) {
  * a stack that belongs to another account, and on any later sync, only the
  * holdings added as a guest go up, as when a session expired and someone
  * added to its stack before signing back in, and those this account restored
- * from a backup.
+ * from a backup. A holding restored for another account never goes up, even
+ * in a stack with no owner, as when that account's session ended before its
+ * first sync claimed the stack.
  */
 export function localHoldingsToSync(items, owner, userId, firstSync = true) {
-  if (firstSync && mayUploadLocalStack(owner, userId)) return items || [];
+  if (firstSync && mayUploadLocalStack(owner, userId)) {
+    return (items || []).filter((item) => !item.restoredFor || item.restoredFor === userId);
+  }
   return (items || []).filter((item) => item.addedAsGuest === true
     || (!!userId && item.restoredFor === userId));
 }

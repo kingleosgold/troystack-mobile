@@ -152,6 +152,14 @@ test("a backup restored for one account never goes up to another", () => {
   assert.deepEqual(localHoldingsToSync(restored, 'a', null, false), []);
 });
 
+test("a backup restored for one account stays out of another's first sync of an unowned stack", () => {
+  // a restores while signed in, a's session ends before a sync claims the stack, b signs in
+  const guestAdded = asAddedBy({ id: 1 }, false);
+  const restored = asRestoredBy([{ id: 2 }], 'a');
+  assert.deepEqual(localHoldingsToSync([guestAdded, ...restored], null, 'b'), [guestAdded]);
+  assert.deepEqual(localHoldingsToSync([guestAdded, ...restored], null, 'a'), [guestAdded, ...restored]);
+});
+
 test('a backup made after a restore takes the new restorer, or the guest mark with no account', () => {
   const restoredForA = asRestoredBy([{ id: 2 }], 'a');
   assert.deepEqual(asRestoredBy(restoredForA, 'b'), [{ id: 2, restoredFor: 'b' }]);
