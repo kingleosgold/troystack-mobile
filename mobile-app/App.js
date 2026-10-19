@@ -2422,6 +2422,12 @@ function AppContent() {
   // Supabase Auth
   const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
+  // Whether the stack on the phone was built in guest mode this session. Sign
+  // in turns guest mode off before the sync reads it, so this keeps it.
+  const guestStackRef = useRef(false);
+  useEffect(() => {
+    if (guestMode) guestStackRef.current = true;
+  }, [guestMode]);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showAccountScreen, setShowAccountScreen] = useState(false);
   const [showResetPasswordScreen, setShowResetPasswordScreen] = useState(false);
@@ -3979,10 +3985,8 @@ function AppContent() {
         AsyncStorage.getAllKeys().catch(() => []),
       ]);
       // An older build left no owner, only stack_synced_<id> keys, so those
-      // name the owner of a stack that came from the cloud until one is recorded
-      const stackFromCloud = [silverItems, goldItems, platinumItems, palladiumItems]
-        .some((items) => items.some((item) => item.supabase_id));
-      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id, stackFromCloud);
+      // name the owner of a stack that isn't a guest's until one is recorded
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id, guestStackRef.current);
       // The phone's stack goes up on the first sync only if it's a guest's,
       // from before accounts, or this account's own
       const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);

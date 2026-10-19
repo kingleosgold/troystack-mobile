@@ -21,14 +21,14 @@ export const SYNCED_KEY_PREFIX = 'stack_synced_';
  * Builds before the owner was recorded only wrote stack_synced_<user id>, so
  * a key left on the phone names the account whose stack it is, this
  * account's own over another's. But 3.0.7's sign out left other accounts'
- * keys behind, so a key only counts while the stack holds something from the
- * cloud (a supabase_id), which a stack an account synced always does and a
- * guest's doesn't. With neither, the stack is a guest's or from before
- * accounts, and the owner is null.
+ * keys behind, so a key doesn't count for a guest's stack, which 3.0.7 never
+ * had a signed-in stack become, since sign in and sign out cleared the guest
+ * flag. With neither, the stack is a guest's or from before accounts, and the
+ * owner is null.
  */
-export function stackOwnerOf(recordedOwner, storageKeys, userId, stackFromCloud = false) {
+export function stackOwnerOf(recordedOwner, storageKeys, userId, guestStack = false) {
   if (recordedOwner) return recordedOwner;
-  if (!stackFromCloud) return null;
+  if (guestStack) return null;
   const synced = (storageKeys || [])
     .filter((key) => typeof key === 'string' && key.startsWith(SYNCED_KEY_PREFIX))
     .map((key) => key.slice(SYNCED_KEY_PREFIX.length));
