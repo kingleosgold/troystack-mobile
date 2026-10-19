@@ -9642,6 +9642,13 @@ function AppContent() {
             await updateHolding(editingItem.supabase_id, item, targetMetal);
             if (__DEV__) console.log('Updated holding in Supabase');
           } else if (editingItem) {
+            // Who owns the phone's stack, read before the lookup so a sync that
+            // finishes during it can't make another account's holding read as ours
+            const [recordedOwner, storageKeys] = await Promise.all([
+              AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+              AsyncStorage.getAllKeys(),
+            ]);
+            const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
@@ -9650,11 +9657,6 @@ function AppContent() {
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone
-              const [recordedOwner, storageKeys] = await Promise.all([
-                AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
-                AsyncStorage.getAllKeys(),
-              ]);
-              const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
               if (mayAddEditedHolding(item, stackOwner, supabaseUser.id)) {
                 const { data } = await addHolding(supabaseUser.id, item, targetMetal);
                 if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
