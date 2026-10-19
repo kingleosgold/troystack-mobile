@@ -4006,9 +4006,8 @@ function AppContent() {
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
-      // fullSync will:
-      // - If first sync AND Supabase empty: migrate local holdings to Supabase
-      // - Otherwise: just fetch from Supabase (source of truth)
+      // fullSync uploads toUpload when uploadLocal is set, then fetches the
+      // account's holdings from Supabase (source of truth)
       const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],

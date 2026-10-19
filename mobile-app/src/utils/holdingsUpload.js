@@ -1,12 +1,13 @@
 /**
- * TroyStack - Which local holdings an account's first sync adds to it
+ * TroyStack - Which local holdings a sync adds to an account
  *
  * The first time an account syncs on this phone, the holdings already on the
  * phone go up to it, so a guest who signs in keeps their stack even when the
  * account has holdings of its own. The phone records which account its stack
- * belongs to, and a stack that belongs to another account never goes up. A
- * holding that is already a row in the cloud never goes up again. Nothing
- * here imports React Native, so it runs under `node --test`.
+ * belongs to. Of a stack that belongs to another account, and on any later
+ * sync, only the holdings added as a guest go up. A holding that is already a
+ * row in the cloud never goes up again. Nothing here imports React Native, so
+ * it runs under `node --test`.
  */
 
 // The Supabase user id whose stack is on this phone. An account claims it

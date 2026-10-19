@@ -387,9 +387,9 @@ export async function syncLocalToSupabase(
 }
 
 // Full sync: Supabase is source of truth when signed in
-// An account's first sync on this phone uploads the local holdings first, when
-// App.js says they may go to this account (src/utils/holdingsUpload.js), and
-// syncLocalToSupabase skips any the cloud already has.
+// With uploadLocal it first uploads the local holdings App.js picked for this
+// account (src/utils/holdingsUpload.js), and syncLocalToSupabase skips any the
+// cloud already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
