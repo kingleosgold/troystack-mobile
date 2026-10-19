@@ -13,6 +13,25 @@
 // when it starts syncing a stack with no owner, and sign out clears it.
 export const HOLDINGS_OWNER_KEY = 'stack_holdings_owner';
 
+// Written after an account's first sync on this phone, on every build.
+export const SYNCED_KEY_PREFIX = 'stack_synced_';
+
+/**
+ * Who the phone's stack belongs to. The recorded owner if there is one.
+ * Builds before the owner was recorded only wrote stack_synced_<user id>, and
+ * sign out clears that key, so one left on the phone names the account whose
+ * stack it is. This account's own key wins over another's. With neither, the
+ * stack is a guest's or from before accounts, and the owner is null.
+ */
+export function stackOwnerOf(recordedOwner, storageKeys, userId) {
+  if (recordedOwner) return recordedOwner;
+  const synced = (storageKeys || [])
+    .filter((key) => typeof key === 'string' && key.startsWith(SYNCED_KEY_PREFIX))
+    .map((key) => key.slice(SYNCED_KEY_PREFIX.length));
+  if (synced.includes(userId)) return userId;
+  return synced[0] || null;
+}
+
 /**
  * Whether the phone's stack may go up to this account. A stack with no owner
  * is a guest's or from before accounts. One owned by this account is its own.
@@ -26,8 +45,9 @@ export function mayUploadLocalStack(owner, userId) {
 /**
  * The holdings to insert. One whose supabase_id is a row of this account,
  * deleted or not, is skipped, even when that row never had a local id. So is
- * one whose local id the account still has. A supabase_id from another
- * account, as in a backup restored on this phone, doesn't stop the upload.
+ * one whose local id is on a row of this account, deleted or not. A
+ * supabase_id from another account, as in a backup restored on this phone,
+ * doesn't stop the upload.
  */
 export function holdingsToUpload(items, existingLocalIds, existingRowIds = new Set()) {
   return (items || []).filter((item) => !existingRowIds.has(item.supabase_id) && !existingLocalIds.has(item.id));

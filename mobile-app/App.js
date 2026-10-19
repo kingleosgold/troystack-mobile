@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, mayUploadLocalStack } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, mayUploadLocalStack, stackOwnerOf } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3970,10 +3970,14 @@ function AppContent() {
     try {
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
-      const [hasEverSynced, stackOwner] = await Promise.all([
+      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
         AsyncStorage.getItem(syncKey),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+        AsyncStorage.getAllKeys(),
       ]);
+      // An older build left no owner, only stack_synced_<id> keys, so those
+      // name the owner until one is recorded
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
       // The phone's stack goes up on the first sync only if it's a guest's,
       // from before accounts, or this account's own
       const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);

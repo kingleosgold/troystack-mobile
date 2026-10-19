@@ -332,13 +332,12 @@ export async function syncLocalToSupabase(
 
     if (fetchError) throw fetchError;
 
-    // This account's row ids, and the local_ids (stored in notes JSON) of the
-    // rows it still has
+    // This account's row ids and their local_ids (stored in notes JSON),
+    // deleted rows included
     const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
     (existingHoldings || []).forEach((h: any) => {
       existingRowIds.add(h.id);
-      if (h.deleted_at) return;
       if (h.notes) {
         try {
           const notesData = JSON.parse(h.notes);
