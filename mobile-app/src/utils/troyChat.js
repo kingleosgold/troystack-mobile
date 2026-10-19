@@ -126,6 +126,16 @@ export function answeredTurns(messages) {
 }
 
 /**
+ * The body of a guest's /v1/troy/ask. source 'app' tells the API the question
+ * came from the app, so Troy points the guest to an account in the app rather
+ * than to troystack.ai. The API also reads a call with no Origin header as the
+ * app's, and this says so outright.
+ */
+export function guestAskBody(message, history) {
+  return { message, history, source: 'app' };
+}
+
+/**
  * What a guest's /v1/troy/ask came back with, from its HTTP status and body.
  * reply: Troy answered, with the quota after it. limit: the day's questions
  * are used, with the quota. unavailable: the API has no guest route. error:
