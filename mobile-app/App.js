@@ -3976,11 +3976,13 @@ function AppContent() {
       const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
         AsyncStorage.getItem(syncKey),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
-        AsyncStorage.getAllKeys(),
+        AsyncStorage.getAllKeys().catch(() => []),
       ]);
       // An older build left no owner, only stack_synced_<id> keys, so those
-      // name the owner until one is recorded
-      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
+      // name the owner of a stack that came from the cloud until one is recorded
+      const stackFromCloud = [silverItems, goldItems, platinumItems, palladiumItems]
+        .some((items) => items.some((item) => item.supabase_id));
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id, stackFromCloud);
       // The phone's stack goes up on the first sync only if it's a guest's,
       // from before accounts, or this account's own
       const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);
@@ -4013,7 +4015,7 @@ function AppContent() {
         // Other accounts' synced keys named the owner only until one was
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
-        if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced);
+        if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);

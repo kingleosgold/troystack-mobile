@@ -42,23 +42,23 @@ test('nothing to upload from nothing', () => {
 });
 
 test('a recorded owner wins', () => {
-  assert.equal(stackOwnerOf('a', ['stack_synced_b'], 'b'), 'a');
+  assert.equal(stackOwnerOf('a', ['stack_synced_b'], 'b', true), 'a');
 });
 
 test("an older build's synced key names the owner of a stack with none recorded", () => {
   // The first update onto 3.0.7: account a's session expired and b signs in
   assert.equal(SYNCED_KEY_PREFIX, 'stack_synced_');
   const keys = ['stack_silver', 'stack_synced_a', 'stack_gold'];
-  assert.equal(stackOwnerOf(null, keys, 'b'), 'a');
-  assert.equal(mayUploadLocalStack(stackOwnerOf(null, keys, 'b'), 'b'), false);
+  assert.equal(stackOwnerOf(null, keys, 'b', true), 'a');
+  assert.equal(mayUploadLocalStack(stackOwnerOf(null, keys, 'b', true), 'b'), false);
 });
 
 test("this account's own synced key wins over another's", () => {
-  assert.equal(stackOwnerOf(null, ['stack_synced_a', 'stack_synced_b'], 'b'), 'b');
+  assert.equal(stackOwnerOf(null, ['stack_synced_a', 'stack_synced_b'], 'b', true), 'b');
 });
 
 test('no owner and no synced key is a guest stack', () => {
-  assert.equal(stackOwnerOf(null, ['stack_silver', 'stack_guest_mode'], 'b'), null);
+  assert.equal(stackOwnerOf(null, ['stack_silver', 'stack_guest_mode'], 'b', true), null);
   assert.equal(stackOwnerOf(undefined, undefined, 'b'), null);
 });
 
@@ -67,10 +67,19 @@ test('sign out clears every synced key, so a later guest stack has no owner', ()
   const keys = ['stack_synced_a', 'stack_synced_b', 'stack_theme'];
   assert.deepEqual(syncedKeys(keys), ['stack_synced_a', 'stack_synced_b']);
   const left = keys.filter((key) => !syncedKeys(keys).includes(key));
-  assert.equal(stackOwnerOf(null, left, 'c'), null);
+  assert.equal(stackOwnerOf(null, left, 'c', true), null);
 });
 
 test("a sync clears other accounts' synced keys and keeps its own", () => {
   assert.deepEqual(syncedKeys(['stack_synced_a', 'stack_synced_b', 'stack_gold'], 'b'), ['stack_synced_a']);
   assert.deepEqual(syncedKeys(undefined, 'b'), []);
+});
+
+test("a key 3.0.7 left behind doesn't claim a guest's stack, which holds nothing from the cloud", () => {
+  // On 3.0.7: a's session ended without a sign out, b synced and signed out
+  // and left stack_synced_a. After the update a guest builds a stack.
+  assert.equal(stackOwnerOf(null, ['stack_synced_a'], 'c', false), null);
+  assert.equal(stackOwnerOf(null, ['stack_synced_a'], 'c'), null);
+  // A recorded owner counts whatever the stack holds
+  assert.equal(stackOwnerOf('a', [], 'c', false), 'a');
 });
