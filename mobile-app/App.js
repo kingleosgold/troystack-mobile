@@ -3982,7 +3982,9 @@ function AppContent() {
       const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
         AsyncStorage.getItem(syncKey),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
-        AsyncStorage.getAllKeys().catch(() => []),
+        // A failed listing fails the sync, since without the keys an older
+        // build's stack would read as a guest's and could go up to this account
+        AsyncStorage.getAllKeys(),
       ]);
       // An older build left no owner, only stack_synced_<id> keys, so those
       // name the owner of a stack that isn't a guest's until one is recorded
