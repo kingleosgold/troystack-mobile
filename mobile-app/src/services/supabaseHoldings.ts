@@ -394,7 +394,7 @@ export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
   localGold: LocalHolding[],
-  isFirstSync: boolean = false,
+  uploadLocal: boolean = false,
   localPlatinum: LocalHolding[] = [],
   localPalladium: LocalHolding[] = []
 ): Promise<{
@@ -414,11 +414,12 @@ export async function fullSync(
     const hasRemoteData = remoteSilver.length > 0 || remoteGold.length > 0 || remotePlatinum.length > 0 || remotePalladium.length > 0;
     const hasLocalData = localSilver.length > 0 || localGold.length > 0 || localPlatinum.length > 0 || localPalladium.length > 0;
 
-    // On this account's first sync here, add the local holdings to it, whether
-    // or not it already has some, so a guest who signs in keeps their stack
+    // Add the local holdings App.js picked for this account (src/utils/
+    // holdingsUpload.js), whether or not it already has some, so a guest who
+    // signs in keeps their stack
     let syncedCount = 0;
-    if (isFirstSync && hasLocalData) {
-      console.log(`First sync (cloud ${hasRemoteData ? 'has holdings' : 'empty'}) - adding local holdings...`);
+    if (uploadLocal && hasLocalData) {
+      console.log(`Adding local holdings (cloud ${hasRemoteData ? 'has holdings' : 'empty'})...`);
       const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,

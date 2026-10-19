@@ -3986,14 +3986,18 @@ function AppContent() {
       const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
       // On the first sync the phone's stack goes up whole if it's a guest's,
       // from before accounts, or this account's own. Of another account's
-      // stack only what was added as a guest goes up.
+      // stack, and on any later sync, only what was added as a guest goes up.
       const isFirstSync = !hasEverSynced;
-      const toSync = (items) => (isFirstSync ? localHoldingsToSync(items, stackOwner, supabaseUser.id) : items);
+      const toSync = (items) => localHoldingsToSync(items, stackOwner, supabaseUser.id, isFirstSync);
+      const toUpload = [silverItems, goldItems, platinumItems, palladiumItems].map(toSync);
+      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take.
       // Its guest marks come off too, or they'd let the next account take it.
+      // On a later sync the marks stay until the cloud's copy replaces them,
+      // so a failed upload is tried again.
       if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
-      if (mayUploadLocalStack(stackOwner, supabaseUser.id)) {
+      if (isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id)) {
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
@@ -4007,11 +4011,11 @@ function AppContent() {
       // - Otherwise: just fetch from Supabase (source of truth)
       const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
         supabaseUser.id,
-        toSync(silverItems),
-        toSync(goldItems),
-        isFirstSync,
-        toSync(platinumItems),
-        toSync(palladiumItems)
+        toUpload[0],
+        toUpload[1],
+        uploadLocal,
+        toUpload[2],
+        toUpload[3]
       );
 
       if (error) {

@@ -52,12 +52,14 @@ export function withoutGuestMark(items) {
 }
 
 /**
- * The local holdings an account's first sync on this phone may add to it. A
- * stack with no owner, or this account's own, goes up whole. On a stack that
- * belongs to another account only the holdings added as a guest go up.
+ * The local holdings a sync may add to this account. On its first sync on
+ * this phone a stack with no owner, or this account's own, goes up whole. Of
+ * a stack that belongs to another account, and on any later sync, only the
+ * holdings added as a guest go up, as when a session expired and someone
+ * added to its stack before signing back in.
  */
-export function localHoldingsToSync(items, owner, userId) {
-  if (mayUploadLocalStack(owner, userId)) return items || [];
+export function localHoldingsToSync(items, owner, userId, firstSync = true) {
+  if (firstSync && mayUploadLocalStack(owner, userId)) return items || [];
   return (items || []).filter((item) => item.addedAsGuest === true);
 }
 

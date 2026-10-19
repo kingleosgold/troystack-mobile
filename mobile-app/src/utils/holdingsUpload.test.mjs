@@ -114,3 +114,10 @@ test('nothing marked keeps the same array', () => {
   assert.equal(withoutGuestMark(items), items);
   assert.equal(withoutGuestMark(undefined), undefined);
 });
+
+test("a guest's additions to an expired session's stack go up when that account signs back in", () => {
+  const fromA = { id: 1, supabase_id: 'row-1' };
+  const added = asAddedBy({ id: 2 }, false);
+  assert.deepEqual(localHoldingsToSync([fromA, added], 'a', 'a', false), [added]);
+  assert.deepEqual(localHoldingsToSync([fromA], 'a', 'a', false), []);
+});
