@@ -4037,6 +4037,13 @@ function AppContent() {
     }
   }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
 
+  // The loading screen after sign in waits for this sign-in's sync. A sync
+  // that finished or failed before the screen came up won't run again, so
+  // that screen comes down as soon as nothing is syncing.
+  useEffect(() => {
+    if (needsPostSignInSync && !isSyncing && (hasSyncedOnce || syncError)) setNeedsPostSignInSync(false);
+  }, [needsPostSignInSync, isSyncing, hasSyncedOnce, syncError]);
+
   // Reset sync flag when the account changes, a sign out included
   useEffect(() => {
     setHasSyncedOnce(false);
