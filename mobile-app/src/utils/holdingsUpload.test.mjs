@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -137,4 +137,18 @@ test('a backup restored while signed in is that account\'s, so a guest backup lo
   const restored = asRestoredBy([asAddedBy({ id: 2 }, false)], true);
   assert.deepEqual(restored, [{ id: 2 }]);
   assert.deepEqual(localHoldingsToSync(restored, 'a', 'b'), []);
+});
+
+test('a scanned holding is filed under its own metal', () => {
+  for (const metal of HOLDING_METALS) assert.equal(holdingMetal(metal), metal);
+  assert.equal(holdingMetal('Platinum'), 'platinum');
+  assert.equal(holdingMetal(' PALLADIUM '), 'palladium');
+});
+
+test('a scanned holding with no metal the app tracks goes under silver', () => {
+  assert.equal(holdingMetal(undefined), 'silver');
+  assert.equal(holdingMetal(null), 'silver');
+  assert.equal(holdingMetal(''), 'silver');
+  assert.equal(holdingMetal('copper'), 'silver');
+  assert.equal(holdingMetal(7), 'silver');
 });

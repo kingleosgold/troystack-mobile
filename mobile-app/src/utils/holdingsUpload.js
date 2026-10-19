@@ -33,6 +33,19 @@ export function stackOwnerOf(recordedOwner, storageKeys, userId) {
   return synced[0] || null;
 }
 
+// The four metals a holding is filed under.
+export const HOLDING_METALS = ['silver', 'gold', 'platinum', 'palladium'];
+
+/**
+ * The metal a scanned or imported holding is filed under. Scans name it in
+ * any case, and one with no metal or one the app doesn't track goes under
+ * silver, as the add sheet does.
+ */
+export function holdingMetal(metal) {
+  const key = typeof metal === 'string' ? metal.trim().toLowerCase() : '';
+  return HOLDING_METALS.includes(key) ? key : 'silver';
+}
+
 /**
  * A holding added while no account is signed in carries addedAsGuest, so a
  * guest's holdings can be told apart from an account's stack they sit beside,
