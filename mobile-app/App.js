@@ -3975,6 +3975,9 @@ function AppContent() {
       // The phone's stack goes up on the first sync only if it's a guest's,
       // from before accounts, or this account's own
       const isFirstSync = !hasEverSynced && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      // An unowned stack is this account's from here, before anything that can
+      // fail, so a failed sync can't leave it for the next account to take
+      if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 

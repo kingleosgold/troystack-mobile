@@ -9,7 +9,8 @@
  * here imports React Native, so it runs under `node --test`.
  */
 
-// The Supabase user id whose stack is on this phone. Sign out clears it.
+// The Supabase user id whose stack is on this phone. An account claims it
+// when it starts syncing a stack with no owner, and sign out clears it.
 export const HOLDINGS_OWNER_KEY = 'stack_holdings_owner';
 
 /**
@@ -23,10 +24,11 @@ export function mayUploadLocalStack(owner, userId) {
 }
 
 /**
- * The holdings to insert. A holding with a supabase_id came from the cloud,
- * so it's skipped even when the cloud row has since been deleted or never had
- * a local id. So is one whose local id the account already has.
+ * The holdings to insert. One whose supabase_id is a row of this account,
+ * deleted or not, is skipped, even when that row never had a local id. So is
+ * one whose local id the account still has. A supabase_id from another
+ * account, as in a backup restored on this phone, doesn't stop the upload.
  */
-export function holdingsToUpload(items, existingLocalIds) {
-  return (items || []).filter((item) => !item.supabase_id && !existingLocalIds.has(item.id));
+export function holdingsToUpload(items, existingLocalIds, existingRowIds = new Set()) {
+  return (items || []).filter((item) => !existingRowIds.has(item.supabase_id) && !existingLocalIds.has(item.id));
 }

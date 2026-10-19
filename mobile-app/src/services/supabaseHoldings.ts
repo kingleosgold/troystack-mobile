@@ -323,18 +323,22 @@ export async function syncLocalToSupabase(
   let skippedCount = 0;
 
   try {
-    // Get existing holdings to avoid duplicates
+    // Get existing holdings to avoid duplicates, deleted ones included so a
+    // holding this account deleted doesn't come back from an old copy
     const { data: existingHoldings, error: fetchError } = await supabase
       .from('holdings')
-      .select('notes')
-      .eq('user_id', userId)
-      .is('deleted_at', null);
+      .select('id, notes, deleted_at')
+      .eq('user_id', userId);
 
     if (fetchError) throw fetchError;
 
-    // Build set of existing local_ids (stored in notes JSON)
+    // This account's row ids, and the local_ids (stored in notes JSON) of the
+    // rows it still has
+    const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
     (existingHoldings || []).forEach((h: any) => {
+      existingRowIds.add(h.id);
+      if (h.deleted_at) return;
       if (h.notes) {
         try {
           const notesData = JSON.parse(h.notes);
@@ -358,7 +362,7 @@ export async function syncLocalToSupabase(
     ];
 
     for (const { items, metal } of metalGroups) {
-      const toUpload = holdingsToUpload(items, existingLocalIds);
+      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));

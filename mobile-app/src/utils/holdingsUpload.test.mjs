@@ -21,13 +21,19 @@ test("another account's stack never goes up", () => {
   assert.equal(mayUploadLocalStack('a', 'b'), false);
 });
 
-test('only holdings the cloud has never had go up', () => {
+test('only holdings this account has never had go up', () => {
   const guest = { id: 1 };
   const fromCloud = { id: 2, supabase_id: 'row-2' };
   const deletedInCloud = { id: 3, supabase_id: 'row-3' };
   const sameLocalId = { id: 4 };
   const items = [guest, fromCloud, deletedInCloud, sameLocalId];
-  assert.deepEqual(holdingsToUpload(items, new Set([4])), [guest]);
+  assert.deepEqual(holdingsToUpload(items, new Set([4]), new Set(['row-2', 'row-3'])), [guest]);
+});
+
+test("a backup from another account goes up, since its rows aren't this account's", () => {
+  const restored = { id: 5, supabase_id: 'other-account-row' };
+  assert.deepEqual(holdingsToUpload([restored], new Set(), new Set(['row-2'])), [restored]);
+  assert.deepEqual(holdingsToUpload([restored], new Set()), [restored]);
 });
 
 test('nothing to upload from nothing', () => {
