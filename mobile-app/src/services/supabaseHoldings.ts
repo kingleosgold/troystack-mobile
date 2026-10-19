@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { holdingsToUpload } from '../utils/holdingsUpload';
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -322,18 +323,22 @@ export async function syncLocalToSupabase(
   let skippedCount = 0;
 
   try {
-    // Get existing holdings to avoid duplicates
+    // Get existing holdings to avoid duplicates, deleted ones included so a
+    // holding this account deleted doesn't come back from an old copy
     const { data: existingHoldings, error: fetchError } = await supabase
       .from('holdings')
-      .select('notes')
-      .eq('user_id', userId)
-      .is('deleted_at', null);
+      .select('id, notes, deleted_at')
+      .eq('user_id', userId);
 
     if (fetchError) throw fetchError;
 
-    // Build set of existing local_ids (stored in notes JSON)
+    // This account's row ids, and the local_ids (stored in notes JSON) of the
+    // rows it still has
+    const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
     (existingHoldings || []).forEach((h: any) => {
+      existingRowIds.add(h.id);
+      if (h.deleted_at) return;
       if (h.notes) {
         try {
           const notesData = JSON.parse(h.notes);
@@ -357,11 +362,9 @@ export async function syncLocalToSupabase(
     ];
 
     for (const { items, metal } of metalGroups) {
-      for (const item of items) {
-        if (existingLocalIds.has(item.id)) {
-          skippedCount++;
-          continue;
-        }
+      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
+      skippedCount += items.length - toUpload.length;
+      for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));
       }
     }
@@ -385,7 +388,9 @@ export async function syncLocalToSupabase(
 }
 
 // Full sync: Supabase is source of truth when signed in
-// Only uploads local holdings if Supabase is empty (first-time migration)
+// An account's first sync on this phone uploads the local holdings first, when
+// App.js says they may go to this account (src/utils/holdingsUpload.js), and
+// syncLocalToSupabase skips any the cloud already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
@@ -410,11 +415,11 @@ export async function fullSync(
     const hasRemoteData = remoteSilver.length > 0 || remoteGold.length > 0 || remotePlatinum.length > 0 || remotePalladium.length > 0;
     const hasLocalData = localSilver.length > 0 || localGold.length > 0 || localPlatinum.length > 0 || localPalladium.length > 0;
 
-    // If this is first sync AND Supabase is empty AND we have local data,
-    // migrate local holdings to Supabase
+    // On this account's first sync here, add the local holdings to it, whether
+    // or not it already has some, so a guest who signs in keeps their stack
     let syncedCount = 0;
-    if (isFirstSync && !hasRemoteData && hasLocalData) {
-      console.log('First sync with empty Supabase - migrating local holdings...');
+    if (isFirstSync && hasLocalData) {
+      console.log(`First sync (cloud ${hasRemoteData ? 'has holdings' : 'empty'}) - adding local holdings...`);
       const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,
@@ -423,21 +428,22 @@ export async function fullSync(
         localPalladium
       );
 
-      if (syncError) {
-        console.warn('Migration to cloud had errors:', syncError);
-      } else {
-        syncedCount = uploaded;
-        // Re-fetch after migration to get the items with supabase_ids
-        const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium } = await fetchHoldings(userId);
-        return {
-          silverItems: newSilver,
-          goldItems: newGold,
-          platinumItems: newPlatinum,
-          palladiumItems: newPalladium,
-          syncedToCloud: syncedCount,
-          error: null,
-        };
-      }
+      // A failed upload keeps the local stack on screen and this sync unmarked,
+      // so the holdings aren't replaced by the cloud's and a later sync retries
+      if (syncError) throw syncError;
+      syncedCount = uploaded;
+      // Re-fetch after migration to get the items with supabase_ids. If that
+      // fails, the error keeps the local stack on screen instead of empty lists.
+      const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium, error: refetchError } = await fetchHoldings(userId);
+      if (refetchError) throw refetchError;
+      return {
+        silverItems: newSilver,
+        goldItems: newGold,
+        platinumItems: newPlatinum,
+        palladiumItems: newPalladium,
+        syncedToCloud: syncedCount,
+        error: null,
+      };
     }
 
     // Return Supabase holdings as source of truth
