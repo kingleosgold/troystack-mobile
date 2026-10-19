@@ -2430,6 +2430,9 @@ function AppContent() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
+  // Counts restores, so a sync that was already running when one landed
+  // leaves the restored stack for the next sync instead of replacing it
+  const restoreCountRef = useRef(0);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -3862,17 +3865,25 @@ function AppContent() {
           // Cloud data is newer - ask user or auto-apply
           Alert.alert(
             'iCloud Data Found',
-            'Found newer data in iCloud. Would you like to use it?',
+            supabaseUser
+              ? "Found newer data in iCloud. Would you like to use it? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay."
+              : 'Found newer data in iCloud. Would you like to use it?',
             [
               { text: 'Keep Local', style: 'cancel', onPress: () => syncToCloud() },
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, !!supabaseUser));
-                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, !!supabaseUser));
-                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, !!supabaseUser));
-                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, !!supabaseUser));
+                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
+                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
+                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
+                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, supabaseUser?.id || null));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+                  restoreCountRef.current += 1;
+                  if (supabaseUser) {
+                    // Send it up to the account now, even after a failed sync
+                    setSyncError(null);
+                    setHasSyncedOnce(false);
+                  }
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
@@ -3970,6 +3981,7 @@ function AppContent() {
 
     setIsSyncing(true);
     setSyncError(null);
+    const restoresAtStart = restoreCountRef.current;
 
     try {
       // Check if this user has ever synced before (for first-time migration)
@@ -4029,7 +4041,9 @@ function AppContent() {
 
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
-        setSyncError(error.message);
+        // A restore that landed while this sync ran is sent up by the next
+        // auto sync, so its failure doesn't hold that one back
+        if (restoreCountRef.current === restoresAtStart) setSyncError(error.message);
         return false;
       } else {
         // Mark that this user has synced at least once, and that the stack on
@@ -4039,6 +4053,11 @@ function AppContent() {
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
         if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
+
+        // A restore that landed while this sync ran isn't in what it sent up,
+        // so the cloud's copy would drop it. Leave the stack as it is and
+        // hasSyncedOnce false, and the auto sync sends it up next.
+        if (restoreCountRef.current !== restoresAtStart) return false;
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
@@ -4055,7 +4074,7 @@ function AppContent() {
       return true;
     } catch (err) {
       if (__DEV__) console.error('Supabase sync failed:', err);
-      setSyncError(err.message || 'Sync failed');
+      if (restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
       return false;
     } finally {
       setIsSyncing(false);
@@ -7688,17 +7707,25 @@ function AppContent() {
 
       Alert.alert(
         'Restore Backup',
-        `Replace current data with backup from ${backup.timestamp}?`,
+        supabaseUser
+          ? `Restore the backup from ${backup.timestamp}? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay.`
+          : `Replace current data with backup from ${backup.timestamp}?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Restore',
             onPress: async () => {
-              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, !!supabaseUser));
-              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, !!supabaseUser));
-              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, !!supabaseUser));
-              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, !!supabaseUser));
+              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
+              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
+              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
+              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, supabaseUser?.id || null));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+              restoreCountRef.current += 1;
+              if (supabaseUser) {
+                // Send it up to the account now, even after a failed sync
+                setSyncError(null);
+                setHasSyncedOnce(false);
+              }
               Alert.alert('Success', 'Backup restored!');
             }
           }
@@ -9368,6 +9395,9 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
+      // A restored holding keeps its restore mark and row through an edit, so
+      // the next sync still sends it up to the account that restored it
+      ...(editingItem?.restoredFor ? { restoredFor: editingItem.restoredFor, supabase_id: editingItem.supabase_id } : {}),
     }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
