@@ -3866,7 +3866,7 @@ function AppContent() {
           Alert.alert(
             'iCloud Data Found',
             supabaseUser
-              ? 'Found newer data in iCloud. Would you like to use it? Its holdings are added to your account. Holdings already in your account stay.'
+              ? "Found newer data in iCloud. Would you like to use it? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay."
               : 'Found newer data in iCloud. Would you like to use it?',
             [
               { text: 'Keep Local', style: 'cancel', onPress: () => syncToCloud() },
@@ -7706,7 +7706,7 @@ function AppContent() {
       Alert.alert(
         'Restore Backup',
         supabaseUser
-          ? `Restore the backup from ${backup.timestamp}? Its holdings are added to your account. Holdings already in your account stay.`
+          ? `Restore the backup from ${backup.timestamp}? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay.`
           : `Replace current data with backup from ${backup.timestamp}?`,
         [
           { text: 'Cancel', style: 'cancel' },
