@@ -96,6 +96,8 @@ export function freeWeekOfferBlocker(state) {
 
 // Under a guest's list of what Gold adds, so the first two read true.
 export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions and voice also need a free account.";
+// The tap under that line, worded as every other guest prompt words it.
+export const GUEST_ACCOUNT_ACTION = 'Create a free account';
 
 /**
  * The sheet's words for the trial it offers. A seven day trial reads as a
@@ -107,7 +109,8 @@ export const GUEST_ACCOUNT_LINE = "The morning brief and Gold's Troy questions a
  * Lifetime bought on an earlier install until Restore, while the Apple ID
  * still reads trial eligible. And a guest gets an account line, since on a
  * phone with no account Troy stays on the guest questions, voice is off and
- * no morning brief comes, Gold or not.
+ * no morning brief comes, Gold or not. The line comes with a tap that opens
+ * sign up, so a guest it stops has a way on from the sheet itself.
  */
 export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } = {}) {
   const week = trial?.unit === 'day' && trial.count === 7;
@@ -130,6 +133,7 @@ export function freeWeekOfferCopy(trial, { guest = false, moment = 'holding' } =
     later: 'Not now',
     restore: guest ? 'Already have Gold? Restore purchases' : null,
     account: guest ? GUEST_ACCOUNT_LINE : null,
+    accountAction: guest ? GUEST_ACCOUNT_ACTION : null,
   };
 }
 

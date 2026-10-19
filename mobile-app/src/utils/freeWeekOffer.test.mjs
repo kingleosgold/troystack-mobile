@@ -7,6 +7,7 @@ import {
   FREE_WEEK_OFFER_TROY_DELAY_MS,
   freeWeekOfferBlocker,
   GUEST_ACCOUNT_LINE,
+  GUEST_ACCOUNT_ACTION,
   freeWeekOfferCopy,
   freeWeekOfferMoment,
   isFirstHolding,
@@ -230,6 +231,14 @@ test("a guest is told the brief and Gold's Troy need a free account", () => {
   assert.equal(freeWeekOfferCopy(WEEK).account, null);
 });
 
+test("a guest's account line comes with a tap to sign up", () => {
+  assert.equal(GUEST_ACCOUNT_ACTION, 'Create a free account');
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true }).accountAction, GUEST_ACCOUNT_ACTION);
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true, moment: 'troy' }).accountAction, GUEST_ACCOUNT_ACTION);
+  assert.equal(freeWeekOfferCopy(WEEK).accountAction, null);
+  assert.equal(freeWeekOfferCopy(WEEK, { moment: 'troy' }).accountAction, null);
+});
+
 test('a guest gets a Restore line, so a Lifetime from an earlier install is one tap away', () => {
   const copy = freeWeekOfferCopy(WEEK, { guest: true });
   assert.equal(copy.restore, 'Already have Gold? Restore purchases');
@@ -241,7 +250,7 @@ test('no long dashes or exclamation marks in anything a person reads', () => {
   for (const trial of [WEEK, { count: 1, unit: 'month' }, { count: 14, unit: 'day' }]) {
     for (const moment of ['holding', 'troy']) {
       const copy = freeWeekOfferCopy(trial, { guest: true, moment });
-      for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore, copy.account]) {
+      for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore, copy.account, copy.accountAction]) {
         assert.doesNotMatch(s, longDash, s);
         assert.doesNotMatch(s, /!/, s);
       }

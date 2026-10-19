@@ -5148,12 +5148,18 @@ function AppContent() {
     openGoldScreen(pending.cycle);
   };
 
-  // choice is 'start', 'restore' or 'later'. The first tap is the one that counts.
+  // choice is 'start', 'restore', 'account' or 'later'. The first tap is the one that counts.
   const closeFreeWeekOffer = (choice) => {
     if (!freeWeekOffer.visible || freeWeekChoiceRef.current) return;
     freeWeekChoiceRef.current = choice;
     logLifecycleEvent(`free_week_offer:${choice}`);
     setFreeWeekOffer((offer) => ({ ...offer, visible: false }));
+    if (choice === 'account') {
+      // Sign up takes the screen once the sheet has gone, as the Gold screen waits
+      if (Platform.OS === 'ios') setTimeout(disableGuestMode, 700);
+      else disableGuestMode();
+      return;
+    }
     if (choice === 'restore') {
       // Its result alert waits for the sheet to go, like the Gold screen does
       if (Platform.OS === 'ios') setTimeout(handleRestore, 700);
@@ -16304,6 +16310,15 @@ function AppContent() {
                   ))}
                   {copy.account && (
                     <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.small, lineHeight: Math.round(scaledFonts.small * 1.5), marginTop: 6 }}>{copy.account}</Text>
+                  )}
+                  {copy.accountAction && (
+                    <TouchableOpacity
+                      onPress={() => closeFreeWeekOffer('account')}
+                      style={{ paddingVertical: 8, alignSelf: 'flex-start' }}
+                      accessibilityRole="button"
+                    >
+                      <Text style={{ color: '#C9A84C', fontSize: scaledFonts.small, fontWeight: '600' }}>{copy.accountAction}</Text>
+                    </TouchableOpacity>
                   )}
                 </ScrollView>
                 <TouchableOpacity
