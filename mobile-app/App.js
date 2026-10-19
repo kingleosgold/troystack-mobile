@@ -3993,11 +3993,21 @@ function AppContent() {
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take.
-      // Its guest marks come off too, or they'd let the next account take it.
-      // On a later sync the marks stay until the cloud's copy replaces them,
-      // so a failed upload is tried again.
-      if (!stackOwner) await AsyncStorage.setItem(HOLDINGS_OWNER_KEY, supabaseUser.id);
-      if (isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id)) {
+      // Its guest marks come off too, or they'd let the next account take it,
+      // and both are stored in one write so a kill between them can't split
+      // them. On a later sync the marks stay until the cloud's copy replaces
+      // them, so a failed upload is tried again.
+      const claimWrites = stackOwner ? [] : [[HOLDINGS_OWNER_KEY, supabaseUser.id]];
+      const claimsStack = isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      if (claimsStack) {
+        [['stack_silver', silverItems], ['stack_gold', goldItems], ['stack_platinum', platinumItems], ['stack_palladium', palladiumItems]]
+          .forEach(([key, items]) => {
+            const cleaned = withoutGuestMark(items);
+            if (cleaned !== items) claimWrites.push([key, JSON.stringify(cleaned)]);
+          });
+      }
+      if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
+      if (claimsStack) {
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
