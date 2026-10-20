@@ -4052,9 +4052,22 @@ function AppContent() {
         if (restoreCountRef.current === restoresAtStart) setSyncError(error.message);
         return false;
       } else {
+        // A holding the database refused is on this phone only. If a restore
+        // landed meanwhile the stack isn't replaced, so on a first sync the
+        // refused holding would stay unmarked and the next sync, no longer a
+        // first, would never send it. Leave this sync unmarked and the auto
+        // sync tries again as a first sync.
+        const restoreLanded = restoreCountRef.current !== restoresAtStart;
+        if (refusedCount > 0 && restoreLanded) return false;
         // Mark that this user has synced at least once, and that the stack on
-        // this phone is now theirs
-        await AsyncStorage.multiSet([[syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        // this phone is now theirs. With refused holdings the stack carrying
+        // their retry marks goes in the same write, so a kill before the save
+        // effects run can't leave the phone marked synced over an unmarked one.
+        const stackWrites = refusedCount > 0
+          ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
+            .map(([key, items]) => [key, JSON.stringify(items)])
+          : [];
+        await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
         // Other accounts' synced keys named the owner only until one was
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
@@ -4063,7 +4076,7 @@ function AppContent() {
         // A restore that landed while this sync ran isn't in what it sent up,
         // so the cloud's copy would drop it. Leave the stack as it is and
         // hasSyncedOnce false, and the auto sync sends it up next.
-        if (restoreCountRef.current !== restoresAtStart) return false;
+        if (restoreLanded) return false;
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
