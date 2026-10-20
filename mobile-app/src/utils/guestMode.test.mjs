@@ -70,3 +70,15 @@ test("saved holdings mean it isn't a first launch, so an account's stack never o
   assert.equal(isFirstLaunch(null, null, false), true);
   assert.equal(isFirstLaunch(null, null), true);
 });
+
+// App.js can't load under node, so this reads its source. Any sign in has to
+// clear the flag, not only AuthScreen's, or an email link or password reset
+// sign in leaves the phone to open as a guest once the session ends.
+test('App.js clears the guest flag on any sign in once the stored data has loaded', async () => {
+  const { readFileSync } = await import('node:fs');
+  const appSource = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const effect = appSource.match(/useEffect\(\(\) => \{\n\s*if \(!supabaseUser\?\.id \|\| !dataLoaded\) return;[\s\S]*?\}, \[supabaseUser\?\.id, dataLoaded\]\);/);
+  assert.ok(effect, 'the sign-in effect is missing');
+  assert.match(effect[0], /setGuestMode\(false\)/);
+  assert.match(effect[0], /AsyncStorage\.removeItem\(GUEST_MODE_KEY\)/);
+});
