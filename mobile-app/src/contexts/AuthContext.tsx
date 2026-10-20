@@ -14,6 +14,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
+import { readOAuthRedirect } from '../utils/oauthRedirect';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -191,28 +192,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const result = await Promise.race([browserPromise, timeoutPromise]) as any;
 
-      if (result.type === 'success') {
-        // Extract tokens from URL
-        const url = new URL(result.url);
-        const params = new URLSearchParams(url.hash.substring(1));
-        const accessToken = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
+      // Only a redirect that carries a session signs in. Anything else
+      // returns an error, so the sign in screen never reports a success
+      // with no account behind it.
+      const redirect = readOAuthRedirect(result);
+      if (redirect.error) return { error: new Error(redirect.error) };
 
-        if (accessToken) {
-          // Set session manually
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken || '',
-          });
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: redirect.accessToken,
+        refresh_token: redirect.refreshToken,
+      });
 
-          if (sessionError) {
-            throw sessionError;
-          }
-        }
-      } else if (result.type === 'cancel') {
-        return { error: new Error('Sign in cancelled') };
-      } else if (result.type === 'dismiss') {
-        return { error: new Error('Sign in cancelled') };
+      if (sessionError) {
+        throw sessionError;
       }
 
       return { error: null };
