@@ -46,6 +46,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
+import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -4156,8 +4157,9 @@ function AppContent() {
     // 1. User is signed in with Supabase
     // 2. Data has been loaded from local storage
     // 3. Haven't synced yet this session
-    // 4. The last try didn't fail. Pull to refresh tries again, so a failure
-    //    doesn't retry in a loop each time isSyncing turns back to false.
+    // 4. The last try didn't fail. Pull to refresh and the spaced out retry
+    //    below try again, so a failure doesn't retry in a loop each time
+    //    isSyncing turns back to false.
     if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing && !syncError) {
       if (__DEV__) console.log('Auto-sync triggered: user signed in, data loaded');
       syncHoldingsWithSupabase().finally(() => {
@@ -5111,6 +5113,39 @@ function AppContent() {
     });
     return () => subscription.remove();
   }, []);
+
+  // A failed holdings sync tries again on its own, a few times and spaced out,
+  // by clearing the error the auto sync waits on. A new account, a good sync
+  // or coming back to the app starts the count over, so a failure in the
+  // background is tried again as soon as the app is open. See
+  // src/utils/syncRetry.js.
+  const syncTriesRef = useRef(0);
+  useEffect(() => {
+    syncTriesRef.current = 0;
+  }, [supabaseUser?.id, hasSyncedOnce]);
+  // Only coming back counts. A trip to inactive and back, for a Face ID
+  // prompt or Control Center, doesn't buy another round of tries.
+  const wasBackgroundRef = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') wasBackgroundRef.current = true;
+      else if (state === 'active' && wasBackgroundRef.current) {
+        wasBackgroundRef.current = false;
+        syncTriesRef.current = 0;
+      }
+    });
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (!syncRetryDue({ signedIn: !!supabaseUser, syncError, hasSyncedOnce, appActive })) return;
+    const delay = syncRetryDelay(syncTriesRef.current);
+    if (delay == null) return;
+    const timer = setTimeout(() => {
+      syncTriesRef.current += 1;
+      setSyncError(null);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [supabaseUser?.id, syncError, hasSyncedOnce, appActive]);
 
   // Set once the Gold screen has opened this session, from any button. Someone
   // who has just looked at Gold and closed it doesn't get a second pitch.
