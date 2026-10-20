@@ -4162,8 +4162,12 @@ function AppContent() {
     //    isSyncing turns back to false.
     if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing && !syncError) {
       if (__DEV__) console.log('Auto-sync triggered: user signed in, data loaded');
+      // A sync cut by a sign out or account change leaves the loading screen
+      // alone, since it may belong to the next account's sign in. That
+      // account's own sync takes it down.
+      const accountGen = accountGenRef.current;
       syncHoldingsWithSupabase().finally(() => {
-        setNeedsPostSignInSync(false);
+        if (accountGenRef.current === accountGen) setNeedsPostSignInSync(false);
       });
     }
   }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
@@ -4189,10 +4193,14 @@ function AppContent() {
     if (needsPostSignInSync && !isSyncing && (hasSyncedOnce || syncError)) setNeedsPostSignInSync(false);
   }, [needsPostSignInSync, isSyncing, hasSyncedOnce, syncError]);
 
-  // Reset sync flag when the account changes, a sign out included
+  // Reset sync flag when the account changes, a sign out included. A session
+  // that ends under the loading screen takes it down too, since the sync it
+  // waited on was cut and won't. Only an end does: a sign in can put the
+  // screen up a moment before its account arrives.
   useEffect(() => {
     setHasSyncedOnce(false);
     setSyncError(null);
+    if (!supabaseUser?.id) setNeedsPostSignInSync(false);
   }, [supabaseUser?.id]);
 
   // Milestone Reached Detection
