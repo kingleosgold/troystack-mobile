@@ -14,7 +14,7 @@ import 'react-native-reanimated';
 import 'react-native-gesture-handler';
 import 'react-native-url-polyfill/auto';
 import './src/utils/backgroundTasks';
-import React, { useState, useEffect, useRef, Component, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, Component, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Platform, SafeAreaView, StatusBar, ActivityIndicator,
@@ -4138,12 +4138,14 @@ function AppContent() {
     }
   };
 
-  // A change away from a signed-in account stops that account's sync. It's
-  // declared before the auto sync so it runs first in the same commit, and a
-  // switch straight to another account doesn't stop the new account's sync.
-  // Only a sync for an account that was signed in can be running, so a sign
-  // in from no account leaves the count alone.
-  useEffect(() => {
+  // A change away from a signed-in account stops that account's sync. As a
+  // layout effect it runs inside the commit that shows the new account, so
+  // the old account's sync can't land a write between that commit and the
+  // bump, and it runs before the auto sync, so a switch straight to another
+  // account doesn't stop the new account's sync. Only a sync for an account
+  // that was signed in can be running, so a sign in from no account leaves
+  // the count alone.
+  useLayoutEffect(() => {
     if (lastAccountIdRef.current) accountGenRef.current += 1;
     lastAccountIdRef.current = supabaseUser?.id || null;
   }, [supabaseUser?.id]);
