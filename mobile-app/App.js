@@ -4059,9 +4059,6 @@ function AppContent() {
         // sync tries again as a first sync.
         const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
         if (refusedCount > 0 && restoreLanded()) return false;
-        // After a sign out the stack writes would leave this account's cloud
-        // stack on the phone for whoever comes next
-        if (refusedCount > 0 && signedInIdRef.current !== supabaseUser.id) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
