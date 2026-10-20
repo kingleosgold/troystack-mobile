@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { fetchAllRows } from '../utils/fetchAllRows';
+import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
 import { asRestoredBy, holdingsToUpload } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -121,19 +121,18 @@ export async function fetchHoldings(userId: string): Promise<{
   error: Error | null;
 }> {
   try {
-    // Every page, not just the first 1000 rows, ordered by id within a
-    // created_at so the pages don't overlap
-    const { data, error } = await fetchAllRows(() =>
+    // Every page, not just the first 1000 rows. The pages go by id, so the
+    // newest first order comes after.
+    const { data: rows, error } = await fetchAllRows(() =>
       supabase
         .from('holdings')
         .select('*')
         .eq('user_id', userId)
         .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: true })
     );
 
     if (error) throw error;
+    const data = newestFirst(rows || []);
 
     const silverItems: LocalHolding[] = [];
     const goldItems: LocalHolding[] = [];
@@ -266,7 +265,6 @@ export async function findHoldingByLocalId(
         .eq('user_id', userId)
         .eq('metal', metal)
         .is('deleted_at', null)
-        .order('id', { ascending: true })
     );
 
     if (error) throw error;
@@ -314,7 +312,6 @@ export async function syncLocalToSupabase(
         .from('holdings')
         .select('id, notes, deleted_at')
         .eq('user_id', userId)
-        .order('id', { ascending: true })
     );
 
     if (fetchError) throw fetchError;
