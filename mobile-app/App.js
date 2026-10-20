@@ -4103,6 +4103,20 @@ function AppContent() {
     }
   }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
 
+  // Any sign in ends guest mode, not only one through AuthScreen. An email
+  // sign up confirmed by its link, a password reset and a session restored at
+  // launch never reach handleAuthSuccess, and a guest flag left behind would
+  // open this account's stack as a guest's once its session ends. Waits for
+  // the stored data, so it lands after a launch that wrote the flag before
+  // the session had loaded.
+  useEffect(() => {
+    if (!supabaseUser?.id || !dataLoaded) return;
+    setGuestMode(false);
+    AsyncStorage.removeItem(GUEST_MODE_KEY).catch((error) => {
+      if (__DEV__) console.error('Failed to remove guest mode:', error);
+    });
+  }, [supabaseUser?.id, dataLoaded]);
+
   // The loading screen after sign in waits for this sign-in's sync. A sync
   // that finished or failed before the screen came up won't run again, so
   // that screen comes down as soon as nothing is syncing.
