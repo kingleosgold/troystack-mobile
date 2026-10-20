@@ -73,3 +73,14 @@ test('the account screen holds its link buttons while a link runs', () => {
     assert.match(accountScreen, new RegExp(`onPress=\\{${handler}\\} disabled=\\{busy\\}`), handler);
   }
 });
+
+test('linking Apple never falls back to signing in as the Apple ID', () => {
+  const code = body('linkWithApple', 'signOut');
+  assert.match(code, /linkIdentity\(\{\s*provider: 'apple',\s*token: credential\.identityToken,/);
+  assert.doesNotMatch(code, /signInWithIdToken/);
+});
+
+test('sign out and delete hold while a link runs', () => {
+  assert.match(accountScreen, /onPress=\{handleSignOut\}\s*disabled=\{busy\}/);
+  assert.match(accountScreen, /onPress=\{handleDeleteAccount\} disabled=\{deleting \|\| busy\}/);
+});

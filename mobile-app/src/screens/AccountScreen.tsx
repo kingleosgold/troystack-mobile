@@ -240,12 +240,13 @@ export default function AccountScreen({
         <TouchableOpacity
           style={[styles.signOutButton, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
           onPress={handleSignOut}
+          disabled={busy}
         >
           <Text style={[styles.signOutText, { color: colors.error }]}>Sign Out</Text>
         </TouchableOpacity>
 
         {/* Delete Account */}
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting}>
+        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting || busy}>
           {deleting ? (
             <ActivityIndicator color={colors.muted} />
           ) : (

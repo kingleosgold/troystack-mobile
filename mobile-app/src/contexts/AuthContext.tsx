@@ -14,7 +14,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
-import { readOAuthRedirect, readLinkRedirect } from '../utils/oauthRedirect';
+import { readOAuthRedirect, readLinkRedirect, ALREADY_LINKED } from '../utils/oauthRedirect';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -349,7 +349,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (__DEV__) console.error('Google link error:', error);
       // Check for already linked error
       if (error.message?.includes('already linked') || error.message?.includes('identity_already_exists')) {
-        Alert.alert('Already Linked', 'This Google account is already linked to another user.');
+        return { error: new Error(ALREADY_LINKED) };
       }
       return { error: error as Error };
     } finally {
@@ -393,32 +393,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw new Error('No identity token returned from Apple');
       }
 
-      // Link with Supabase using the Apple token
+      // Link with Supabase using the Apple token. The ID token link adds the
+      // identity to the signed-in user and saves the updated session. It
+      // never signs in as whoever owns the Apple ID, so a failure can't
+      // switch accounts.
       const { error } = await supabase.auth.linkIdentity({
         provider: 'apple',
-        options: {
-          skipBrowserRedirect: true,
-        },
+        token: credential.identityToken,
+        nonce: nonce,
       });
 
-      // Note: Supabase's linkIdentity with Apple might need a different approach
-      // For now, we'll try using signInWithIdToken which may automatically link
-      // if the user is already signed in
       if (error) {
-        // Try alternative approach - this may link if email matches
-        const { error: idTokenError } = await supabase.auth.signInWithIdToken({
-          provider: 'apple',
-          token: credential.identityToken,
-          nonce: nonce,
-        });
-
-        if (idTokenError) {
-          throw idTokenError;
-        }
+        throw error;
       }
 
-      // Refresh session to get updated identities
-      await supabase.auth.refreshSession();
       Alert.alert('Success', 'Apple account linked successfully!');
 
       return { error: null };
@@ -430,7 +418,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (__DEV__) console.error('Apple link error:', error);
       // Check for already linked error
       if (error.message?.includes('already linked') || error.message?.includes('identity_already_exists')) {
-        Alert.alert('Already Linked', 'This Apple account is already linked to another user.');
+        return { error: new Error('This Apple account is already linked to another user.') };
       }
       return { error: error as Error };
     } finally {
