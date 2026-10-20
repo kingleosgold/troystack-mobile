@@ -4057,8 +4057,11 @@ function AppContent() {
         // refused holding would stay unmarked and the next sync, no longer a
         // first, would never send it. Leave this sync unmarked and the auto
         // sync tries again as a first sync.
-        const restoreLanded = restoreCountRef.current !== restoresAtStart;
-        if (refusedCount > 0 && restoreLanded) return false;
+        const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
+        if (refusedCount > 0 && restoreLanded()) return false;
+        // After a sign out the stack writes would leave this account's cloud
+        // stack on the phone for whoever comes next
+        if (refusedCount > 0 && signedInIdRef.current !== supabaseUser.id) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
@@ -4075,8 +4078,12 @@ function AppContent() {
 
         // A restore that landed while this sync ran isn't in what it sent up,
         // so the cloud's copy would drop it. Leave the stack as it is and
-        // hasSyncedOnce false, and the auto sync sends it up next.
-        if (restoreLanded) return false;
+        // hasSyncedOnce false, and the auto sync sends it up next. With refused
+        // holdings the synced key comes back off, so that sync is a first one.
+        if (restoreLanded()) {
+          if (refusedCount > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
+          return false;
+        }
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
