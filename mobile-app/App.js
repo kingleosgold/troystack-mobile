@@ -2421,7 +2421,7 @@ function AppContent() {
   }, [setOnOpenFull]);
 
   // Supabase Auth
-  const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
+  const { user: supabaseUser, session, loading: authLoading, busy: authBusy, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
   const [authStartMode, setAuthStartMode] = useState('signIn'); // the tab AuthScreen opens on
   // Once anyone is signed in the next AuthScreen opens on sign in again, since an
@@ -10392,12 +10392,15 @@ function AppContent() {
           paddingBottom: Platform.OS === 'ios' ? 50 : 30,
           backgroundColor: colors.background,
         }}>
+          {/* Held while a sign in is in flight, so it can't land on a guest */}
           <TouchableOpacity
             style={{
               paddingVertical: 16,
               alignItems: 'center',
+              opacity: authBusy ? 0.5 : 1,
             }}
             onPress={enableGuestMode}
+            disabled={authBusy}
           >
             <Text style={{ color: colors.gold, fontSize: scaledFonts.medium, fontWeight: '600' }}>
               {GUEST_CONTINUE}
