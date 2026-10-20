@@ -5085,7 +5085,20 @@ function AppContent() {
   const syncTriesRef = useRef(0);
   useEffect(() => {
     syncTriesRef.current = 0;
-  }, [supabaseUser?.id, hasSyncedOnce, appActive]);
+  }, [supabaseUser?.id, hasSyncedOnce]);
+  // Only coming back counts. A trip to inactive and back, for a Face ID
+  // prompt or Control Center, doesn't buy another round of tries.
+  const wasBackgroundRef = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') wasBackgroundRef.current = true;
+      else if (state === 'active' && wasBackgroundRef.current) {
+        wasBackgroundRef.current = false;
+        syncTriesRef.current = 0;
+      }
+    });
+    return () => sub.remove();
+  }, []);
   useEffect(() => {
     if (!syncRetryDue({ signedIn: !!supabaseUser, syncError, hasSyncedOnce, appActive })) return;
     const delay = syncRetryDelay(syncTriesRef.current);
