@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
-import { holdingsToUpload } from '../utils/holdingsUpload';
+import { asRestoredBy, holdingsToUpload } from '../utils/holdingsUpload';
+import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
 
 // Local holding structure (from App.js)
@@ -289,10 +290,12 @@ export async function syncLocalToSupabase(
 ): Promise<{
   syncedCount: number;
   skippedCount: number;
+  rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[];
   error: Error | null;
 }> {
   let syncedCount = 0;
   let skippedCount = 0;
+  const rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
 
   try {
     // Get existing holdings to avoid duplicates, deleted ones included so a
@@ -322,8 +325,9 @@ export async function syncLocalToSupabase(
       }
     });
 
-    // Prepare holdings to insert
+    // Prepare holdings to insert, with the local holding each row came from
     const holdingsToInsert: any[] = [];
+    const sources: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
 
     const metalGroups: { items: LocalHolding[]; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [
       { items: silverItems, metal: 'silver' },
@@ -337,24 +341,25 @@ export async function syncLocalToSupabase(
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));
+        sources.push({ item, metal });
       }
     }
 
-    // Batch insert
-    if (holdingsToInsert.length > 0) {
-      const { error: insertError } = await supabase
-        .from('holdings')
-        .insert(holdingsToInsert);
+    // Batch insert, row by row if the database refuses the batch over one
+    // row's data, so that row can't hold back every later sync
+    const { insertedCount, rejected: rejectedRows, error: insertError } = await insertRows(
+      holdingsToInsert,
+      async (rows: any[]) => supabase.from('holdings').insert(rows)
+    );
+    syncedCount = insertedCount;
+    if (insertError) throw insertError;
+    rejectedRows.forEach((index: number) => rejected.push(sources[index]));
+    if (rejected.length) console.warn(`Supabase refused ${rejected.length} holding(s); they stay on the phone`);
 
-      if (insertError) throw insertError;
-
-      syncedCount = holdingsToInsert.length;
-    }
-
-    return { syncedCount, skippedCount, error: null };
+    return { syncedCount, skippedCount, rejected, error: null };
   } catch (err) {
     console.error('Error syncing local to Supabase:', err);
-    return { syncedCount, skippedCount, error: err as Error };
+    return { syncedCount, skippedCount, rejected: [], error: err as Error };
   }
 }
 
@@ -392,7 +397,7 @@ export async function fullSync(
     let syncedCount = 0;
     if (uploadLocal && hasLocalData) {
       console.log(`Adding local holdings (cloud ${hasRemoteData ? 'has holdings' : 'empty'})...`);
-      const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
+      const { syncedCount: uploaded, rejected, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,
         localGold,
@@ -408,6 +413,10 @@ export async function fullSync(
       // fails, the error keeps the local stack on screen instead of empty lists.
       const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium, error: refetchError } = await fetchHoldings(userId);
       if (refetchError) throw refetchError;
+      // A holding the database refused stays on the phone beside the cloud's
+      // copy, marked for this account so the next sync tries it again
+      const lists = { silver: newSilver, gold: newGold, platinum: newPlatinum, palladium: newPalladium };
+      rejected.forEach(({ item, metal }) => lists[metal].push(...asRestoredBy([item], userId)));
       return {
         silverItems: newSilver,
         goldItems: newGold,
