@@ -15,10 +15,12 @@
  * Whether the database refused a row over its data. Postgres puts data
  * exceptions in class 22 and integrity constraint breaks in class 23.
  * Network errors carry no code, and a refused session or row-level security
- * carries another class.
+ * carries another class. A foreign key break (23503) can only come from the
+ * row's user_id, as when the account was deleted on another device, so it
+ * fails the sync rather than every row.
  */
 export function isRowRejection(error) {
-  return typeof error?.code === 'string' && /^2[23]/.test(error.code);
+  return typeof error?.code === 'string' && /^2[23]/.test(error.code) && error.code !== '23503';
 }
 
 /**

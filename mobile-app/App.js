@@ -4036,7 +4036,7 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
+      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4070,6 +4070,15 @@ function AppContent() {
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
         setPalladiumItems(remotePalladium);
+
+        // A holding the database refused stays on this phone only, so say so
+        // while there's still a chance to fix it before a sign out clears it
+        if (refusedCount > 0) {
+          Alert.alert(
+            refusedCount === 1 ? "A holding didn't save to your account" : `${refusedCount} holdings didn't save to your account`,
+            "They're still on this phone. Check their numbers and save them again, and the next sync sends them up."
+          );
+        }
 
         if (__DEV__) {
           if (__DEV__) console.log(`Supabase sync complete: ${syncedToCloud} items migrated, ${remoteSilver.length} silver, ${remoteGold.length} gold, ${remotePlatinum.length} platinum, ${remotePalladium.length} palladium from cloud`);

@@ -28,7 +28,12 @@ test('network, session and row-level security errors are not', () => {
   assert.equal(isRowRejection(new TypeError('Network request failed')), false);
   assert.equal(isRowRejection({ code: '42501' }), false);
   assert.equal(isRowRejection({ code: 'PGRST301' }), false);
+  assert.equal(isRowRejection({ code: '' }), false);
   assert.equal(isRowRejection(null), false);
+});
+
+test("a foreign key break is the account's, not the row's", () => {
+  assert.equal(isRowRejection({ code: '23503' }), false);
 });
 
 test('nothing to insert makes no call', async () => {

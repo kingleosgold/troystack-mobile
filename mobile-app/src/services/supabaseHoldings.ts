@@ -380,6 +380,7 @@ export async function fullSync(
   platinumItems: LocalHolding[];
   palladiumItems: LocalHolding[];
   syncedToCloud: number;
+  refusedCount: number;
   error: Error | null;
 }> {
   try {
@@ -423,6 +424,7 @@ export async function fullSync(
         platinumItems: newPlatinum,
         palladiumItems: newPalladium,
         syncedToCloud: syncedCount,
+        refusedCount: rejected.length,
         error: null,
       };
     }
@@ -435,6 +437,7 @@ export async function fullSync(
       platinumItems: remotePlatinum,
       palladiumItems: remotePalladium,
       syncedToCloud: syncedCount,
+      refusedCount: 0,
       error: null,
     };
   } catch (err) {
@@ -445,6 +448,7 @@ export async function fullSync(
       platinumItems: localPlatinum,
       palladiumItems: localPalladium,
       syncedToCloud: 0,
+      refusedCount: 0,
       error: err as Error,
     };
   }
