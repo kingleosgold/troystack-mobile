@@ -4036,7 +4036,7 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
+      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4052,9 +4052,22 @@ function AppContent() {
         if (restoreCountRef.current === restoresAtStart) setSyncError(error.message);
         return false;
       } else {
+        // A holding the database refused is on this phone only. If a restore
+        // landed meanwhile the stack isn't replaced, so on a first sync the
+        // refused holding would stay unmarked and the next sync, no longer a
+        // first, would never send it. Leave this sync unmarked and the auto
+        // sync tries again as a first sync.
+        const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
+        if (refusedCount > 0 && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
-        // this phone is now theirs
-        await AsyncStorage.multiSet([[syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        // this phone is now theirs. With refused holdings the stack carrying
+        // their retry marks goes in the same write, so a kill before the save
+        // effects run can't leave the phone marked synced over an unmarked one.
+        const stackWrites = refusedCount > 0
+          ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
+            .map(([key, items]) => [key, JSON.stringify(items)])
+          : [];
+        await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
         // Other accounts' synced keys named the owner only until one was
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
@@ -4062,14 +4075,27 @@ function AppContent() {
 
         // A restore that landed while this sync ran isn't in what it sent up,
         // so the cloud's copy would drop it. Leave the stack as it is and
-        // hasSyncedOnce false, and the auto sync sends it up next.
-        if (restoreCountRef.current !== restoresAtStart) return false;
+        // hasSyncedOnce false, and the auto sync sends it up next. With refused
+        // holdings the synced key comes back off, so that sync is a first one.
+        if (restoreLanded()) {
+          if (refusedCount > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
+          return false;
+        }
 
         // Replace local state with Supabase data (Supabase is source of truth)
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
         setPalladiumItems(remotePalladium);
+
+        // A holding the database refused stays on this phone only, so say so
+        // while there's still a chance to fix it before a sign out clears it
+        if (refusedCount > 0) {
+          Alert.alert(
+            refusedCount === 1 ? "A holding didn't save to your account" : `${refusedCount} holdings didn't save to your account`,
+            "They're still on this phone. Check their numbers and save them again, and the next sync sends them up."
+          );
+        }
 
         if (__DEV__) {
           if (__DEV__) console.log(`Supabase sync complete: ${syncedToCloud} items migrated, ${remoteSilver.length} silver, ${remoteGold.length} gold, ${remotePlatinum.length} platinum, ${remotePalladium.length} palladium from cloud`);
