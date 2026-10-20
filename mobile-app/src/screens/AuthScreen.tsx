@@ -298,6 +298,7 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
               <TouchableOpacity
                 style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 8 }}
                 onPress={openForgotPassword}
+                disabled={loading}
               >
                 <Text style={{ color: '#fbbf24', fontSize: 13, fontWeight: '500' }}>
                   Forgot password?
