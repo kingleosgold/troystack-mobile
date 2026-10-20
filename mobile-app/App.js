@@ -43,6 +43,7 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
+import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
@@ -2768,6 +2769,9 @@ function AppContent() {
 
   // Post-sign-in loading gate — show loading screen until Supabase sync completes after sign-in
   const [needsPostSignInSync, setNeedsPostSignInSync] = useState(false);
+  // Bumped to run RevenueCat setup again for the same account, after a sign
+  // out that failed had already logged RevenueCat out
+  const [planSetupRun, setPlanSetupRun] = useState(0);
 
   // Share My Stack
   const shareViewRef = useRef(null);
@@ -2989,7 +2993,9 @@ function AppContent() {
 
   // Reset all in-memory state to defaults (used by both clearAllData and performSignOut)
   // fullReset=true (default): resets everything including app preferences (for clearAllData)
-  // fullReset=false: preserves theme, large text, tutorial flags, and keeps dataLoaded true (for sign-out)
+  // fullReset=false: preserves theme, large text and tutorial flags (for sign-out)
+  // dataLoaded stays true either way: the empty stack matches what's stored,
+  // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
     setSilverItems([]);
@@ -3036,6 +3042,10 @@ function AppContent() {
     setShowAccountScreen(false);
     setShowBenefitsScreen(false);
     setHasSyncedOnce(false);
+    // Both clear paths remove the stored iCloud setting. Turning it off here
+    // too stops the iCloud sync from writing the empty stack over a backup.
+    setICloudSyncEnabled(false);
+    setLastSyncTime(null);
 
     // Only reset app-level preferences on full reset (clearAllData from settings)
     if (fullReset) {
@@ -3043,19 +3053,32 @@ function AppContent() {
       setLargeText(false);
       setHideWidgetValues(false);
       setSpotChangeDisplayMode('percent');
-      setDataLoaded(false);
     }
   };
 
   // Clear all app data and reset to fresh state (user-initiated from Settings)
   const clearAllData = async () => {
     try {
+      // A signed-in account's holdings stay in the cloud. Sign it out first,
+      // so the next sync doesn't bring them straight back onto a wiped phone.
+      const signedIn = !!supabaseUser;
+      // A sign out that failed has already said so and cleared nothing.
+      // Wiping now would bring the cloud stack straight back under the same
+      // account.
+      if (signedIn && !(await performSignOut())) return;
       accountGenRef.current += 1;
       await AsyncStorage.clear();
       accountGenRef.current += 1;
       resetAllState();
+      // A guest stays a guest, as on a first launch
+      if (!signedIn) {
+        setGuestMode(true);
+        AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
+          if (__DEV__) console.error('Failed to save guest mode:', error);
+        });
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Data Cleared', 'All your data has been erased. The app has been reset to its initial state.');
+      Alert.alert('Data Cleared', clearDataDone(signedIn));
     } catch (error) {
       if (__DEV__) console.error('Failed to clear data:', error);
       Alert.alert('Error', 'Failed to clear data. Please try again.');
@@ -3064,6 +3087,7 @@ function AppContent() {
 
   // Sign out: clear user data, logout services, navigate to auth screen
   // Preserves app preferences (theme, large text, tutorial flags, etc.)
+  // Returns whether the sign out took. A failed one clears nothing.
   const performSignOut = async () => {
     try {
       const userId = supabaseUser?.id;
@@ -3083,8 +3107,16 @@ function AppContent() {
       claimStoreSync.reset();
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
-      // 2. Sign out from Supabase
-      await supabaseSignOut();
+      // 2. Sign out from Supabase. A failed sign out keeps the session and has
+      // said so, so the account's data on this phone stays as it is.
+      const { error: signOutError } = await supabaseSignOut();
+      if (signOutError) {
+        // Still signed in, so the account gets its plan back. Setup logs
+        // RevenueCat in again and reads the App Store and web plans.
+        signedInIdRef.current = userId || null;
+        setPlanSetupRun((n) => n + 1);
+        return false;
+      }
       // A sync the auto sync started again while those ran stops here too
       accountGenRef.current += 1;
       // 3. Selective clear — remove user data, preserve app preferences
@@ -3110,9 +3142,11 @@ function AppContent() {
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
       setGuestMode(false);
+      return true;
     } catch (error) {
       if (__DEV__) console.error('Sign out failed:', error);
       Alert.alert('Error', 'Failed to sign out. Please try again.');
+      return false;
     }
   };
 
@@ -4899,7 +4933,7 @@ function AppContent() {
     }, 500); // 500ms delay to let UI settle
 
     return () => clearTimeout(timeoutId);
-  }, [isAuthenticated, supabaseUser?.id, guestMode]); // Re-run when user changes
+  }, [isAuthenticated, supabaseUser?.id, guestMode, planSetupRun]); // Re-run when user changes
 
   // RevenueCat real-time listener — updates tier immediately on purchase/restore/expiry
   useEffect(() => {
@@ -14088,7 +14122,7 @@ function AppContent() {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                             Alert.alert(
                               'Clear All Data',
-                              'Are you sure? This will permanently delete all your holdings and settings.',
+                              clearDataPrompt(!!supabaseUser),
                               [
                                 { text: 'Cancel', style: 'cancel' },
                                 {

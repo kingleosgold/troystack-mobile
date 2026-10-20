@@ -38,7 +38,7 @@ interface AuthContextType {
   signInWithApple: () => Promise<{ error: Error | null }>;
   linkWithGoogle: () => Promise<{ error: Error | null }>;
   linkWithApple: () => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<{ error: Error | null }>;
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>;
 }
 
@@ -427,6 +427,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   // Sign out
+  // Sign out. A failure is returned as well as shown, since Supabase keeps
+  // the session then and callers must not clear the account's data.
   const signOut = useCallback(async () => {
     setLoading(true);
     try {
@@ -435,6 +437,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (__DEV__) console.error('Sign out error:', error);
         Alert.alert('Error', 'Failed to sign out. Please try again.');
       }
+      return { error: error ?? null };
+    } catch (error: any) {
+      if (__DEV__) console.error('Sign out error:', error);
+      Alert.alert('Error', 'Failed to sign out. Please try again.');
+      return { error: error as Error };
     } finally {
       setLoading(false);
     }
