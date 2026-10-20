@@ -25,10 +25,9 @@ test('a reset never sets dataLoaded back to false', () => {
 
 test('a signed-in wipe signs out before it clears the phone', () => {
   const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
-  const signOut = clear.indexOf('await performSignOut();');
-  const stillSignedIn = clear.indexOf('if (data?.session) return;');
-  assert.ok(signOut >= 0 && stillSignedIn > signOut);
-  assert.ok(stillSignedIn < clear.indexOf('await AsyncStorage.clear();'));
+  const signOut = clear.indexOf('if (signedIn && !(await performSignOut())) return;');
+  assert.ok(signOut >= 0);
+  assert.ok(signOut < clear.indexOf('await AsyncStorage.clear();'));
   assert.match(clear, /clearDataDone\(signedIn\)/);
 });
 
@@ -53,4 +52,21 @@ test('a guest stays a guest after a wipe', () => {
   const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
   const after = clear.slice(clear.indexOf('resetAllState();'));
   assert.match(after, /if \(!signedIn\) \{\s*setGuestMode\(true\);\s*AsyncStorage\.multiSet\(\[\[GUEST_MODE_KEY, 'true'\], \[SEEN_FIRST_LAUNCH_KEY, 'true'\]\]\)/);
+});
+
+test('a failed sign out clears nothing on the phone', () => {
+  const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
+  const failed = out.indexOf('if (signOutError) return false;');
+  assert.ok(failed >= 0 && failed > out.indexOf('await supabaseSignOut();'));
+  assert.ok(failed < out.indexOf('AsyncStorage.multiRemove('), 'stops before the local clear');
+  assert.ok(failed < out.indexOf('resetAllState(false);'), 'stops before the reset');
+  assert.match(out, /setGuestMode\(false\);\s*return true;/);
+});
+
+test('the auth context reports a failed sign out', () => {
+  const context = readFileSync(new URL('../contexts/AuthContext.tsx', import.meta.url), 'utf8');
+  assert.match(context, /signOut: \(\) => Promise<\{ error: Error \| null \}>;/);
+  const start = context.indexOf('const signOut = useCallback(');
+  const body = context.slice(start, context.indexOf('const resetPassword = useCallback(', start));
+  assert.match(body, /return \{ error: error \?\? null \};/);
 });

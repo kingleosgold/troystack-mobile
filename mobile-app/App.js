@@ -3059,13 +3059,10 @@ function AppContent() {
       // A signed-in account's holdings stay in the cloud. Sign it out first,
       // so the next sync doesn't bring them straight back onto a wiped phone.
       const signedIn = !!supabaseUser;
-      if (signedIn) {
-        await performSignOut();
-        // A sign out that failed has already said so. Wiping now would bring
-        // the cloud stack straight back under the same account.
-        const { data } = await supabase.auth.getSession();
-        if (data?.session) return;
-      }
+      // A sign out that failed has already said so and cleared nothing.
+      // Wiping now would bring the cloud stack straight back under the same
+      // account.
+      if (signedIn && !(await performSignOut())) return;
       accountGenRef.current += 1;
       await AsyncStorage.clear();
       accountGenRef.current += 1;
@@ -3087,6 +3084,7 @@ function AppContent() {
 
   // Sign out: clear user data, logout services, navigate to auth screen
   // Preserves app preferences (theme, large text, tutorial flags, etc.)
+  // Returns whether the sign out took. A failed one clears nothing.
   const performSignOut = async () => {
     try {
       const userId = supabaseUser?.id;
@@ -3106,8 +3104,10 @@ function AppContent() {
       claimStoreSync.reset();
       // 1. Logout from RevenueCat
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
-      // 2. Sign out from Supabase
-      await supabaseSignOut();
+      // 2. Sign out from Supabase. A failed sign out keeps the session and has
+      // said so, so the account's data on this phone stays as it is.
+      const { error: signOutError } = await supabaseSignOut();
+      if (signOutError) return false;
       // A sync the auto sync started again while those ran stops here too
       accountGenRef.current += 1;
       // 3. Selective clear — remove user data, preserve app preferences
@@ -3133,9 +3133,11 @@ function AppContent() {
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
       setGuestMode(false);
+      return true;
     } catch (error) {
       if (__DEV__) console.error('Sign out failed:', error);
       Alert.alert('Error', 'Failed to sign out. Please try again.');
+      return false;
     }
   };
 
