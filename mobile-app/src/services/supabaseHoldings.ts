@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../utils/fetchAllRows';
 import { asRestoredBy, holdingsToUpload } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -120,12 +121,17 @@ export async function fetchHoldings(userId: string): Promise<{
   error: Error | null;
 }> {
   try {
-    const { data, error } = await supabase
-      .from('holdings')
-      .select('*')
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+    // Every page, not just the first 1000 rows, ordered by id within a
+    // created_at so the pages don't overlap
+    const { data, error } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('*')
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+    );
 
     if (error) throw error;
 
@@ -253,12 +259,15 @@ export async function findHoldingByLocalId(
   metal: 'silver' | 'gold' | 'platinum' | 'palladium'
 ): Promise<SupabaseHolding | null> {
   try {
-    const { data, error } = await supabase
-      .from('holdings')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('metal', metal)
-      .is('deleted_at', null);
+    const { data, error } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('metal', metal)
+        .is('deleted_at', null)
+        .order('id', { ascending: true })
+    );
 
     if (error) throw error;
 
@@ -300,10 +309,13 @@ export async function syncLocalToSupabase(
   try {
     // Get existing holdings to avoid duplicates, deleted ones included so a
     // holding this account deleted doesn't come back from an old copy
-    const { data: existingHoldings, error: fetchError } = await supabase
-      .from('holdings')
-      .select('id, notes, deleted_at')
-      .eq('user_id', userId);
+    const { data: existingHoldings, error: fetchError } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('id, notes, deleted_at')
+        .eq('user_id', userId)
+        .order('id', { ascending: true })
+    );
 
     if (fetchError) throw fetchError;
 
