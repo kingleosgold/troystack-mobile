@@ -36,3 +36,13 @@ for (const [name, next] of steps) {
 test('the sign in screen waits on busy, not the app wide loading', () => {
   assert.match(authScreen, /busy: loading \} = useAuth\(\)/);
 });
+
+test('a second sign in can not start while one runs', () => {
+  for (const handler of ['handleEmailAuth', 'handleGoogleAuth', 'handleAppleAuth']) {
+    const start = authScreen.indexOf(`const ${handler} = async () => {`);
+    assert.ok(start >= 0, `${handler} not found`);
+    assert.match(authScreen.slice(start, start + 200), /if \(loading\) return;/, handler);
+  }
+  // The native Apple button takes no disabled prop
+  assert.match(authScreen, /pointerEvents=\{loading \? 'none' : 'auto'\}/);
+});

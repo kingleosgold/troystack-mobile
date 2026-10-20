@@ -73,6 +73,8 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
   };
 
   const handleEmailAuth = async () => {
+    // One sign in at a time. The screen stays up while one runs now.
+    if (loading) return;
     setError(null);
     Keyboard.dismiss();
 
@@ -126,6 +128,7 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
   };
 
   const handleGoogleAuth = async () => {
+    if (loading) return;
     setError(null);
     try {
       const { error } = await signInWithGoogle();
@@ -142,6 +145,7 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
   };
 
   const handleAppleAuth = async () => {
+    if (loading) return;
     setError(null);
     try {
       const { error } = await signInWithApple();
@@ -352,13 +356,15 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
 
               {/* Apple Button (iOS only) - Native Apple Sign In Button */}
               {Platform.OS === 'ios' && isAppleAvailable && (
-                <AppleAuthentication.AppleAuthenticationButton
-                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
-                  cornerRadius={12}
-                  style={styles.appleNativeButton}
-                  onPress={handleAppleAuth}
-                />
+                <View pointerEvents={loading ? 'none' : 'auto'} style={{ opacity: loading ? 0.5 : 1 }}>
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                    buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                    cornerRadius={12}
+                    style={styles.appleNativeButton}
+                    onPress={handleAppleAuth}
+                  />
+                </View>
               )}
               {Platform.OS === 'ios' && !isAppleAvailable && (
                 <View style={{ padding: 12, backgroundColor: 'rgba(239, 68, 68, 0.15)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' }}>
