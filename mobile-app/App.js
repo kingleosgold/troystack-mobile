@@ -14,7 +14,7 @@ import 'react-native-reanimated';
 import 'react-native-gesture-handler';
 import 'react-native-url-polyfill/auto';
 import './src/utils/backgroundTasks';
-import React, { useState, useEffect, useRef, Component, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, Component, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Platform, SafeAreaView, StatusBar, ActivityIndicator,
@@ -2697,6 +2697,13 @@ function AppContent() {
   const storePlanRef = useRef(null);
   // The account signed in now, so a sync answer for another one is dropped.
   const signedInIdRef = useRef(null);
+  // Goes up at each sign out, account change and data wipe. A holdings sync
+  // that started before one stops at its next step and writes nothing, so it
+  // can't put the last account's owner or stack back on the phone. Unlike
+  // signedInIdRef it never reads null while the same account stays signed in.
+  const accountGenRef = useRef(0);
+  // The account the last account change left signed in, or null.
+  const lastAccountIdRef = useRef(null);
   // The sync after Purchases.logIn runs at most once per account per launch.
   const [claimStoreSync] = useState(() => oncePerAccount());
   // Profile writes go out one at a time, newest wins. See src/utils/profileWrites.js.
@@ -3042,7 +3049,9 @@ function AppContent() {
   // Clear all app data and reset to fresh state (user-initiated from Settings)
   const clearAllData = async () => {
     try {
+      accountGenRef.current += 1;
       await AsyncStorage.clear();
+      accountGenRef.current += 1;
       resetAllState();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Data Cleared', 'All your data has been erased. The app has been reset to its initial state.');
@@ -3057,6 +3066,8 @@ function AppContent() {
   const performSignOut = async () => {
     try {
       const userId = supabaseUser?.id;
+      // A holdings sync still running for this account writes nothing more
+      accountGenRef.current += 1;
       // 0. A web plan belongs to the account, not the phone
       webPlanGenRef.current += 1;
       rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
@@ -3073,6 +3084,8 @@ function AppContent() {
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 2. Sign out from Supabase
       await supabaseSignOut();
+      // A sync the auto sync started again while those ran stops here too
+      accountGenRef.current += 1;
       // 3. Selective clear — remove user data, preserve app preferences
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
@@ -3988,6 +4001,10 @@ function AppContent() {
     setIsSyncing(true);
     setSyncError(null);
     const restoresAtStart = restoreCountRef.current;
+    // A sign out, account change or wipe since this sync began makes the rest
+    // of it moot, and checked after each wait it writes nothing more
+    const accountGen = accountGenRef.current;
+    const accountChanged = () => accountGenRef.current !== accountGen;
 
     try {
       // Check if this user has ever synced before (for first-time migration)
@@ -4001,6 +4018,7 @@ function AppContent() {
       ]);
       // An older build left no owner, only stack_synced_<id> keys, so those
       // name the owner until one is recorded
+      if (accountChanged()) return false;
       const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
       // On the first sync the phone's stack goes up whole if it's a guest's,
       // from before accounts, or this account's own. Of another account's
@@ -4025,12 +4043,16 @@ function AppContent() {
           });
       }
       if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
+      // The marks come off in state even if the account changed meanwhile,
+      // since storage already has them off and a marked copy left in state
+      // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
         setPalladiumItems(withoutGuestMark);
       }
+      if (accountChanged()) return false;
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
@@ -4045,6 +4067,7 @@ function AppContent() {
         toUpload[3]
       );
 
+      if (accountChanged()) return false;
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
         // A restore that landed while this sync ran is sent up by the next
@@ -4068,10 +4091,12 @@ function AppContent() {
             .map(([key, items]) => [key, JSON.stringify(items)])
           : [];
         await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        if (accountChanged()) return false;
         // Other accounts' synced keys named the owner only until one was
         // recorded, and the stack they named is gone from the phone now
         const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
         if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
+        if (accountChanged()) return false;
 
         // A restore that landed while this sync ran isn't in what it sent up,
         // so the cloud's copy would drop it. Leave the stack as it is and
@@ -4106,12 +4131,24 @@ function AppContent() {
       return true;
     } catch (err) {
       if (__DEV__) console.error('Supabase sync failed:', err);
-      if (restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
+      if (!accountChanged() && restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
       return false;
     } finally {
       setIsSyncing(false);
     }
   };
+
+  // A change away from a signed-in account stops that account's sync. As a
+  // layout effect it runs inside the commit that shows the new account, so
+  // the old account's sync can't land a write between that commit and the
+  // bump, and it runs before the auto sync, so a switch straight to another
+  // account doesn't stop the new account's sync. Only a sync for an account
+  // that was signed in can be running, so a sign in from no account leaves
+  // the count alone.
+  useLayoutEffect(() => {
+    if (lastAccountIdRef.current) accountGenRef.current += 1;
+    lastAccountIdRef.current = supabaseUser?.id || null;
+  }, [supabaseUser?.id]);
 
   // Supabase Holdings Sync - sync on app load when user is already signed in
   useEffect(() => {
