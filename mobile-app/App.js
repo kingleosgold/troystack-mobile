@@ -3039,6 +3039,10 @@ function AppContent() {
     setShowAccountScreen(false);
     setShowBenefitsScreen(false);
     setHasSyncedOnce(false);
+    // Both clear paths remove the stored iCloud setting. Turning it off here
+    // too stops the iCloud sync from writing the empty stack over a backup.
+    setICloudSyncEnabled(false);
+    setLastSyncTime(null);
 
     // Only reset app-level preferences on full reset (clearAllData from settings)
     if (fullReset) {
@@ -3055,11 +3059,24 @@ function AppContent() {
       // A signed-in account's holdings stay in the cloud. Sign it out first,
       // so the next sync doesn't bring them straight back onto a wiped phone.
       const signedIn = !!supabaseUser;
-      if (signedIn) await performSignOut();
+      if (signedIn) {
+        await performSignOut();
+        // A sign out that failed has already said so. Wiping now would bring
+        // the cloud stack straight back under the same account.
+        const { data } = await supabase.auth.getSession();
+        if (data?.session) return;
+      }
       accountGenRef.current += 1;
       await AsyncStorage.clear();
       accountGenRef.current += 1;
       resetAllState();
+      // A guest stays a guest, as on a first launch
+      if (!signedIn) {
+        setGuestMode(true);
+        AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
+          if (__DEV__) console.error('Failed to save guest mode:', error);
+        });
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Data Cleared', clearDataDone(signedIn));
     } catch (error) {

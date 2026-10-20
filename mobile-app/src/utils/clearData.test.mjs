@@ -25,9 +25,10 @@ test('a reset never sets dataLoaded back to false', () => {
 
 test('a signed-in wipe signs out before it clears the phone', () => {
   const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
-  const signOut = clear.indexOf('if (signedIn) await performSignOut();');
-  assert.ok(signOut >= 0);
-  assert.ok(signOut < clear.indexOf('await AsyncStorage.clear();'));
+  const signOut = clear.indexOf('await performSignOut();');
+  const stillSignedIn = clear.indexOf('if (data?.session) return;');
+  assert.ok(signOut >= 0 && stillSignedIn > signOut);
+  assert.ok(stillSignedIn < clear.indexOf('await AsyncStorage.clear();'));
   assert.match(clear, /clearDataDone\(signedIn\)/);
 });
 
@@ -39,4 +40,17 @@ test('the words tell a signed-in user the cloud copy stays', () => {
   assert.equal(clearDataPrompt(false), 'Are you sure? This will permanently delete all your holdings and settings.');
   assert.equal(clearDataDone(false), 'All your data has been erased. The app has been reset to its initial state.');
   assert.match(app, /clearDataPrompt\(!!supabaseUser\),/);
+});
+
+test('a reset turns iCloud sync off so an empty stack never goes up over a backup', () => {
+  const reset = slice('const resetAllState = (fullReset = true) => {', 'const clearAllData = async () => {');
+  const off = reset.indexOf('setICloudSyncEnabled(false);');
+  assert.ok(off >= 0);
+  assert.ok(off < reset.indexOf('if (fullReset) {'), 'both resets turn it off');
+});
+
+test('a guest stays a guest after a wipe', () => {
+  const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
+  const after = clear.slice(clear.indexOf('resetAllState();'));
+  assert.match(after, /if \(!signedIn\) \{\s*setGuestMode\(true\);\s*AsyncStorage\.multiSet\(\[\[GUEST_MODE_KEY, 'true'\], \[SEEN_FIRST_LAUNCH_KEY, 'true'\]\]\)/);
 });
