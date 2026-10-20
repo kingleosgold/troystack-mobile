@@ -43,6 +43,7 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
+import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
@@ -2989,7 +2990,9 @@ function AppContent() {
 
   // Reset all in-memory state to defaults (used by both clearAllData and performSignOut)
   // fullReset=true (default): resets everything including app preferences (for clearAllData)
-  // fullReset=false: preserves theme, large text, tutorial flags, and keeps dataLoaded true (for sign-out)
+  // fullReset=false: preserves theme, large text and tutorial flags (for sign-out)
+  // dataLoaded stays true either way: the empty stack matches what's stored,
+  // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
     setSilverItems([]);
@@ -3043,19 +3046,22 @@ function AppContent() {
       setLargeText(false);
       setHideWidgetValues(false);
       setSpotChangeDisplayMode('percent');
-      setDataLoaded(false);
     }
   };
 
   // Clear all app data and reset to fresh state (user-initiated from Settings)
   const clearAllData = async () => {
     try {
+      // A signed-in account's holdings stay in the cloud. Sign it out first,
+      // so the next sync doesn't bring them straight back onto a wiped phone.
+      const signedIn = !!supabaseUser;
+      if (signedIn) await performSignOut();
       accountGenRef.current += 1;
       await AsyncStorage.clear();
       accountGenRef.current += 1;
       resetAllState();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Data Cleared', 'All your data has been erased. The app has been reset to its initial state.');
+      Alert.alert('Data Cleared', clearDataDone(signedIn));
     } catch (error) {
       if (__DEV__) console.error('Failed to clear data:', error);
       Alert.alert('Error', 'Failed to clear data. Please try again.');
@@ -14088,7 +14094,7 @@ function AppContent() {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                             Alert.alert(
                               'Clear All Data',
-                              'Are you sure? This will permanently delete all your holdings and settings.',
+                              clearDataPrompt(!!supabaseUser),
                               [
                                 { text: 'Cancel', style: 'cancel' },
                                 {
