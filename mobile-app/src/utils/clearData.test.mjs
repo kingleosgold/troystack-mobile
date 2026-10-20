@@ -56,7 +56,7 @@ test('a guest stays a guest after a wipe', () => {
 
 test('a failed sign out clears nothing on the phone', () => {
   const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
-  const failed = out.indexOf('if (signOutError) return false;');
+  const failed = out.indexOf('return false;', out.indexOf('if (signOutError) {'));
   assert.ok(failed >= 0 && failed > out.indexOf('await supabaseSignOut();'));
   assert.ok(failed < out.indexOf('AsyncStorage.multiRemove('), 'stops before the local clear');
   assert.ok(failed < out.indexOf('resetAllState(false);'), 'stops before the reset');
@@ -69,4 +69,12 @@ test('the auth context reports a failed sign out', () => {
   const start = context.indexOf('const signOut = useCallback(');
   const body = context.slice(start, context.indexOf('const resetPassword = useCallback(', start));
   assert.match(body, /return \{ error: error \?\? null \};/);
+});
+
+test('a failed sign out gives the account its plan back', () => {
+  const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
+  const branch = out.slice(out.indexOf('if (signOutError) {'), out.indexOf('return false;', out.indexOf('if (signOutError) {')));
+  assert.match(branch, /signedInIdRef\.current = userId \|\| null;/);
+  assert.match(branch, /setPlanSetupRun\(\(n\) => n \+ 1\);/);
+  assert.match(app, /\}, \[isAuthenticated, supabaseUser\?\.id, guestMode, planSetupRun\]\);/);
 });
