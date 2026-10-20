@@ -3051,6 +3051,7 @@ function AppContent() {
     try {
       accountGenRef.current += 1;
       await AsyncStorage.clear();
+      accountGenRef.current += 1;
       resetAllState();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Data Cleared', 'All your data has been erased. The app has been reset to its initial state.');
@@ -3083,6 +3084,8 @@ function AppContent() {
       try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 2. Sign out from Supabase
       await supabaseSignOut();
+      // A sync the auto sync started again while those ran stops here too
+      accountGenRef.current += 1;
       // 3. Selective clear — remove user data, preserve app preferences
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
