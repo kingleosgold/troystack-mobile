@@ -14,7 +14,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
-import { readOAuthRedirect } from '../utils/oauthRedirect';
+import { readOAuthRedirect, readLinkRedirect } from '../utils/oauthRedirect';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -72,9 +72,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  // A sign in or sign up in flight. Kept apart from loading, which the app
-  // swaps every screen out for, so the sign in screen stays up and can show
-  // what went wrong.
+  // A sign in, sign up or account link in flight. Kept apart from loading,
+  // which the app swaps every screen out for, so the sign in and account
+  // screens stay up and can show what went wrong.
   const [busy, setBusy] = useState(false);
   const [linkedProviders, setLinkedProviders] = useState<LinkedProviders>({
     google: false,
@@ -301,7 +301,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Link Google account to existing user
   const linkWithGoogle = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Get the redirect URL
       const redirectUrl = AuthSession.makeRedirectUri({
@@ -332,16 +332,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
         redirectUrl
       );
 
-      if (result.type === 'success') {
-        // Refresh the session to get updated user with new identity
-        const { error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          if (__DEV__) console.error('Failed to refresh session after linking:', refreshError);
-        }
-        Alert.alert('Success', 'Google account linked successfully!');
-      } else if (result.type === 'cancel') {
-        return { error: new Error('Linking cancelled') };
+      // Only a redirect that carries a session links. A refused consent or
+      // a dismiss reads as cancelled rather than linked.
+      const redirect = readLinkRedirect(result);
+      if (redirect.error) return { error: new Error(redirect.error) };
+
+      // Refresh the session to get updated user with new identity
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        if (__DEV__) console.error('Failed to refresh session after linking:', refreshError);
       }
+      Alert.alert('Success', 'Google account linked successfully!');
 
       return { error: null };
     } catch (error: any) {
@@ -352,14 +353,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Link Apple account to existing user
   const linkWithApple = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Check if Apple Authentication is available
       const isAvailable = await AppleAuthentication.isAvailableAsync();
@@ -433,7 +434,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 

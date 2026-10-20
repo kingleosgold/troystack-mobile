@@ -42,7 +42,7 @@ export default function AccountScreen({
   hasLifetime,
   colors,
 }: AccountScreenProps) {
-  const { user, linkedProviders, linkWithGoogle, linkWithApple, signOut } = useAuth();
+  const { user, busy, linkedProviders, linkWithGoogle, linkWithApple, signOut } = useAuth();
   const [deleting, setDeleting] = useState(false);
 
   const email = user?.email || 'Unknown';
@@ -107,6 +107,7 @@ export default function AccountScreen({
   };
 
   const handleLinkGoogle = async () => {
+    if (busy) return;
     const { error } = await linkWithGoogle();
     if (error && error.message !== 'Linking cancelled') {
       Alert.alert('Link Failed', error.message);
@@ -114,6 +115,7 @@ export default function AccountScreen({
   };
 
   const handleLinkApple = async () => {
+    if (busy) return;
     const { error } = await linkWithApple();
     if (error && error.message !== 'Linking cancelled') {
       Alert.alert('Link Failed', error.message);
@@ -186,7 +188,7 @@ export default function AccountScreen({
                   <Text style={{ color: colors.success, fontSize: 14 }}>✓</Text>
                 </View>
               ) : (
-                <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border }]} onPress={handleLinkGoogle}>
+                <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]} onPress={handleLinkGoogle} disabled={busy}>
                   <Text style={[styles.linkButtonText, { color: colors.gold }]}>Link</Text>
                 </TouchableOpacity>
               )}
@@ -207,7 +209,7 @@ export default function AccountScreen({
                     <Text style={{ color: colors.success, fontSize: 14 }}>✓</Text>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border }]} onPress={handleLinkApple}>
+                  <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]} onPress={handleLinkApple} disabled={busy}>
                     <Text style={[styles.linkButtonText, { color: colors.gold }]}>Link</Text>
                   </TouchableOpacity>
                 )}

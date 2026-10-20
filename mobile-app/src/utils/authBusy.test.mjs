@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 
 const context = readFileSync(new URL('../contexts/AuthContext.tsx', import.meta.url), 'utf8');
 const authScreen = readFileSync(new URL('../screens/AuthScreen.tsx', import.meta.url), 'utf8');
+const accountScreen = readFileSync(new URL('../screens/AccountScreen.tsx', import.meta.url), 'utf8');
 
 function body(name, next) {
   const start = context.indexOf(`const ${name} = useCallback(`);
@@ -22,6 +23,8 @@ const steps = [
   ['signIn', 'signInWithGoogle'],
   ['signInWithGoogle', 'signInWithApple'],
   ['signInWithApple', 'linkWithGoogle'],
+  ['linkWithGoogle', 'linkWithApple'],
+  ['linkWithApple', 'signOut'],
 ];
 
 for (const [name, next] of steps) {
@@ -53,5 +56,20 @@ test('the sign in and sign up tabs hold while a sign in runs', () => {
     const at = authScreen.indexOf(tab);
     assert.ok(at >= 0, `${mode} tab not found`);
     assert.match(authScreen.slice(at, at + tab.length + 60), /disabled=\{loading\}/, mode);
+  }
+});
+
+test('linking Google reads the redirect instead of trusting any browser success', () => {
+  const code = body('linkWithGoogle', 'linkWithApple');
+  assert.match(code, /readLinkRedirect\(result\)/);
+  assert.doesNotMatch(code, /result\.type === 'success'/);
+});
+
+test('the account screen holds its link buttons while a link runs', () => {
+  for (const handler of ['handleLinkGoogle', 'handleLinkApple']) {
+    const start = accountScreen.indexOf(`const ${handler} = async () => {`);
+    assert.ok(start >= 0, `${handler} not found`);
+    assert.match(accountScreen.slice(start, start + 120), /if \(busy\) return;/, handler);
+    assert.match(accountScreen, new RegExp(`onPress=\\{${handler}\\} disabled=\\{busy\\}`), handler);
   }
 });
