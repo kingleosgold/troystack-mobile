@@ -38,3 +38,31 @@ export function readOAuthRedirect(result) {
   if (params.get('error') === 'access_denied' && !params.get('error_code')) return { error: SIGN_IN_CANCELLED };
   return { error: NOT_FINISHED };
 }
+
+export const LINK_CANCELLED = 'Linking cancelled';
+export const ALREADY_LINKED = 'This Google account is already linked to another user.';
+const LINK_NOT_FINISHED = "Google linking didn't finish. Please try again.";
+
+function errorCodeOf(result) {
+  try {
+    const url = new URL(result.url);
+    return new URLSearchParams(url.hash.substring(1)).get('error_code') || url.searchParams.get('error_code');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `{ linked: true }` for a link redirect that carries a session, else
+ * `{ error }` for the account screen. Linking Google runs the same browser
+ * round trip as signing in, so a refused consent or a dismiss reads as
+ * cancelled, which the screen doesn't show, and only a redirect with a
+ * session counts as linked.
+ */
+export function readLinkRedirect(result) {
+  const read = readOAuthRedirect(result);
+  if (!read.error) return { linked: true };
+  if (read.error === SIGN_IN_CANCELLED) return { error: LINK_CANCELLED };
+  if (errorCodeOf(result) === 'identity_already_exists') return { error: ALREADY_LINKED };
+  return { error: LINK_NOT_FINISHED };
+}
