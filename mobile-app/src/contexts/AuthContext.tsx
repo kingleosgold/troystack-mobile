@@ -30,6 +30,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  busy: boolean;
   linkedProviders: LinkedProviders;
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
@@ -71,6 +72,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // A sign in or sign up in flight. Kept apart from loading, which the app
+  // swaps every screen out for, so the sign in screen stays up and can show
+  // what went wrong.
+  const [busy, setBusy] = useState(false);
   const [linkedProviders, setLinkedProviders] = useState<LinkedProviders>({
     google: false,
     apple: false,
@@ -108,7 +113,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Sign up with email and password
   const signUp = useCallback(async (email: string, password: string) => {
-    setLoading(true);
+    setBusy(true);
     try {
       // Add 30-second timeout for network issues
       const signUpPromise = supabase.auth.signUp({
@@ -125,13 +130,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error: any) {
       return { error: error as AuthError };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with email and password
   const signIn = useCallback(async (email: string, password: string) => {
-    setLoading(true);
+    setBusy(true);
     try {
       // Add 30-second timeout for network issues
       const signInPromise = supabase.auth.signInWithPassword({
@@ -148,14 +153,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error: any) {
       return { error: error as AuthError };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with Google
   const signInWithGoogle = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Get the redirect URL
       const redirectUrl = AuthSession.makeRedirectUri({
@@ -212,14 +217,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (__DEV__) console.error('Google sign in error:', error);
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with Apple
   const signInWithApple = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Check if Apple Authentication is available
       const isAvailable = await AppleAuthentication.isAvailableAsync();
@@ -289,7 +294,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         : `Apple Sign In failed: ${error.message}`;
       return { error: new Error(debugMsg) };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
@@ -458,6 +463,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     session,
     loading,
+    busy,
     linkedProviders,
     signUp,
     signIn,

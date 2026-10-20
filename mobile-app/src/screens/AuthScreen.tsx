@@ -31,7 +31,7 @@ interface AuthScreenProps {
 }
 
 export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: AuthScreenProps) {
-  const { signIn, signUp, signInWithGoogle, signInWithApple, resetPassword, loading } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithApple, resetPassword, busy: loading } = useAuth();
 
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
