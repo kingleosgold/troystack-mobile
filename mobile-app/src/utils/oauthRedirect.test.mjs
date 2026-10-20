@@ -18,8 +18,9 @@ test('a refused consent reads as cancelled, in the hash or the query', () => {
   assert.deepEqual(readOAuthRedirect({ type: 'success', url: `${base}?error=access_denied` }), { error: SIGN_IN_CANCELLED });
 });
 
-test('a redirect with another error and no token is an error, never a sign in', () => {
-  assert.deepEqual(readOAuthRedirect({ type: 'success', url: `${base}#error=server_error&error_description=Database+error` }), { error: 'Database error' });
+test('a redirect with another error, or a refusal from Supabase, is an error and never shows server text', () => {
+  assert.deepEqual(readOAuthRedirect({ type: 'success', url: `${base}#error=server_error&error_description=Database+error` }), { error: failed });
+  assert.deepEqual(readOAuthRedirect({ type: 'success', url: `${base}#error=access_denied&error_code=signup_disabled&error_description=Signups+not+allowed` }), { error: failed });
   assert.deepEqual(readOAuthRedirect({ type: 'success', url: base }), { error: failed });
   assert.deepEqual(readOAuthRedirect({ type: 'success', url: 'not a url' }), { error: failed });
   assert.deepEqual(readOAuthRedirect({ type: 'success' }), { error: failed });

@@ -9,18 +9,20 @@
  */
 
 export const SIGN_IN_CANCELLED = 'Sign in cancelled';
+const NOT_FINISHED = "Google sign in didn't finish. Please try again.";
 
 /**
  * `{ accessToken, refreshToken }` for a redirect that carries a session,
  * else `{ error }` with a message for the sign in screen. A cancel, a
  * dismiss or a refused consent reads as cancelled, which the screen doesn't
- * show.
+ * show. A refusal from Supabase itself carries an error_code and reads as
+ * not finished. The server's own wording never reaches the screen.
  */
 export function readOAuthRedirect(result) {
   const type = result?.type;
   if (type === 'cancel' || type === 'dismiss') return { error: SIGN_IN_CANCELLED };
   if (type !== 'success' || typeof result.url !== 'string') {
-    return { error: "Google sign in didn't finish. Please try again." };
+    return { error: NOT_FINISHED };
   }
   let params;
   try {
@@ -29,10 +31,10 @@ export function readOAuthRedirect(result) {
     // Some errors come back in the query instead of the hash
     if (!params.get('access_token') && !params.get('error')) params = url.searchParams;
   } catch {
-    return { error: "Google sign in didn't finish. Please try again." };
+    return { error: NOT_FINISHED };
   }
   const accessToken = params.get('access_token');
   if (accessToken) return { accessToken, refreshToken: params.get('refresh_token') || '' };
-  if (params.get('error') === 'access_denied') return { error: SIGN_IN_CANCELLED };
-  return { error: params.get('error_description') || "Google sign in didn't finish. Please try again." };
+  if (params.get('error') === 'access_denied' && !params.get('error_code')) return { error: SIGN_IN_CANCELLED };
+  return { error: NOT_FINISHED };
 }
