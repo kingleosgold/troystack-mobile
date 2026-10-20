@@ -4040,13 +4040,16 @@ function AppContent() {
           });
       }
       if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
-      if (accountChanged()) return false;
+      // The marks come off in state even if the account changed meanwhile,
+      // since storage already has them off and a marked copy left in state
+      // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
         setPalladiumItems(withoutGuestMark);
       }
+      if (accountChanged()) return false;
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
@@ -4131,6 +4134,16 @@ function AppContent() {
       setIsSyncing(false);
     }
   };
+
+  // A change away from a signed-in account stops that account's sync. It's
+  // declared before the auto sync so it runs first in the same commit, and a
+  // switch straight to another account doesn't stop the new account's sync.
+  // Only a sync for an account that was signed in can be running, so a sign
+  // in from no account leaves the count alone.
+  useEffect(() => {
+    if (lastAccountIdRef.current) accountGenRef.current += 1;
+    lastAccountIdRef.current = supabaseUser?.id || null;
+  }, [supabaseUser?.id]);
 
   // Supabase Holdings Sync - sync on app load when user is already signed in
   useEffect(() => {
@@ -4927,10 +4940,6 @@ function AppContent() {
   // last one, right away rather than when setup runs half a second later.
   useEffect(() => {
     webPlanGenRef.current += 1;
-    // Only a sync for an account that was signed in can be running. Bumping on
-    // a sign in too would stop the sync that sign in just started.
-    if (lastAccountIdRef.current) accountGenRef.current += 1;
-    lastAccountIdRef.current = supabaseUser?.id || null;
     lastWebCheckRef.current = { at: 0, plan: undefined };
     setWebPlanForPrompts({ userId: null, plan: undefined });
     // Some paths switch accounts without signing out, a password reset link
