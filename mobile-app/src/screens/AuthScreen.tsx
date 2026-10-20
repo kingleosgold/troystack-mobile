@@ -230,11 +230,12 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
               <Text style={styles.logoTitle}>TroyStack</Text>
             </View>
 
-            {/* Tab Selector */}
+            {/* Tab Selector, held while a sign in runs so its result lands on its own tab */}
             <View style={styles.tabContainer}>
               <TouchableOpacity
                 style={[styles.tab, mode === 'signIn' && styles.tabActive]}
                 onPress={() => { setMode('signIn'); setError(null); }}
+                disabled={loading}
               >
                 <Text style={[styles.tabText, mode === 'signIn' && styles.tabTextActive]}>
                   Sign In
@@ -243,6 +244,7 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
               <TouchableOpacity
                 style={[styles.tab, mode === 'signUp' && styles.tabActive]}
                 onPress={() => { setMode('signUp'); setError(null); }}
+                disabled={loading}
               >
                 <Text style={[styles.tabText, mode === 'signUp' && styles.tabTextActive]}>
                   Sign Up

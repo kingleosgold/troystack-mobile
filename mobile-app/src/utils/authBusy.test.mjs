@@ -46,3 +46,12 @@ test('a second sign in can not start while one runs', () => {
   // The native Apple button takes no disabled prop
   assert.match(authScreen, /pointerEvents=\{loading \? 'none' : 'auto'\}/);
 });
+
+test('the sign in and sign up tabs hold while a sign in runs', () => {
+  for (const mode of ['signIn', 'signUp']) {
+    const tab = `onPress={() => { setMode('${mode}'); setError(null); }}`;
+    const at = authScreen.indexOf(tab);
+    assert.ok(at >= 0, `${mode} tab not found`);
+    assert.match(authScreen.slice(at, at + tab.length + 60), /disabled=\{loading\}/, mode);
+  }
+});
