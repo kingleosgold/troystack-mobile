@@ -28,3 +28,12 @@ test('the auth context uses it for both failures', () => {
   assert.equal(body.match(/Alert\.alert\('Error', signOutFailMessage\(error\)\);/g).length, 2);
   assert.doesNotMatch(body, /Failed to sign out/);
 });
+
+test('a sign out that ended the session anyway counts as signed out', () => {
+  const context = readFileSync(new URL('../contexts/AuthContext.tsx', import.meta.url), 'utf8');
+  const start = context.indexOf('const signOut = useCallback(');
+  const body = context.slice(start, context.indexOf('const resetPassword = useCallback(', start));
+  const check = body.indexOf('if (left && !left.error && !left.data?.session) return { error: null };');
+  assert.ok(check >= 0);
+  assert.ok(check < body.indexOf("Alert.alert('Error', signOutFailMessage(error));"), 'no alert for a session that already ended');
+});

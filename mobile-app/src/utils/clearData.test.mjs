@@ -83,6 +83,8 @@ test('a failed sign out leaves the plan as it was', () => {
     assert.ok(at > signOut, `${step} runs after the sign out`);
   }
   assert.doesNotMatch(app, /planSetupRun/);
+  // A holdings sync the auto sync restarted during the sign out stops too
+  assert.ok(out.indexOf('accountGenRef.current += 1;', signOut) > signOut);
 });
 
 test('a deleted account says so when the phone could not sign out', () => {

@@ -436,6 +436,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const { error } = await supabase.auth.signOut();
       if (error) {
         if (__DEV__) console.error('Sign out error:', error);
+        // A refresh refused on the way can end the session and still return
+        // an error. That's a sign out, so the phone gets cleared. An expired
+        // session offline reads as an error here, never as no session.
+        const left = await supabase.auth.getSession().catch(() => null);
+        if (left && !left.error && !left.data?.session) return { error: null };
         Alert.alert('Error', signOutFailMessage(error));
       }
       return { error: error ?? null };
