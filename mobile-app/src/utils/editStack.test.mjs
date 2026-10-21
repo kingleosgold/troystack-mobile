@@ -101,8 +101,11 @@ test('a save during a sync keeps the sheet open with what was typed', () => {
 
 test('an edit saves onto the copy of the holding in the stack now', () => {
   const fn = app.slice(app.indexOf('const savePurchase = () => {'));
-  const now = fn.indexOf('holdingInStack([silverItems, goldItems, platinumItems, palladiumItems], editingItem.id)');
+  const now = fn.indexOf('const holdingNow = editsHolding ? holdingInStack(sheetMetalItems, editingItem) : null;');
   assert.ok(now >= 0 && now < fn.indexOf('const item = asAddedBy({'));
+  // Only the edited metal's list, and the sheet's own copy unless a swap came
+  assert.match(fn, /\[metalTab === 'both' \? 'silver' : metalTab\] \|\| silverItems;/);
+  assert.match(fn, /const base = \(swappedSinceOpen && holdingNow\) \|\| editingItem;/);
   // Its marks and row come from that copy, not from the sheet's opening
   assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*await updateHolding\(base\.supabase_id, item, targetMetal\);/);

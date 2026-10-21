@@ -22,8 +22,12 @@ test('an edit never crosses an account change or a missing open', () => {
   assert.equal(editOutlivesSwaps(null, { gen: 3, foreignGen: 0, userId: 'a' }), false);
 });
 
-test('finds a holding by local id in any metal', () => {
-  const gold = { id: 2, productName: 'Eagle' };
-  assert.equal(holdingInStack([[{ id: 1 }], [gold], [], undefined], 2), gold);
-  assert.equal(holdingInStack([[{ id: 1 }], [gold]], 9), null);
+test('finds the holding by its cloud row, else by local id, in one list', () => {
+  const a = { id: 5, supabase_id: 'r1' };
+  const b = { id: 5, supabase_id: 'r2' };
+  assert.equal(holdingInStack([a, b], { id: 5, supabase_id: 'r2' }), b);
+  assert.equal(holdingInStack([a], { id: 5, supabase_id: 'r9' }), null);
+  // Before its first sync a holding has no row, and the synced copy has one
+  assert.equal(holdingInStack([{ id: 1 }, a], { id: 5 }), a);
+  assert.equal(holdingInStack(undefined, { id: 5 }), null);
 });

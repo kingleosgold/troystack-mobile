@@ -9621,14 +9621,15 @@ function AppContent() {
       return;
     }
 
-    // An edit of a holding saves onto the copy in the stack now, which after a
-    // sync carries the cloud's row and marks rather than those from when the
-    // sheet opened. Scanned and imported items aren't in the stack.
+    // An edit of a holding must still find it in its metal's list. After a
+    // sync it saves onto the copy there, which carries the cloud's row and
+    // marks rather than those from when the sheet opened. Scanned and
+    // imported items aren't in the stack.
     const editsHolding = !!editingItem && editingItem.scannedIndex === undefined && editingItem.importIndex === undefined;
-    const holdingNow = editsHolding
-      ? holdingInStack([silverItems, goldItems, platinumItems, palladiumItems], editingItem.id)
-      : null;
-    const base = holdingNow || editingItem;
+    const sheetMetalItems = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems }[metalTab === 'both' ? 'silver' : metalTab] || silverItems;
+    const holdingNow = editsHolding ? holdingInStack(sheetMetalItems, editingItem) : null;
+    const swappedSinceOpen = !!editOpenedRef.current && editOpenedRef.current.gen !== stackGenRef.current;
+    const base = (swappedSinceOpen && holdingNow) || editingItem;
 
     const item = asAddedBy({
       id: editingItem?.id || Date.now(),
