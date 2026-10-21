@@ -51,10 +51,14 @@ const sameIds = (a, b) => a.length === b.length && a.every((row, i) => row.id ==
  * row that was there when it finished, and the second's values are newer. A
  * stack another device keeps changing through MAX_REREADS more reads returns
  * an error, so the caller keeps the phone's stack and tries again later.
+ *
+ * A lookup of a row that was already there passes { settle: false }. One read
+ * never skips a row that exists the whole time, and an error would read as
+ * not found.
  */
-export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
+export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE, { settle = true } = {}) {
   let read = await readOnce(makeQuery, pageSize);
-  if (read.error || read.data.length < pageSize) return { data: read.data, error: read.error };
+  if (!settle || read.error || read.data.length < pageSize) return { data: read.data, error: read.error };
   for (let i = 0; i < MAX_REREADS; i++) {
     const again = await readOnce(makeQuery, pageSize);
     if (again.error) return { data: null, error: again.error };

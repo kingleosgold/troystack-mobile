@@ -258,13 +258,18 @@ export async function findHoldingByLocalId(
   metal: 'silver' | 'gold' | 'platinum' | 'palladium'
 ): Promise<SupabaseHolding | null> {
   try {
+    // One read finds a row that was already there. Reading until the stack
+    // settles could end in an error that reads as not found, and the edit
+    // would upload the holding again.
     const { data, error } = await fetchAllRows(() =>
       supabase
         .from('holdings')
         .select('*')
         .eq('user_id', userId)
         .eq('metal', metal)
-        .is('deleted_at', null)
+        .is('deleted_at', null),
+      undefined,
+      { settle: false }
     );
 
     if (error) throw error;

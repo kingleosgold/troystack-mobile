@@ -139,3 +139,19 @@ test('newestFirst sorts by created_at descending, then id, without changing its 
   assert.deepEqual(newestFirst(rows).map((r) => r.id), ['c', 'a', 'b', 'd']);
   assert.deepEqual(rows.map((r) => r.id), ['b', 'c', 'a', 'd']);
 });
+
+test('a lookup that asks not to settle reads once', async () => {
+  let next = 1;
+  const t = table(1500, { between: (rows) => [...rows, { id: idOf(next++) }] });
+  const { data, error } = await fetchAllRows(t.makeQuery, undefined, { settle: false });
+  assert.equal(error, null);
+  assert.ok(data.length >= 1500);
+  assert.equal(t.calls.length, 2);
+});
+
+test('findHoldingByLocalId reads once', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export async function findHoldingByLocalId('));
+  assert.match(fn.slice(0, fn.indexOf('if (error) throw error;')), /\{ settle: false \}/);
+});
