@@ -8,7 +8,10 @@
  * reads page through by row id, each page starting after the last id the one
  * before it saw, until a page comes back short. Paging by id rather than by
  * offset means a holding another device adds or deletes mid-read can't shift
- * the pages, so no row already there is skipped or read twice. Nothing here
+ * the pages, so no row already there is skipped or read twice. Row ids aren't
+ * in insert order though, so a row added mid-read below the cursor would be
+ * missed. A read that took more than one page runs again, and only two reads
+ * in a row that find the same ids count. Nothing here
  * imports React Native, so it runs under `node --test`.
  */
 
@@ -16,14 +19,10 @@
 // read early, so this has to stay at or under the project's setting.
 export const PAGE_SIZE = 1000;
 
-/**
- * Reads every row of a query, in id order. makeQuery() builds a fresh
- * filtered query each call, selecting id, and fetchAllRows adds the id cursor,
- * the order and the limit and awaits it. Resolves to { data, error }, the way
- * a single select does. On an error data is null, so a caller never mistakes
- * part of a stack for all of it.
- */
-export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
+// Reads past the first before a read that keeps changing is taken as it is
+export const MAX_REREADS = 3;
+
+async function readOnce(makeQuery, pageSize) {
   const rows = [];
   let lastId = null;
   for (;;) {
@@ -36,6 +35,32 @@ export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
     if (page.length < pageSize) return { data: rows, error: null };
     lastId = page[page.length - 1].id;
   }
+}
+
+const sameIds = (a, b) => a.length === b.length && a.every((row, i) => row.id === b[i].id);
+
+/**
+ * Reads every row of a query, in id order. makeQuery() builds a fresh
+ * filtered query each call, selecting id, and fetchAllRows adds the id cursor,
+ * the order and the limit and awaits it. Resolves to { data, error }, the way
+ * a single select does. On an error data is null, so a caller never mistakes
+ * part of a stack for all of it.
+ *
+ * A stack that fits one page is one consistent read. A longer one is read
+ * again, and when two reads in a row find the same ids, the first held every
+ * row that was there when it finished, and the second's values are newer. A stack another device keeps changing gets
+ * MAX_REREADS more reads and then the last one.
+ */
+export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
+  let read = await readOnce(makeQuery, pageSize);
+  if (read.error || read.data.length < pageSize) return { data: read.data, error: read.error };
+  for (let i = 0; i < MAX_REREADS; i++) {
+    const again = await readOnce(makeQuery, pageSize);
+    if (again.error) return { data: null, error: again.error };
+    if (sameIds(read.data, again.data)) return { data: again.data, error: null };
+    read = again;
+  }
+  return { data: read.data, error: null };
 }
 
 /**

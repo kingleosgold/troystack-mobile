@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/fetchAllRows.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchAllRows, newestFirst, PAGE_SIZE } from './fetchAllRows.js';
+import { fetchAllRows, newestFirst, PAGE_SIZE, MAX_REREADS } from './fetchAllRows.js';
 
 const idOf = (i) => `id-${String(i).padStart(6, '0')}`;
 
@@ -53,29 +53,58 @@ test('rows past the first page all come back once, each page after the last id',
   assert.equal(error, null);
   assert.equal(data.length, 2501);
   assert.equal(new Set(data.map((r) => r.id)).size, 2501);
-  assert.deepEqual(t.calls.map((c) => c.after), [null, idOf(9990), idOf(19990)]);
+  // Read twice, and the two reads matched
+  assert.deepEqual(t.calls.map((c) => c.after), [null, idOf(9990), idOf(19990), null, idOf(9990), idOf(19990)]);
 });
 
 test('a stack of exactly one page asks once more and stops on the empty page', async () => {
   const t = table(1000);
   const { data } = await fetchAllRows(t.makeQuery);
   assert.equal(data.length, 1000);
-  assert.equal(t.calls.length, 2);
+  assert.equal(t.calls.length, 4);
 });
 
 test('a row deleted from an earlier page mid-read skips nothing', async () => {
-  // After page one, another device deletes the first row
+  // After page one, another device deletes the first row. The read again
+  // drops it, and every other row is there once.
   const t = table(1500, { between: (rows, call) => (call === 1 ? rows.slice(1) : rows) });
   const { data } = await fetchAllRows(t.makeQuery);
-  assert.equal(data.length, 1500);
-  assert.equal(new Set(data.map((r) => r.id)).size, 1500);
+  assert.equal(data.length, 1499);
+  assert.equal(new Set(data.map((r) => r.id)).size, 1499);
+  assert.ok(!data.some((r) => r.id === idOf(0)));
 });
 
-test('a row added to an earlier page mid-read repeats nothing', async () => {
+test('a row added below the cursor mid-read is still read, once', async () => {
+  // The first read's cursor is past it, so the read again finds it
   const t = table(1500, { between: (rows, call) => (call === 1 ? [...rows, { id: idOf(5) }] : rows) });
   const { data } = await fetchAllRows(t.makeQuery);
+  assert.equal(data.length, 1501);
+  assert.equal(new Set(data.map((r) => r.id)).size, 1501);
+  assert.ok(data.some((r) => r.id === idOf(5)));
+});
+
+test('a stack that keeps changing is read a few more times and then taken', async () => {
+  let next = 1;
+  const t = table(1500, { between: (rows) => [...rows, { id: idOf(next++) }] });
+  const { data, error } = await fetchAllRows(t.makeQuery);
+  assert.equal(error, null);
+  assert.ok(data.length > 1500);
+  // Each read of 1500 or more rows takes two requests
+  assert.equal(t.calls.length, 2 * (1 + MAX_REREADS));
+});
+
+test('an error on a read again returns no rows, never part of the stack', async () => {
+  const t = table(1500, { failOnCall: 2 });
+  const { data, error } = await fetchAllRows(t.makeQuery);
+  assert.equal(data, null);
+  assert.equal(error.message, 'boom');
+});
+
+test('the read again returns its newer values', async () => {
+  const t = table(1500, { between: (rows, call) => (call === 2 ? rows.map((r) => ({ ...r, v: 2 })) : rows) });
+  const { data } = await fetchAllRows(t.makeQuery);
   assert.equal(data.length, 1500);
-  assert.equal(new Set(data.map((r) => r.id)).size, 1500);
+  assert.ok(data.every((r) => r.v === 2));
 });
 
 test('an error on a later page returns no rows, not part of them', async () => {
