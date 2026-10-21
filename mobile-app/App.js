@@ -2741,6 +2741,9 @@ function AppContent() {
   // holding on screen may now be another account's with the same local id.
   const stackGenRef = useRef(0);
   const editOpenedRef = useRef(null);
+  // The same for the detail view, which edits open from. Its holding is a
+  // copy taken when it opened, so the count and account are taken then too.
+  const detailOpenedRef = useRef(null);
 
   // Push Notifications State
   const [expoPushToken, setExpoPushToken] = useState(null);
@@ -9627,8 +9630,12 @@ function AppContent() {
     // Normal add/edit flow for holdings
     // A running sync uploads the stack as it read it and then swaps in the
     // cloud's copy, which would roll an edit back, so the edit waits for it
+    // That sync then swaps the stack in, so this edit can't be saved after it
+    // either. The sheet closes rather than ask for a save that can't land.
     if (editingItem && isSyncing) {
-      Alert.alert('Syncing', 'Your stack is syncing. Please save again in a moment.');
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
       return;
     }
     // A sync, restore or account change that swapped the stack in while the
@@ -9782,6 +9789,7 @@ function AppContent() {
   };
 
   const viewItemDetail = (item, metal) => {
+    detailOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };
     setDetailItem(item);
     setDetailMetal(metal);
     setShowDetailView(true);
@@ -9832,7 +9840,9 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
-    editOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };
+    // The holding comes from the detail view, so it counts from when that
+    // opened, not from this tap
+    editOpenedRef.current = detailOpenedRef.current;
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion
