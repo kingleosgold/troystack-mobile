@@ -4,22 +4,48 @@ import assert from 'node:assert/strict';
 import { fetchAllRows, newestFirst, PAGE_SIZE, MAX_REREADS } from './fetchAllRows.js';
 
 const idOf = (i) => `id-${String(i).padStart(6, '0')}`;
+// Server insert times. Ids are random, so a row's id says nothing about when
+// it went in: a row added later can sort anywhere by id.
+const atOf = (i) => `2026-10-21T00:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000000+00:00`;
 
-// A table that serves .gt('id').order('id').limit() the way PostgREST does,
-// can fail on a given call, and can change between calls
+const unquote = (v) => (v.startsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, '$1') : v);
+
+// A table that serves the queries fetchAllRows makes the way PostgREST does:
+// .gt('id'), .is / .not on created_at, the (created_at, id) keyset .or(),
+// .order() and .limit(). It can fail on a given call and change between calls.
 function table(n, { failOnCall = -1, between = null } = {}) {
-  let rows = Array.from({ length: n }, (_, i) => ({ id: idOf(i * 10) }));
+  let rows = Array.from({ length: n }, (_, i) => ({ id: idOf(i * 10), created_at: atOf(i) }));
   const calls = [];
   const makeQuery = () => {
+    const filters = [];
     let after = null;
+    let keyset = null;
+    const orders = [];
     const q = {
-      gt: (col, value) => { assert.equal(col, 'id'); after = value; return q; },
-      order: (col, opts) => { assert.equal(col, 'id'); assert.deepEqual(opts, { ascending: true }); return q; },
+      gt: (col, value) => { assert.equal(col, 'id'); after = value; filters.push((r) => r.id > value); return q; },
+      is: (col, value) => { assert.equal(col, 'created_at'); assert.equal(value, null); filters.push((r) => r.created_at == null); return q; },
+      not: (col, op, value) => { assert.deepEqual([col, op, value], ['created_at', 'is', null]); filters.push((r) => r.created_at != null); return q; },
+      or: (expr) => {
+        const m = expr.match(/^created_at\.gt\.("(?:[^"\\]|\\.)*"),and\(created_at\.eq\.("(?:[^"\\]|\\.)*"),id\.gt\.("(?:[^"\\]|\\.)*")\)$/);
+        assert.ok(m, expr);
+        const at = unquote(m[1]);
+        assert.equal(unquote(m[2]), at);
+        const id = unquote(m[3]);
+        keyset = { at, id };
+        filters.push((r) => r.created_at > at || (r.created_at === at && r.id > id));
+        return q;
+      },
+      order: (col, opts) => { assert.deepEqual(opts, { ascending: true }); orders.push(col); return q; },
       limit: async (size) => {
-        calls.push({ after, size });
+        calls.push({ after, keyset, orders: orders.join(','), size });
         if (calls.length - 1 === failOnCall) return { data: null, error: { message: 'boom' } };
-        const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : 1));
-        const page = sorted.filter((r) => after == null || r.id > after).slice(0, size);
+        const cmp = (a, b) => {
+          for (const col of orders) {
+            if (a[col] !== b[col]) return a[col] < b[col] ? -1 : 1;
+          }
+          return 0;
+        };
+        const page = rows.filter((r) => filters.every((f) => f(r))).sort(cmp).slice(0, size);
         if (between) rows = between(rows, calls.length);
         return { data: page, error: null };
       },
@@ -28,6 +54,10 @@ function table(n, { failOnCall = -1, between = null } = {}) {
   };
   return { makeQuery, calls };
 }
+
+// The requests a multi-page read makes: pages in insert order, then the rows
+// with no created_at by id
+const insertOrderCalls = (calls) => calls.filter((c) => c.orders === 'created_at,id');
 
 test('the page size is Supabase default max rows', () => {
   assert.equal(PAGE_SIZE, 1000);
@@ -38,7 +68,7 @@ test('a short stack takes one request', async () => {
   const { data, error } = await fetchAllRows(t.makeQuery);
   assert.equal(error, null);
   assert.equal(data.length, 3);
-  assert.deepEqual(t.calls, [{ after: null, size: 1000 }]);
+  assert.deepEqual(t.calls, [{ after: null, keyset: null, orders: 'id', size: 1000 }]);
 });
 
 test('an empty stack reads as no rows', async () => {
@@ -47,21 +77,28 @@ test('an empty stack reads as no rows', async () => {
   assert.deepEqual(data, []);
 });
 
-test('rows past the first page all come back once, each page after the last id', async () => {
+test('rows past the first page all come back once, each page after the last row in insert order', async () => {
   const t = table(2501);
   const { data, error } = await fetchAllRows(t.makeQuery);
   assert.equal(error, null);
   assert.equal(data.length, 2501);
   assert.equal(new Set(data.map((r) => r.id)).size, 2501);
-  // Read twice, and the two reads matched
-  assert.deepEqual(t.calls.map((c) => c.after), [null, idOf(9990), idOf(19990), null, idOf(9990), idOf(19990)]);
+  // One request by id finds a full page, then two reads in insert order
+  // match. Each read pages after the last row's created_at and id, then
+  // looks for rows with no created_at.
+  const keysets = insertOrderCalls(t.calls).map((c) => c.keyset && c.keyset.id);
+  assert.deepEqual(keysets, [null, idOf(9990), idOf(19990), null, idOf(9990), idOf(19990)]);
+  assert.equal(t.calls.length, 1 + 2 * (3 + 1));
+  assert.equal(t.calls.filter((c) => c.orders === 'id').length, 3);
 });
 
 test('a stack of exactly one page asks once more and stops on the empty page', async () => {
   const t = table(1000);
   const { data } = await fetchAllRows(t.makeQuery);
   assert.equal(data.length, 1000);
-  assert.equal(t.calls.length, 4);
+  // The full first page, then two reads of a full page, an empty one and
+  // the rows with no created_at
+  assert.equal(t.calls.length, 1 + 2 * 3);
 });
 
 test('a row deleted from an earlier page mid-read skips nothing', async () => {
@@ -74,9 +111,9 @@ test('a row deleted from an earlier page mid-read skips nothing', async () => {
   assert.ok(!data.some((r) => r.id === idOf(0)));
 });
 
-test('a row added below the cursor mid-read is still read, once', async () => {
-  // The first read's cursor is past it, so the read again finds it
-  const t = table(1500, { between: (rows, call) => (call === 1 ? [...rows, { id: idOf(5) }] : rows) });
+test('a row added mid-read is still read, once, wherever its id sorts', async () => {
+  // Its id sorts below the cursor, but it went in last, so it sorts last
+  const t = table(1500, { between: (rows, call) => (call === 2 ? [...rows, { id: idOf(5), created_at: atOf(5000) }] : rows) });
   const { data } = await fetchAllRows(t.makeQuery);
   assert.equal(data.length, 1501);
   assert.equal(new Set(data.map((r) => r.id)).size, 1501);
@@ -89,17 +126,48 @@ test('a stack that keeps changing is read a few more times and then counts as an
   const { data, error } = await fetchAllRows(t.makeQuery);
   assert.equal(data, null);
   assert.match(error.message, /kept changing/);
-  // Each read of 1500 or more rows takes two requests
-  assert.equal(t.calls.length, 2 * (1 + MAX_REREADS));
+  // The first request, then each read of 1500 or more rows takes two pages
+  // and the look for rows with no created_at
+  assert.equal(t.calls.length, 1 + 3 * (1 + MAX_REREADS));
 });
 
-test('a row added below the cursor during the read again is left to the next sync', async () => {
-  // Added after the first read finished, so the two reads match without it
-  const t = table(1500, { between: (rows, call) => (call === 3 ? [...rows, { id: idOf(5) }] : rows) });
+test('a row added during the read again is read, not left to the next sync', async () => {
+  // Added while the second read pages, with an id below its cursor. It sorts
+  // last by insert time, so the second read finds it, the two reads differ
+  // and a third read confirms it.
+  const t = table(1500, { between: (rows, call) => (call === 5 ? [...rows, { id: idOf(5), created_at: atOf(5000) }] : rows) });
   const { data, error } = await fetchAllRows(t.makeQuery);
   assert.equal(error, null);
-  assert.equal(data.length, 1500);
-  assert.equal(t.calls.length, 4);
+  assert.equal(data.length, 1501);
+  assert.ok(data.some((r) => r.id === idOf(5)));
+  assert.equal(t.calls.length, 1 + 3 * 3);
+});
+
+test('rows with no created_at are read too', async () => {
+  const t = table(1500, { between: (rows, call) => (call === 1 ? [...rows, { id: idOf(7), created_at: null }] : rows) });
+  const { data, error } = await fetchAllRows(t.makeQuery);
+  assert.equal(error, null);
+  assert.equal(data.length, 1501);
+  assert.equal(data.filter((r) => r.id === idOf(7)).length, 1);
+});
+
+test('rows that share one insert time page past each other by id', async () => {
+  // A batch insert gives every row the same created_at, so the cursor's id
+  // part is what moves the read on
+  const shared = '2026-10-21T00:00:00.123456+00:00';
+  const t = table(2200, { between: (rows) => rows.map((r) => ({ ...r, created_at: shared })) });
+  await t.makeQuery().limit(1);
+  const { data, error } = await fetchAllRows(t.makeQuery);
+  assert.equal(error, null);
+  assert.equal(data.length, 2200);
+  assert.equal(new Set(data.map((r) => r.id)).size, 2200);
+});
+
+test('a timestamp keeps its + and : inside the quoted cursor', async () => {
+  const t = table(1500);
+  await fetchAllRows(t.makeQuery);
+  const keyed = insertOrderCalls(t.calls).find((c) => c.keyset);
+  assert.match(keyed.keyset.at, /\+00:00$/);
 });
 
 test('an error on a read again returns no rows, never part of the stack', async () => {
