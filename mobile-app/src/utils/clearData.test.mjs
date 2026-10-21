@@ -71,10 +71,39 @@ test('the auth context reports a failed sign out', () => {
   assert.match(body, /return \{ error: error \?\? null \};/);
 });
 
-test('a failed sign out gives the account its plan back', () => {
+test('a failed sign out leaves the plan as it was', () => {
   const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
-  const branch = out.slice(out.indexOf('if (signOutError) {'), out.indexOf('return false;', out.indexOf('if (signOutError) {')));
-  assert.match(branch, /signedInIdRef\.current = userId \|\| null;/);
-  assert.match(branch, /setPlanSetupRun\(\(n\) => n \+ 1\);/);
-  assert.match(app, /\}, \[isAuthenticated, supabaseUser\?\.id, guestMode, planSetupRun\]\);/);
+  const signOut = out.indexOf('await supabaseSignOut();');
+  assert.ok(signOut >= 0);
+  assert.match(out, /if \(signOutError\) return false;/);
+  // Nothing about the account's plan changes until the sign out took
+  for (const step of ['webPlanGenRef.current += 1;', "rcPlanRef.current = { rcGold: false", 'storePlanRef.current = null;',
+    'signedInIdRef.current = null;', 'applyWebPlan(null);', 'claimStoreSync.reset();', 'await withTimeout(logoutRevenueCat(), WEB_PLAN_TIMEOUT_MS);']) {
+    const at = out.indexOf(step);
+    assert.ok(at > signOut, `${step} runs after the sign out`);
+  }
+  assert.doesNotMatch(app, /planSetupRun/);
+  // A holdings sync the auto sync restarted during the sign out stops too
+  assert.ok(out.indexOf('accountGenRef.current += 1;', signOut) > signOut);
+});
+
+test('a deleted account says so when the phone could not sign out', () => {
+  const screen = readFileSync(new URL('../screens/AccountScreen.tsx', import.meta.url), 'utf8');
+  assert.match(screen, /const signedOut = await onSignOut\(\);/);
+  assert.match(screen, /signedOut === false/);
+  assert.match(app, /onSignOut=\{\(\) => performSignOut\(\)\}/);
+});
+
+test('the loading screen holds until the sign out has cleared the phone', () => {
+  const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
+  assert.ok(out.indexOf('setSigningOut(true);') < out.indexOf('await supabaseSignOut();'));
+  assert.match(out, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
+  assert.match(app, /if \(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\) \{/);
+  assert.match(app, /&& !\(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\)/);
+});
+
+test('the loading screen holds through a wipe', () => {
+  const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
+  assert.ok(clear.indexOf('setSigningOut(true);') < clear.indexOf('await AsyncStorage.clear();'));
+  assert.match(clear, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
 });

@@ -15,6 +15,7 @@ import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
 import { readOAuthRedirect, readLinkRedirect, ALREADY_LINKED } from '../utils/oauthRedirect';
+import { signOutFailMessage } from '../utils/signOutError';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -435,12 +436,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const { error } = await supabase.auth.signOut();
       if (error) {
         if (__DEV__) console.error('Sign out error:', error);
-        Alert.alert('Error', 'Failed to sign out. Please try again.');
+        // A refresh refused on the way can end the session and still return
+        // an error. That's a sign out, so the phone gets cleared. A network
+        // error never ends the session, so offline skips the second wait.
+        if (error.name !== 'AuthRetryableFetchError') {
+          const left = await supabase.auth.getSession().catch(() => null);
+          if (left && !left.error && !left.data?.session) return { error: null };
+        }
+        Alert.alert('Error', signOutFailMessage(error));
       }
       return { error: error ?? null };
     } catch (error: any) {
       if (__DEV__) console.error('Sign out error:', error);
-      Alert.alert('Error', 'Failed to sign out. Please try again.');
+      Alert.alert('Error', signOutFailMessage(error));
       return { error: error as Error };
     } finally {
       setLoading(false);
