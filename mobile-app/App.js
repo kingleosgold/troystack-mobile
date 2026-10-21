@@ -2735,6 +2735,12 @@ function AppContent() {
   const [scanStatus, setScanStatus] = useState(null);
   const [scanMessage, setScanMessage] = useState('');
   const [editingItem, setEditingItem] = useState(null);
+  // Counts each time something swaps the whole stack in: a sync, a restore,
+  // a claim or a reset. The edit sheet keeps the count and the account from
+  // when it opened, and Save drops an edit made across a swap, since the
+  // holding on screen may now be another account's with the same local id.
+  const stackGenRef = useRef(0);
+  const editOpenedRef = useRef(null);
 
   // Push Notifications State
   const [expoPushToken, setExpoPushToken] = useState(null);
@@ -2998,6 +3004,7 @@ function AppContent() {
   // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
+    stackGenRef.current += 1;
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
@@ -3929,6 +3936,7 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
+                  stackGenRef.current += 1;
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
                   if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
@@ -4084,6 +4092,7 @@ function AppContent() {
       // since storage already has them off and a marked copy left in state
       // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
+        stackGenRef.current += 1;
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
@@ -4145,6 +4154,7 @@ function AppContent() {
         }
 
         // Replace local state with Supabase data (Supabase is source of truth)
+        stackGenRef.current += 1;
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
@@ -7885,6 +7895,7 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
+              stackGenRef.current += 1;
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
               if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
@@ -9620,10 +9631,15 @@ function AppContent() {
       Alert.alert('Syncing', 'Your stack is syncing. Please save again in a moment.');
       return;
     }
-    // A sync that replaced the stack while the sheet was open can take the
-    // holding off the phone, as when it was another account's. Its edit then
-    // has nothing to save, and must not go up to the signed-in account.
-    if (editingItem && ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id))) {
+    // A sync, restore or account change that swapped the stack in while the
+    // sheet was open can leave another account's holding under the same
+    // local id, or none at all. The edit then belongs to a stack that's gone,
+    // and must not land on the one now on the phone or go up to its account.
+    const opened = editOpenedRef.current;
+    if (editingItem && (!opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id)))) {
       resetForm();
       setShowAddModal(false);
       Alert.alert('Holding Changed', 'This holding changed while you were editing it. Please open it again.');
@@ -9816,6 +9832,7 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
+    editOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion
