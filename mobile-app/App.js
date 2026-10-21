@@ -2745,6 +2745,12 @@ function AppContent() {
   // The same for the detail view, which edits open from. Its holding is a
   // copy taken when it opened, so the count and account are taken then too.
   const detailOpenedRef = useRef(null);
+  // The sync flag and the account as of the latest render, for a delete's
+  // confirm, which runs after the render that showed it
+  const isSyncingRef = useRef(false);
+  isSyncingRef.current = isSyncing;
+  const userIdRef = useRef(null);
+  userIdRef.current = supabaseUser?.id || null;
   // Every whole-stack swap goes through here. An open detail view shows a
   // copy of a holding from the stack that's gone, maybe another account's,
   // so it closes rather than show it or act on it.
@@ -9646,6 +9652,13 @@ function AppContent() {
       Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
       return;
     }
+    // A new holding added during a sync can land in the cloud after the sync
+    // read it, and the swap then takes it off the phone. It waits too, with
+    // the sheet left open so nothing typed is lost.
+    if (!editingItem && supabaseUser && isSyncing) {
+      Alert.alert('Syncing', 'Your stack is syncing. Tap Save again in a moment.');
+      return;
+    }
     // A sync, restore or account change that swapped the stack in while the
     // sheet was open can leave another account's holding under the same
     // local id, or none at all. The edit then belongs to a stack that's gone,
@@ -9750,11 +9763,18 @@ function AppContent() {
     // Delete opens from the detail view, whose holding is a copy from when it
     // opened. Across a swap or an account change the same id can be another
     // account's holding, so the delete is refused, here and at the confirm.
+    // A running sync swaps the cloud's copy in at its end, which would bring
+    // a holding deleted during it back, so a delete waits for the sync too.
     const opened = detailOpenedRef.current;
     const stale = () => !opened
       || opened.gen !== stackGenRef.current
-      || opened.userId !== (supabaseUser?.id || null)
+      || opened.userId !== userIdRef.current
       || !itemToDelete;
+    const syncing = () => {
+      if (!isSyncingRef.current) return false;
+      Alert.alert('Syncing', 'Your stack is syncing. Please try the delete again in a moment.');
+      return true;
+    };
     const refuse = () => {
       setShowDetailView(false);
       setDetailItem(null);
@@ -9765,6 +9785,7 @@ function AppContent() {
       refuse();
       return;
     }
+    if (syncing()) return;
 
     Alert.alert(
       'Delete Item',
@@ -9775,10 +9796,11 @@ function AppContent() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            if (opened.gen !== stackGenRef.current) {
+            if (stale()) {
               refuse();
               return;
             }
+            if (syncing()) return;
             // Haptic feedback on delete
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 

@@ -33,10 +33,32 @@ test('every whole stack swap counts', () => {
 test('delete refuses a holding from a stack that is gone, at the tap and at the confirm', () => {
   const del = app.slice(app.indexOf('const deleteItem = (id, metal) => {'));
   const tap = del.indexOf('if (stale()) {');
-  const confirm = del.indexOf('if (opened.gen !== stackGenRef.current) {');
+  const confirm = del.indexOf('if (stale()) {', tap + 1);
   assert.ok(tap >= 0 && tap < del.indexOf("Alert.alert(\n      'Delete Item'"));
   assert.ok(confirm > tap && confirm < del.indexOf('setter(prev => prev.filter(i => i.id !== id));'));
-  assert.match(del.slice(0, 900), /opened\.userId !== \(supabaseUser\?\.id \|\| null\)/);
+  // The confirm reads the account as of now, not as of the tap's render
+  assert.match(del.slice(0, 1200), /opened\.userId !== userIdRef\.current/);
+  assert.match(app, /userIdRef\.current = supabaseUser\?\.id \|\| null;/);
+});
+
+test('a delete waits for a running sync, at the tap and at the confirm', () => {
+  const del = app.slice(app.indexOf('const deleteItem = (id, metal) => {'));
+  const removed = del.indexOf('setter(prev => prev.filter(i => i.id !== id));');
+  const tap = del.indexOf('if (syncing()) return;');
+  const confirm = del.indexOf('if (syncing()) return;', tap + 1);
+  assert.ok(tap >= 0 && tap < del.indexOf("Alert.alert(\n      'Delete Item'"));
+  assert.ok(confirm > tap && confirm < removed);
+  assert.match(del.slice(0, 1600), /if \(!isSyncingRef\.current\) return false;/);
+  assert.match(app, /isSyncingRef\.current = isSyncing;/);
+});
+
+test('a new holding saved during a sync waits with the sheet left open', () => {
+  const at = app.indexOf('if (!editingItem && supabaseUser && isSyncing) {');
+  assert.ok(at >= 0);
+  const hold = app.slice(at, app.indexOf('return;', at));
+  assert.doesNotMatch(hold, /resetForm\(\)|setShowAddModal\(false\)/);
+  // It runs before the add touches state or the cloud
+  assert.ok(at < app.indexOf('const targetMetal = metalTab ===', at));
 });
 
 test('an edit counts from when the detail view it opened from was opened', () => {
