@@ -56,7 +56,7 @@ test('every add waits for a running sync, with nothing cleared', () => {
   const at = app.indexOf('const addWaitsForSync = () => {');
   assert.ok(at >= 0);
   const helper = app.slice(at, app.indexOf('return true;', at));
-  assert.match(helper, /if \(!supabaseUser \|\| !isSyncing\) return false;/);
+  assert.match(helper, /if \(!supabaseUser \|\| !isSyncingRef\.current\) return false;/);
   assert.doesNotMatch(helper, /resetForm\(\)|setShowAddModal\(false\)/);
   // Each add path checks it first, before it touches state or the cloud
   for (const start of ['const confirmImport = () => {', 'const confirmScannedItems = () => {', 'const addScannedItemIndividually = (index) => {']) {
@@ -81,7 +81,7 @@ test('an edit counts from when the detail view it opened from was opened', () =>
 });
 
 test('a save during a sync closes the sheet rather than ask for a save that cannot land', () => {
-  const at = app.indexOf('if (editingItem && isSyncing) {');
+  const at = app.indexOf('if (editingItem && isSyncingRef.current) {');
   assert.ok(at >= 0);
   assert.match(app.slice(at, at + 200), /resetForm\(\);\s*setShowAddModal\(false\);/);
 });

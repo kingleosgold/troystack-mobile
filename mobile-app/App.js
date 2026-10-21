@@ -52,6 +52,7 @@ import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMA
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
+import { pendingWrites } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -2442,6 +2443,12 @@ function AppContent() {
   // Counts restores, so a sync that was already running when one landed
   // leaves the restored stack for the next sync instead of replacing it
   const restoreCountRef = useRef(0);
+  // Holdings writes to the cloud still in flight, which a sync waits for
+  // before it reads, so its swap can't drop an add or bring a delete back
+  const holdingWritesRef = useRef(null);
+  if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
+  const holdingWrites = holdingWritesRef.current;
+  const trackHoldingWrite = (run) => holdingWrites.track(run);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -4050,8 +4057,9 @@ function AppContent() {
       return false;
     }
 
-    // Skip if already syncing
-    if (isSyncing) {
+    // Skip if already syncing. The ref, since two calls in one frame both
+    // read the state as false.
+    if (isSyncingRef.current) {
       if (__DEV__) console.log('Sync skipped: already syncing');
       return false;
     }
@@ -4062,6 +4070,9 @@ function AppContent() {
       return false;
     }
 
+    // The ref closes the add, edit and delete gates now rather than at the
+    // next render, so a tap in the frame between can't slip past the sync
+    isSyncingRef.current = true;
     setIsSyncing(true);
     setSyncError(null);
     const restoresAtStart = restoreCountRef.current;
@@ -4071,6 +4082,10 @@ function AppContent() {
     const accountChanged = () => accountGenRef.current !== accountGen;
 
     try {
+      // A write that started before the gates closed may not have landed, and
+      // the cloud's copy fetched without it would drop it at the swap
+      await holdingWrites.settled();
+      if (accountChanged()) return false;
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
       const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
@@ -4198,6 +4213,7 @@ function AppContent() {
       if (!accountChanged() && restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
       return false;
     } finally {
+      isSyncingRef.current = false;
       setIsSyncing(false);
     }
   };
@@ -9256,7 +9272,7 @@ function AppContent() {
   // holdings added while it runs can land in the cloud after it read and drop
   // off the phone at the swap. Every add waits for it, with nothing cleared.
   const addWaitsForSync = () => {
-    if (!supabaseUser || !isSyncing) return false;
+    if (!supabaseUser || !isSyncingRef.current) return false;
     Alert.alert('Syncing', 'Your stack is syncing. Please try again in a moment.');
     return true;
   };
@@ -9316,7 +9332,7 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
-        (async () => {
+        trackHoldingWrite(async () => {
           try {
             for (const item of newItems) {
               await addHolding(supabaseUser.id, item, item.metal);
@@ -9325,7 +9341,7 @@ function AppContent() {
           } catch (err) {
             if (__DEV__) console.error('Failed to sync imported items to Supabase:', err);
           }
-        })();
+        });
       }
 
       // Haptic feedback
@@ -9385,7 +9401,7 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
-        (async () => {
+        trackHoldingWrite(async () => {
           try {
             for (const item of newItems) {
               await addHolding(supabaseUser.id, item, item.metal);
@@ -9394,7 +9410,7 @@ function AppContent() {
           } catch (err) {
             if (__DEV__) console.error('Failed to sync scanned items to Supabase:', err);
           }
-        })();
+        });
       }
 
       // Haptic feedback
@@ -9443,14 +9459,14 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
-      (async () => {
+      trackHoldingWrite(async () => {
         try {
           await addHolding(supabaseUser.id, newItem, metalKey);
           if (__DEV__) console.log('Synced scanned item to Supabase');
         } catch (err) {
           if (__DEV__) console.error('Failed to sync scanned item to Supabase:', err);
         }
-      })();
+      });
     }
 
     // Remove this item from scannedItems
@@ -9658,7 +9674,7 @@ function AppContent() {
     // cloud's copy, which would roll an edit back, so the edit waits for it
     // That sync then swaps the stack in, so this edit can't be saved after it
     // either. The sheet closes rather than ask for a save that can't land.
-    if (editingItem && isSyncing) {
+    if (editingItem && isSyncingRef.current) {
       resetForm();
       setShowAddModal(false);
       Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
@@ -9702,7 +9718,7 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
-      (async () => {
+      trackHoldingWrite(async () => {
         try {
           if (editingItem && editingItem.supabase_id) {
             // Update existing item in Supabase
@@ -9738,7 +9754,7 @@ function AppContent() {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
         }
-      })();
+      });
     }
 
     // Haptic feedback on successful add
@@ -9818,22 +9834,24 @@ function AppContent() {
 
             // Delete from Supabase if signed in
             if (supabaseUser && itemToDelete) {
-              try {
-                if (itemToDelete.supabase_id) {
-                  await deleteHoldingFromSupabase(itemToDelete.supabase_id);
-                  if (__DEV__) console.log('Deleted holding from Supabase');
-                } else {
-                  // Find in Supabase by local_id
-                  const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
-                  if (existingHolding) {
-                    await deleteHoldingFromSupabase(existingHolding.id);
-                    if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
+              await trackHoldingWrite(async () => {
+                try {
+                  if (itemToDelete.supabase_id) {
+                    await deleteHoldingFromSupabase(itemToDelete.supabase_id);
+                    if (__DEV__) console.log('Deleted holding from Supabase');
+                  } else {
+                    // Find in Supabase by local_id
+                    const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
+                    if (existingHolding) {
+                      await deleteHoldingFromSupabase(existingHolding.id);
+                      if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
+                    }
                   }
+                } catch (err) {
+                  if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
+                  // Don't block - local delete already succeeded
                 }
-              } catch (err) {
-                if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
-                // Don't block - local delete already succeeded
-              }
+              });
             }
 
             // Close detail view if open
