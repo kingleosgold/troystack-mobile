@@ -78,7 +78,7 @@ test('a failed sign out leaves the plan as it was', () => {
   assert.match(out, /if \(signOutError\) return false;/);
   // Nothing about the account's plan changes until the sign out took
   for (const step of ['webPlanGenRef.current += 1;', "rcPlanRef.current = { rcGold: false", 'storePlanRef.current = null;',
-    'signedInIdRef.current = null;', 'applyWebPlan(null);', 'claimStoreSync.reset();', 'await logoutRevenueCat();']) {
+    'signedInIdRef.current = null;', 'applyWebPlan(null);', 'claimStoreSync.reset();', 'await withTimeout(logoutRevenueCat(), WEB_PLAN_TIMEOUT_MS);']) {
     const at = out.indexOf(step);
     assert.ok(at > signOut, `${step} runs after the sign out`);
   }
@@ -92,4 +92,18 @@ test('a deleted account says so when the phone could not sign out', () => {
   assert.match(screen, /const signedOut = await onSignOut\(\);/);
   assert.match(screen, /signedOut === false/);
   assert.match(app, /onSignOut=\{\(\) => performSignOut\(\)\}/);
+});
+
+test('the loading screen holds until the sign out has cleared the phone', () => {
+  const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
+  assert.ok(out.indexOf('setSigningOut(true);') < out.indexOf('await supabaseSignOut();'));
+  assert.match(out, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
+  assert.match(app, /if \(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\) \{/);
+  assert.match(app, /&& !\(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\)/);
+});
+
+test('the loading screen holds through a wipe', () => {
+  const clear = slice('const clearAllData = async () => {', 'const performSignOut = async () => {');
+  assert.ok(clear.indexOf('setSigningOut(true);') < clear.indexOf('await AsyncStorage.clear();'));
+  assert.match(clear, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
 });

@@ -2769,6 +2769,9 @@ function AppContent() {
 
   // Post-sign-in loading gate — show loading screen until Supabase sync completes after sign-in
   const [needsPostSignInSync, setNeedsPostSignInSync] = useState(false);
+  // Holds the loading screen while a sign out runs, so the sign in screen
+  // can't start a guest or another account before the old one is cleared
+  const [signingOut, setSigningOut] = useState(false);
 
   // Share My Stack
   const shareViewRef = useRef(null);
@@ -3063,6 +3066,8 @@ function AppContent() {
       // Wiping now would bring the cloud stack straight back under the same
       // account.
       if (signedIn && !(await performSignOut())) return;
+      // The loading screen holds through the wipe too
+      setSigningOut(true);
       accountGenRef.current += 1;
       await AsyncStorage.clear();
       accountGenRef.current += 1;
@@ -3079,6 +3084,8 @@ function AppContent() {
     } catch (error) {
       if (__DEV__) console.error('Failed to clear data:', error);
       Alert.alert('Error', 'Failed to clear data. Please try again.');
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -3086,6 +3093,7 @@ function AppContent() {
   // Preserves app preferences (theme, large text, tutorial flags, etc.)
   // Returns whether the sign out took. A failed one clears nothing.
   const performSignOut = async () => {
+    setSigningOut(true);
     try {
       const userId = supabaseUser?.id;
       // A holdings sync still running for this account writes nothing more
@@ -3109,8 +3117,8 @@ function AppContent() {
       // A guest purchase or restore before the next sign-in moves to that
       // account at its login, so even the same account syncs again then.
       claimStoreSync.reset();
-      // Logout from RevenueCat
-      try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
+      // Logout from RevenueCat. One that hangs doesn't hold the loading screen.
+      try { await withTimeout(logoutRevenueCat(), WEB_PLAN_TIMEOUT_MS); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 3. Selective clear — remove user data, preserve app preferences
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
@@ -3139,6 +3147,8 @@ function AppContent() {
       if (__DEV__) console.error('Sign out failed:', error);
       Alert.alert('Error', 'Failed to sign out. Please try again.');
       return false;
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -5205,7 +5215,7 @@ function AppContent() {
   // up on: if that goes, a reset password link for the same account say, the
   // sheet closes for good as well.
   const mainScreenShown = !showResetPasswordScreen
-    && !(isLoading || authLoading || guestMode === null || needsPostSignInSync)
+    && !(isLoading || authLoading || signingOut || guestMode === null || needsPostSignInSync)
     && (!!supabaseUser || !!guestMode)
     && isAuthenticated;
   useEffect(() => {
@@ -10392,7 +10402,7 @@ function AppContent() {
     );
   }
 
-  if (isLoading || authLoading || guestMode === null || needsPostSignInSync) {
+  if (isLoading || authLoading || signingOut || guestMode === null || needsPostSignInSync) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#0A0A0E' }]}>
         <Image source={TROY_AVATAR} style={{ width: 72, height: 72, borderRadius: 36, marginBottom: 16 }} />
