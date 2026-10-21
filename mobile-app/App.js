@@ -6632,8 +6632,8 @@ function AppContent() {
       if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
       if (e.name === 'AbortError') {
-        autoPlayNextResponseRef.current = false;
-        setTroyLoading(false);
+        // Stop means Troy never got the question, so it goes back in the box.
+        giveBack();
         return;
       }
       giveBack();
