@@ -19,15 +19,21 @@ test('every whole stack swap counts', () => {
   const swaps = [
     'setSilverItems([]);\n    setGoldItems([]);',
     'if (cloudData.silverItems) setSilverItems(asRestoredBy(',
-    'setSilverItems(withoutGuestMark);',
-    'setSilverItems(remoteSilver);',
     'if (backup.data.silverItems) setSilverItems(asRestoredBy(',
   ];
   for (const swap of swaps) assert.ok(before(swap, 'bumpStackGen();', 80), swap);
-  // The count only moves through the helper, which closes the detail view
+  // A sync's swaps count as the same stack only when it is: the claim of an
+  // unowned or own stack, and the cloud's copy of one
+  assert.ok(before('setSilverItems(withoutGuestMark);', 'bumpStackGen(true);', 80));
+  assert.ok(before('setSilverItems(remoteSilver);', 'bumpStackGen(mayUploadLocalStack(stackOwner, supabaseUser.id));', 80));
+  assert.ok(before('bumpStackGen(true);', 'if (claimsStack) {', 40));
+  assert.equal((app.match(/bumpStackGen\(true\)/g) || []).length, 1);
+  // The count only moves through the helper, which closes the detail view,
+  // and any swap not marked same-stack moves the foreign count with it
   assert.equal((app.match(/stackGenRef\.current \+= 1;/g) || []).length, 1);
-  const helper = app.slice(app.indexOf('const bumpStackGen = () => {'));
-  assert.match(helper.slice(0, 200), /stackGenRef\.current \+= 1;\s*setShowDetailView\(false\);\s*setDetailItem\(null\);/);
+  assert.equal((app.match(/foreignSwapGenRef\.current = /g) || []).length, 1);
+  const helper = app.slice(app.indexOf('const bumpStackGen = (sameStack = false) => {'));
+  assert.match(helper.slice(0, 300), /stackGenRef\.current \+= 1;\s*if \(!sameStack\) foreignSwapGenRef\.current = stackGenRef\.current;\s*setShowDetailView\(false\);\s*setDetailItem\(null\);/);
 });
 
 test('delete refuses a holding from a stack that is gone, at the tap and at the confirm', () => {
@@ -66,7 +72,8 @@ test('every add waits for a running sync, with nothing cleared', () => {
     assert.ok(fn >= 0, start);
     assert.match(app.slice(fn, fn + 120), /\n    if \(addWaitsForSync\(\)\) return;\n/, start);
   }
-  const save = app.indexOf('if (!editingItem && addWaitsForSync()) return;');
+  // Save waits for it too, for an add or an edit
+  const save = app.indexOf('    if (addWaitsForSync()) return;\n    // A restore, a reset');
   assert.ok(save >= 0 && save < app.indexOf('const targetMetal = metalTab ===', save));
 });
 
@@ -82,19 +89,32 @@ test('an edit counts from when the detail view it opened from was opened', () =>
   assert.equal((app.match(/editItem\(/g) || []).length, 1);
 });
 
-test('a save during a sync closes the sheet rather than ask for a save that cannot land', () => {
-  const at = app.indexOf('if (editingItem && isSyncingRef.current) {');
-  assert.ok(at >= 0);
-  assert.match(app.slice(at, at + 200), /resetForm\(\);\s*setShowAddModal\(false\);/);
+test('a save during a sync keeps the sheet open with what was typed', () => {
+  assert.equal(app.indexOf('if (editingItem && isSyncingRef.current) {'), -1);
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'));
+  const gate = fn.indexOf('if (addWaitsForSync()) return;');
+  // Nothing before the gate clears the form or closes the sheet for a holding
+  const head = fn.slice(fn.indexOf('// Normal add/edit flow for holdings'), gate);
+  assert.ok(gate >= 0);
+  assert.doesNotMatch(head, /resetForm\(\)|setShowAddModal\(false\)/);
+});
+
+test('an edit saves onto the copy of the holding in the stack now', () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'));
+  const now = fn.indexOf('holdingInStack([silverItems, goldItems, platinumItems, palladiumItems], editingItem.id)');
+  assert.ok(now >= 0 && now < fn.indexOf('const item = asAddedBy({'));
+  // Its marks and row come from that copy, not from the sheet's opening
+  assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*await updateHolding\(base\.supabase_id, item, targetMetal\);/);
+  // Scanned and imported items aren't holdings in the stack
+  assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
 
 test('save drops an edit made across a swap or an account change', () => {
   const at = app.indexOf('const opened = editOpenedRef.current;');
   assert.ok(at >= 0);
   const check = app.slice(at, at + 600);
-  assert.match(check, /opened\.gen !== stackGenRef\.current/);
-  assert.match(check, /opened\.userId !== \(supabaseUser\?\.id \|\| null\)/);
-  assert.match(check, /!opened/);
+  assert.match(check, /if \(editingItem && \(!holdingNow \|\| !editOutlivesSwaps\(opened, \{\s*gen: stackGenRef\.current,\s*foreignGen: foreignSwapGenRef\.current,\s*userId: supabaseUser\?\.id,\s*\}\)\)\) \{/);
   assert.match(check, /resetForm\(\);\s*setShowAddModal\(false\);/);
   // It runs before the edit touches state or the cloud
   assert.ok(at < app.indexOf('const targetMetal = metalTab ===', at));
