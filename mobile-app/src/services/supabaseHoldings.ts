@@ -315,7 +315,7 @@ export async function syncLocalToSupabase(
     const { data: existingHoldings, error: fetchError } = await fetchAllRows(() =>
       supabase
         .from('holdings')
-        .select('id, notes, deleted_at')
+        .select('id, notes, deleted_at, created_at')
         .eq('user_id', userId)
     );
 
