@@ -54,7 +54,32 @@ test('one bad row no longer holds back the rest', async () => {
   const result = await insertRows([{ id: 1 }, { id: 2, bad: true }, { id: 3 }], t.insert);
   assert.deepEqual(result, { insertedCount: 2, rejected: [1], error: null });
   assert.deepEqual(t.saved.map((row) => row.id), [1, 3]);
-  assert.deepEqual(t.calls, [3, 1, 1, 1]);
+  assert.deepEqual(t.calls, [3, 1, 2, 1, 1]);
+});
+
+test('one bad row in a large stack costs a few requests, not one per row', async () => {
+  const t = table();
+  const rows = Array.from({ length: 200 }, (_, i) => ({ id: i, bad: i === 137 }));
+  const result = await insertRows(rows, t.insert);
+  assert.deepEqual(result, { insertedCount: 199, rejected: [137], error: null });
+  assert.deepEqual(t.saved.map((row) => row.id), rows.filter((row) => !row.bad).map((row) => row.id));
+  assert.ok(t.calls.length <= 1 + 2 * Math.ceil(Math.log2(200)), `took ${t.calls.length} requests`);
+});
+
+test('several bad rows come back in order and every good row goes up once', async () => {
+  const t = table();
+  const bad = new Set([0, 5, 6, 31, 49]);
+  const rows = Array.from({ length: 50 }, (_, i) => ({ id: i, bad: bad.has(i) }));
+  const result = await insertRows(rows, t.insert);
+  assert.deepEqual(result, { insertedCount: 45, rejected: [0, 5, 6, 31, 49], error: null });
+  assert.deepEqual(t.saved.map((row) => row.id), rows.filter((row) => !row.bad).map((row) => row.id));
+});
+
+test('every row bad comes back rejected with nothing saved', async () => {
+  const t = table();
+  const rows = [{ id: 1, bad: true }, { id: 2, bad: true }, { id: 3, bad: true }];
+  assert.deepEqual(await insertRows(rows, t.insert), { insertedCount: 0, rejected: [0, 1, 2], error: null });
+  assert.deepEqual(t.saved, []);
 });
 
 test('a lone bad row comes back rejected, not as a failed sync', async () => {
@@ -70,7 +95,7 @@ test('a network failure fails the insert without trying rows one by one', async 
   assert.deepEqual(t.calls, [2]);
 });
 
-test('a connection lost partway through the rows stops there with an error', async () => {
+test('a connection lost partway through the halves stops there with an error', async () => {
   const offline = new TypeError('Network request failed');
   let call = 0;
   const insert = async (batch) => {
@@ -82,4 +107,19 @@ test('a connection lost partway through the rows stops there with an error', asy
   const result = await insertRows([{ id: 1 }, { id: 2 }, { id: 3 }], insert);
   assert.deepEqual(result, { insertedCount: 1, rejected: [], error: offline });
   assert.equal(call, 3);
+});
+
+test('a connection lost inside a split half keeps what went up and the rows refused so far', async () => {
+  const offline = new TypeError('Network request failed');
+  const sent = [];
+  const insert = async (batch) => {
+    sent.push(batch.map((row) => row.id));
+    if (sent.length === 5) return { error: offline };
+    if (batch.some((row) => row.bad)) return { error: { code: '22003' } };
+    return { error: null };
+  };
+  // [1..4] refused, [1,2] refused, [1] refused alone, [2] in, [3,4] offline
+  const result = await insertRows([{ id: 1, bad: true }, { id: 2 }, { id: 3 }, { id: 4 }], insert);
+  assert.deepEqual(result, { insertedCount: 1, rejected: [0], error: offline });
+  assert.deepEqual(sent, [[1, 2, 3, 4], [1, 2], [1], [2], [3, 4]]);
 });

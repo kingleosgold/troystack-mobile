@@ -4,11 +4,12 @@
  * A sync sends its new holdings up in one insert. Postgres refuses the whole
  * batch when one row breaks a rule, say a number too big for its column, and
  * that row would then fail every later sync and keep the cloud's copy off the
- * phone. So when the database refuses the batch over its data, each row goes
- * up on its own and the ones it refuses come back to stay on the phone. Any
- * other failure, a dropped connection or a refused session, fails the sync as
- * before, so nothing is dropped. Nothing here imports React Native, so it
- * runs under `node --test`.
+ * phone. So when the database refuses the batch over its data, the batch is
+ * split in half and each half tried again, down to single rows, and the rows
+ * it refuses come back to stay on the phone. One bad row in a large stack
+ * costs a few requests rather than one per row. Any other failure, a dropped
+ * connection or a refused session, fails the sync as before, so nothing is
+ * dropped. Nothing here imports React Native, so it runs under `node --test`.
  */
 
 /**
@@ -25,10 +26,11 @@ export function isRowRejection(error) {
 
 /**
  * Inserts rows through insert(batch), which resolves to { error }. Tries
- * them all at once, then one at a time if the database refused the batch
- * over its data. Resolves to { insertedCount, rejected, error }, where
- * rejected holds the indexes of the rows the database refused. error is set
- * when anything else went wrong, and rows inserted before it stay inserted.
+ * them all at once, then halves of a batch the database refused over its
+ * data until the refused rows stand alone. Resolves to { insertedCount,
+ * rejected, error }, where rejected holds the indexes of the rows the
+ * database refused, in order. error is set when anything else went wrong,
+ * and rows inserted before it stay inserted.
  */
 export async function insertRows(rows, insert) {
   if (!rows.length) return { insertedCount: 0, rejected: [], error: null };
@@ -36,13 +38,25 @@ export async function insertRows(rows, insert) {
   if (!batchError) return { insertedCount: rows.length, rejected: [], error: null };
   if (!isRowRejection(batchError)) return { insertedCount: 0, rejected: [], error: batchError };
 
-  let insertedCount = 0;
-  const rejected = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const { error } = await insert([rows[i]]);
-    if (!error) insertedCount += 1;
-    else if (isRowRejection(error)) rejected.push(i);
-    else return { insertedCount, rejected, error };
+  const result = { insertedCount: 0, rejected: [], error: null };
+  await splitRefused(rows, 0, insert, result);
+  return result;
+}
+
+// Tries each half of a batch the database refused. A half it takes is
+// counted, a lone row it refuses is rejected and a larger refused half is
+// split again. Stops at the first error that isn't a refusal.
+async function splitRefused(rows, start, insert, result) {
+  if (rows.length === 1) {
+    result.rejected.push(start);
+    return;
   }
-  return { insertedCount, rejected, error: null };
+  const mid = Math.floor(rows.length / 2);
+  for (const [half, offset] of [[rows.slice(0, mid), start], [rows.slice(mid), start + mid]]) {
+    const { error } = await insert(half);
+    if (!error) result.insertedCount += half.length;
+    else if (!isRowRejection(error)) result.error = error;
+    else await splitRefused(half, offset, insert, result);
+    if (result.error) return;
+  }
 }
