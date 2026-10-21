@@ -19,7 +19,7 @@
 // read early, so this has to stay at or under the project's setting.
 export const PAGE_SIZE = 1000;
 
-// Reads past the first before a read that keeps changing is taken as it is
+// Reads past the first before a stack that keeps changing counts as an error
 export const MAX_REREADS = 3;
 
 async function readOnce(makeQuery, pageSize) {
@@ -48,8 +48,9 @@ const sameIds = (a, b) => a.length === b.length && a.every((row, i) => row.id ==
  *
  * A stack that fits one page is one consistent read. A longer one is read
  * again, and when two reads in a row find the same ids, the first held every
- * row that was there when it finished, and the second's values are newer. A stack another device keeps changing gets
- * MAX_REREADS more reads and then the last one.
+ * row that was there when it finished, and the second's values are newer. A
+ * stack another device keeps changing through MAX_REREADS more reads returns
+ * an error, so the caller keeps the phone's stack and tries again later.
  */
 export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
   let read = await readOnce(makeQuery, pageSize);
@@ -60,7 +61,7 @@ export async function fetchAllRows(makeQuery, pageSize = PAGE_SIZE) {
     if (sameIds(read.data, again.data)) return { data: again.data, error: null };
     read = again;
   }
-  return { data: read.data, error: null };
+  return { data: null, error: new Error('Holdings kept changing while they were read') };
 }
 
 /**

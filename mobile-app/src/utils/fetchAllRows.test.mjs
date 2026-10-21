@@ -83,14 +83,23 @@ test('a row added below the cursor mid-read is still read, once', async () => {
   assert.ok(data.some((r) => r.id === idOf(5)));
 });
 
-test('a stack that keeps changing is read a few more times and then taken', async () => {
+test('a stack that keeps changing is read a few more times and then counts as an error', async () => {
   let next = 1;
   const t = table(1500, { between: (rows) => [...rows, { id: idOf(next++) }] });
   const { data, error } = await fetchAllRows(t.makeQuery);
-  assert.equal(error, null);
-  assert.ok(data.length > 1500);
+  assert.equal(data, null);
+  assert.match(error.message, /kept changing/);
   // Each read of 1500 or more rows takes two requests
   assert.equal(t.calls.length, 2 * (1 + MAX_REREADS));
+});
+
+test('a row added below the cursor during the read again is left to the next sync', async () => {
+  // Added after the first read finished, so the two reads match without it
+  const t = table(1500, { between: (rows, call) => (call === 3 ? [...rows, { id: idOf(5) }] : rows) });
+  const { data, error } = await fetchAllRows(t.makeQuery);
+  assert.equal(error, null);
+  assert.equal(data.length, 1500);
+  assert.equal(t.calls.length, 4);
 });
 
 test('an error on a read again returns no rows, never part of the stack', async () => {
