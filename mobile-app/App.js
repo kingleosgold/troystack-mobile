@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -2735,6 +2735,24 @@ function AppContent() {
   const [scanStatus, setScanStatus] = useState(null);
   const [scanMessage, setScanMessage] = useState('');
   const [editingItem, setEditingItem] = useState(null);
+  // Counts each time something swaps the whole stack in: a sync, a restore,
+  // a claim or a reset. The edit sheet keeps the count and the account from
+  // when it opened, and Save drops an edit made across a swap, since the
+  // holding on screen may now be another account's with the same local id.
+  const stackGenRef = useRef(0);
+  const editOpenedRef = useRef(null);
+  // The same for the detail view, which edits open from. Its holding is a
+  // copy taken when it opened, so the count and account are taken then too.
+  const detailOpenedRef = useRef(null);
+  // Every whole-stack swap goes through here. An open detail view shows a
+  // copy of a holding from the stack that's gone, maybe another account's,
+  // so it closes rather than show it or act on it.
+  const bumpStackGen = () => {
+    stackGenRef.current += 1;
+    setShowDetailView(false);
+    setDetailItem(null);
+    setDetailMetal(null);
+  };
 
   // Push Notifications State
   const [expoPushToken, setExpoPushToken] = useState(null);
@@ -2998,6 +3016,7 @@ function AppContent() {
   // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
+    bumpStackGen();
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
@@ -3929,6 +3948,7 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
+                  bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
                   if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
@@ -4084,6 +4104,7 @@ function AppContent() {
       // since storage already has them off and a marked copy left in state
       // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
+        bumpStackGen();
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
@@ -4145,6 +4166,7 @@ function AppContent() {
         }
 
         // Replace local state with Supabase data (Supabase is source of truth)
+        bumpStackGen();
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
@@ -7885,6 +7907,7 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
+              bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
               if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
@@ -9614,6 +9637,30 @@ function AppContent() {
     }
 
     // Normal add/edit flow for holdings
+    // A running sync uploads the stack as it read it and then swaps in the
+    // cloud's copy, which would roll an edit back, so the edit waits for it
+    // That sync then swaps the stack in, so this edit can't be saved after it
+    // either. The sheet closes rather than ask for a save that can't land.
+    if (editingItem && isSyncing) {
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
+      return;
+    }
+    // A sync, restore or account change that swapped the stack in while the
+    // sheet was open can leave another account's holding under the same
+    // local id, or none at all. The edit then belongs to a stack that's gone,
+    // and must not land on the one now on the phone or go up to its account.
+    const opened = editOpenedRef.current;
+    if (editingItem && (!opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id)))) {
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Holding Changed', 'This holding changed while you were editing it. Please open it again.');
+      return;
+    }
     // IMPORTANT: metalTab can be 'silver', 'gold', 'platinum', 'palladium', or 'both' - we must check explicitly
     const targetMetal = metalTab === 'both' ? 'silver' : metalTab; // Default to silver if 'both' (shouldn't happen but safety)
 
@@ -9642,15 +9689,25 @@ function AppContent() {
             await updateHolding(editingItem.supabase_id, item, targetMetal);
             if (__DEV__) console.log('Updated holding in Supabase');
           } else if (editingItem) {
+            // Who owns the phone's stack, read before the lookup so a sync that
+            // finishes during it can't make another account's holding read as ours.
+            // A failed read only holds back the add, never the update of a row.
+            const ownerRead = await Promise.all([
+              AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+              AsyncStorage.getAllKeys(),
+            ]).catch(() => null);
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
               await updateHolding(existingHolding.id, item, targetMetal);
               if (__DEV__) console.log('Updated existing holding in Supabase');
             } else {
-              // Not in Supabase yet, add it
-              const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-              if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              // Not in Supabase yet. Add it if it's this account's to take, never
+              // a holding of another account's stack left on the phone
+              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
+                const { data } = await addHolding(supabaseUser.id, item, targetMetal);
+                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              }
             }
           } else {
             // New item - add to Supabase
@@ -9691,6 +9748,24 @@ function AppContent() {
     const itemsMap = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems };
     const items = itemsMap[metal] || silverItems;
     const itemToDelete = items.find(i => i.id === id);
+    // Delete opens from the detail view, whose holding is a copy from when it
+    // opened. Across a swap or an account change the same id can be another
+    // account's holding, so the delete is refused, here and at the confirm.
+    const opened = detailOpenedRef.current;
+    const stale = () => !opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || !itemToDelete;
+    const refuse = () => {
+      setShowDetailView(false);
+      setDetailItem(null);
+      setDetailMetal(null);
+      Alert.alert('Holding Changed', 'This holding changed while it was open. Please open it again.');
+    };
+    if (stale()) {
+      refuse();
+      return;
+    }
 
     Alert.alert(
       'Delete Item',
@@ -9701,6 +9776,10 @@ function AppContent() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (opened.gen !== stackGenRef.current) {
+              refuse();
+              return;
+            }
             // Haptic feedback on delete
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
@@ -9741,6 +9820,7 @@ function AppContent() {
   };
 
   const viewItemDetail = (item, metal) => {
+    detailOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };
     setDetailItem(item);
     setDetailMetal(metal);
     setShowDetailView(true);
@@ -9791,6 +9871,9 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
+    // The holding comes from the detail view, so it counts from when that
+    // opened, not from this tap
+    editOpenedRef.current = detailOpenedRef.current;
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion

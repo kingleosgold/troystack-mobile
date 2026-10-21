@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -178,4 +178,22 @@ test('a scanned holding with no metal the app tracks goes under silver', () => {
   assert.equal(holdingMetal(''), 'silver');
   assert.equal(holdingMetal('copper'), 'silver');
   assert.equal(holdingMetal(7), 'silver');
+});
+
+test("an edit adds a holding with no row to this account only when it's this account's to take", () => {
+  const local = { id: 1 };
+  assert.equal(mayAddEditedHolding(local, null, 'b'), true);
+  assert.equal(mayAddEditedHolding(local, 'b', 'b'), true);
+  assert.equal(mayAddEditedHolding(asAddedBy(local, false), 'a', 'b'), true);
+  // a's session expired with a holding it never sent up, and b signed in
+  assert.equal(mayAddEditedHolding(local, 'a', 'b'), false);
+  assert.equal(mayAddEditedHolding(local, stackOwnerOf(null, ['stack_synced_a'], 'b'), 'b'), false);
+});
+
+test("an edit adds a restored holding only to the account that restored it", () => {
+  const [forA] = asRestoredBy([{ id: 2 }], 'a');
+  assert.equal(mayAddEditedHolding(forA, null, 'b'), false);
+  assert.equal(mayAddEditedHolding(forA, 'b', 'b'), false);
+  assert.equal(mayAddEditedHolding(forA, 'b', 'a'), true);
+  assert.equal(mayAddEditedHolding(forA, null, 'a'), true);
 });
