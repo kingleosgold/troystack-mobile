@@ -92,5 +92,5 @@ test('the sync reads the stack as committed after its waits, not as its render s
   assert.doesNotMatch(body, /\[silverItems, goldItems, platinumItems, palladiumItems\]/);
   assert.doesNotMatch(body, /\['stack_silver', silverItems\]/);
   // The ref follows every commit, whatever changed
-  assert.match(app, /useLayoutEffect\(\(\) => \{\n    committedStackRef\.current = \[silverItems, goldItems, platinumItems, palladiumItems\];\n  \}\);/);
+  assert.match(app, /useLayoutEffect\(\(\) => \{\s*committedStackRef\.current = \[silverItems, goldItems, platinumItems, palladiumItems\];\s*\}\);/);
 });

@@ -4119,7 +4119,8 @@ function AppContent() {
       const isFirstSync = !hasEverSynced;
       const toSync = (items) => localHoldingsToSync(items, stackOwner, supabaseUser.id, isFirstSync);
       // Read after the waits, so a delete whose cloud write held the sync is
-      // gone from it. The gates have been closed since the sync began.
+      // gone from it. Adds, edits and deletes have waited since the sync began.
+      // A restore doesn't wait, and restoreCountRef covers it below.
       const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current;
       const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
