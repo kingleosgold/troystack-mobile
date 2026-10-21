@@ -9621,18 +9621,19 @@ function AppContent() {
       return;
     }
 
-    // An edit of a holding must still find it in its metal's list. After a
-    // sync it saves onto the copy there, which carries the cloud's row and
-    // marks rather than those from when the sheet opened. Scanned and
-    // imported items aren't in the stack.
+    // An edit of a holding must still find it in the list of the metal it
+    // opened in, whatever metal the sheet picks now. After a sync it saves
+    // onto the copy there, which carries the cloud's row, local id and marks
+    // rather than those from when the sheet opened. Scanned and imported
+    // items aren't in the stack.
     const editsHolding = !!editingItem && editingItem.scannedIndex === undefined && editingItem.importIndex === undefined;
-    const sheetMetalItems = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems }[metalTab === 'both' ? 'silver' : metalTab] || silverItems;
-    const holdingNow = editsHolding ? holdingInStack(sheetMetalItems, editingItem) : null;
+    const openedMetalItems = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems }[editOpenedRef.current?.metal];
+    const holdingNow = editsHolding ? holdingInStack(openedMetalItems, editingItem) : null;
     const swappedSinceOpen = !!editOpenedRef.current && editOpenedRef.current.gen !== stackGenRef.current;
     const base = (swappedSinceOpen && holdingNow) || editingItem;
 
     const item = asAddedBy({
-      id: editingItem?.id || Date.now(),
+      id: base?.id || Date.now(),
       productName: form.productName, source: form.source, datePurchased: form.datePurchased,
       timePurchased: form.timePurchased || undefined, // Optional time field
       ozt: parseFloat(form.ozt) || 0, quantity: parseInt(form.quantity) || 1,
@@ -9723,7 +9724,8 @@ function AppContent() {
     const setter = settersMap[targetMetal] || setSilverItems;
 
     if (editingItem) {
-      setter(prev => prev.map(i => i.id === editingItem.id ? item : i));
+      // The same holding the cloud write targets, by its row if it has one
+      setter(prev => prev.map(i => (base.supabase_id ? i.supabase_id === base.supabase_id : i.id === base.id) ? item : i));
     } else {
       setter(prev => [...prev, item]);
       checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
@@ -9934,7 +9936,8 @@ function AppContent() {
     });
     // The holding comes from the detail view, so it counts from when that
     // opened, not from this tap
-    editOpenedRef.current = detailOpenedRef.current;
+    // with the metal it opened in, whose list Save finds it in
+    editOpenedRef.current = detailOpenedRef.current && { ...detailOpenedRef.current, metal };
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion

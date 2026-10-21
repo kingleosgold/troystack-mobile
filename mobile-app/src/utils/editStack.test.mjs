@@ -82,7 +82,7 @@ test('an edit counts from when the detail view it opened from was opened', () =>
   const taken = view.indexOf("detailOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };");
   assert.ok(taken >= 0 && taken < view.indexOf('setDetailItem(item);'));
   const edit = app.slice(app.indexOf('const editItem = async (item, metal) => {'));
-  const kept = edit.indexOf('editOpenedRef.current = detailOpenedRef.current;');
+  const kept = edit.indexOf('editOpenedRef.current = detailOpenedRef.current && { ...detailOpenedRef.current, metal };');
   assert.ok(kept >= 0 && kept < edit.indexOf('setEditingItem(item);'));
   // The edit button is the detail view's, with the detail view's copy
   assert.match(app, /editItem\(detailItem, detailMetal\);/);
@@ -101,11 +101,15 @@ test('a save during a sync keeps the sheet open with what was typed', () => {
 
 test('an edit saves onto the copy of the holding in the stack now', () => {
   const fn = app.slice(app.indexOf('const savePurchase = () => {'));
-  const now = fn.indexOf('const holdingNow = editsHolding ? holdingInStack(sheetMetalItems, editingItem) : null;');
+  const now = fn.indexOf('const holdingNow = editsHolding ? holdingInStack(openedMetalItems, editingItem) : null;');
   assert.ok(now >= 0 && now < fn.indexOf('const item = asAddedBy({'));
-  // Only the edited metal's list, and the sheet's own copy unless a swap came
-  assert.match(fn, /\[metalTab === 'both' \? 'silver' : metalTab\] \|\| silverItems;/);
+  // The list of the metal it opened in, not the one the sheet picks now, and
+  // the sheet's own copy unless a swap came
+  assert.match(fn, /\[editOpenedRef\.current\?\.metal\];/);
   assert.match(fn, /const base = \(swappedSinceOpen && holdingNow\) \|\| editingItem;/);
+  // The local id and the local update follow that copy too
+  assert.match(fn, /id: base\?\.id \|\| Date\.now\(\),/);
+  assert.match(fn, /setter\(prev => prev\.map\(i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\) \? item : i\)\);/);
   // Its marks and row come from that copy, not from the sheet's opening
   assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*await updateHolding\(base\.supabase_id, item, targetMetal\);/);
