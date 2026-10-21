@@ -2744,6 +2744,15 @@ function AppContent() {
   // The same for the detail view, which edits open from. Its holding is a
   // copy taken when it opened, so the count and account are taken then too.
   const detailOpenedRef = useRef(null);
+  // Every whole-stack swap goes through here. An open detail view shows a
+  // copy of a holding from the stack that's gone, maybe another account's,
+  // so it closes rather than show it or act on it.
+  const bumpStackGen = () => {
+    stackGenRef.current += 1;
+    setShowDetailView(false);
+    setDetailItem(null);
+    setDetailMetal(null);
+  };
 
   // Push Notifications State
   const [expoPushToken, setExpoPushToken] = useState(null);
@@ -3007,7 +3016,7 @@ function AppContent() {
   // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
-    stackGenRef.current += 1;
+    bumpStackGen();
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
@@ -3939,7 +3948,7 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  stackGenRef.current += 1;
+                  bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
                   if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
@@ -4095,7 +4104,7 @@ function AppContent() {
       // since storage already has them off and a marked copy left in state
       // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
-        stackGenRef.current += 1;
+        bumpStackGen();
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
@@ -4157,7 +4166,7 @@ function AppContent() {
         }
 
         // Replace local state with Supabase data (Supabase is source of truth)
-        stackGenRef.current += 1;
+        bumpStackGen();
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
@@ -7898,7 +7907,7 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
-              stackGenRef.current += 1;
+              bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
               if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
@@ -9739,6 +9748,24 @@ function AppContent() {
     const itemsMap = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems };
     const items = itemsMap[metal] || silverItems;
     const itemToDelete = items.find(i => i.id === id);
+    // Delete opens from the detail view, whose holding is a copy from when it
+    // opened. Across a swap or an account change the same id can be another
+    // account's holding, so the delete is refused, here and at the confirm.
+    const opened = detailOpenedRef.current;
+    const stale = () => !opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || !itemToDelete;
+    const refuse = () => {
+      setShowDetailView(false);
+      setDetailItem(null);
+      setDetailMetal(null);
+      Alert.alert('Holding Changed', 'This holding changed while it was open. Please open it again.');
+    };
+    if (stale()) {
+      refuse();
+      return;
+    }
 
     Alert.alert(
       'Delete Item',
@@ -9749,6 +9776,10 @@ function AppContent() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (opened.gen !== stackGenRef.current) {
+              refuse();
+              return;
+            }
             // Haptic feedback on delete
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 

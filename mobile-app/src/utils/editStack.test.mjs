@@ -23,7 +23,20 @@ test('every whole stack swap counts', () => {
     'setSilverItems(remoteSilver);',
     'if (backup.data.silverItems) setSilverItems(asRestoredBy(',
   ];
-  for (const swap of swaps) assert.ok(before(swap, 'stackGenRef.current += 1;', 80), swap);
+  for (const swap of swaps) assert.ok(before(swap, 'bumpStackGen();', 80), swap);
+  // The count only moves through the helper, which closes the detail view
+  assert.equal((app.match(/stackGenRef\.current \+= 1;/g) || []).length, 1);
+  const helper = app.slice(app.indexOf('const bumpStackGen = () => {'));
+  assert.match(helper.slice(0, 200), /stackGenRef\.current \+= 1;\s*setShowDetailView\(false\);\s*setDetailItem\(null\);/);
+});
+
+test('delete refuses a holding from a stack that is gone, at the tap and at the confirm', () => {
+  const del = app.slice(app.indexOf('const deleteItem = (id, metal) => {'));
+  const tap = del.indexOf('if (stale()) {');
+  const confirm = del.indexOf('if (opened.gen !== stackGenRef.current) {');
+  assert.ok(tap >= 0 && tap < del.indexOf("Alert.alert(\n      'Delete Item'"));
+  assert.ok(confirm > tap && confirm < del.indexOf('setter(prev => prev.filter(i => i.id !== id));'));
+  assert.match(del.slice(0, 900), /opened\.userId !== \(supabaseUser\?\.id \|\| null\)/);
 });
 
 test('an edit counts from when the detail view it opened from was opened', () => {
