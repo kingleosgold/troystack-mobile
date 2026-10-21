@@ -48,6 +48,7 @@ import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DEL
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
 import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
+import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
@@ -2748,6 +2749,10 @@ function AppContent() {
   // when it opened, and Save drops an edit made across a swap, since the
   // holding on screen may now be another account's with the same local id.
   const stackGenRef = useRef(0);
+  // The count at the last swap that wasn't a sync of the account's own stack.
+  // A sync like that swaps in the cloud's copy of the same holdings, so an
+  // edit opened before it may still save onto that copy.
+  const foreignSwapGenRef = useRef(0);
   const editOpenedRef = useRef(null);
   // The same for the detail view, which edits open from. Its holding is a
   // copy taken when it opened, so the count and account are taken then too.
@@ -2762,8 +2767,9 @@ function AppContent() {
   // Every whole-stack swap goes through here. An open detail view shows a
   // copy of a holding from the stack that's gone, maybe another account's,
   // so it closes rather than show it or act on it.
-  const bumpStackGen = () => {
+  const bumpStackGen = (sameStack = false) => {
     stackGenRef.current += 1;
+    if (!sameStack) foreignSwapGenRef.current = stackGenRef.current;
     setShowDetailView(false);
     setDetailItem(null);
     setDetailMetal(null);
@@ -4127,7 +4133,7 @@ function AppContent() {
       // since storage already has them off and a marked copy left in state
       // could go up to the next account. After a sign out's reset it's a no-op.
       if (claimsStack) {
-        bumpStackGen();
+        bumpStackGen(true);
         setSilverItems(withoutGuestMark);
         setGoldItems(withoutGuestMark);
         setPlatinumItems(withoutGuestMark);
@@ -4188,8 +4194,10 @@ function AppContent() {
           return false;
         }
 
-        // Replace local state with Supabase data (Supabase is source of truth)
-        bumpStackGen();
+        // Replace local state with Supabase data (Supabase is source of truth).
+        // Of a stack that's this account's or unowned it's the same holdings
+        // back, so an open edit may land on them. Another account's isn't.
+        bumpStackGen(mayUploadLocalStack(stackOwner, supabaseUser.id));
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
@@ -9613,8 +9621,19 @@ function AppContent() {
       return;
     }
 
+    // An edit of a holding must still find it in the list of the metal it
+    // opened in, whatever metal the sheet picks now. After a sync it saves
+    // onto the copy there, which carries the cloud's row, local id and marks
+    // rather than those from when the sheet opened. Scanned and imported
+    // items aren't in the stack.
+    const editsHolding = !!editingItem && editingItem.scannedIndex === undefined && editingItem.importIndex === undefined;
+    const openedMetalItems = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems }[editOpenedRef.current?.metal];
+    const holdingNow = editsHolding ? holdingInStack(openedMetalItems, editingItem) : null;
+    const swappedSinceOpen = !!editOpenedRef.current && editOpenedRef.current.gen !== stackGenRef.current;
+    const base = (swappedSinceOpen && holdingNow) || editingItem;
+
     const item = asAddedBy({
-      id: editingItem?.id || Date.now(),
+      id: base?.id || Date.now(),
       productName: form.productName, source: form.source, datePurchased: form.datePurchased,
       timePurchased: form.timePurchased || undefined, // Optional time field
       ozt: parseFloat(form.ozt) || 0, quantity: parseInt(form.quantity) || 1,
@@ -9624,8 +9643,8 @@ function AppContent() {
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
       // A restored holding keeps its restore mark and row through an edit, so
       // the next sync still sends it up to the account that restored it
-      ...(editingItem?.restoredFor ? { restoredFor: editingItem.restoredFor, supabase_id: editingItem.supabase_id } : {}),
-    }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
+      ...(base?.restoredFor ? { restoredFor: base.restoredFor, supabase_id: base.supabase_id } : {}),
+    }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
     if (editingItem && editingItem.scannedIndex !== undefined) {
@@ -9672,27 +9691,22 @@ function AppContent() {
 
     // Normal add/edit flow for holdings
     // A running sync uploads the stack as it read it and then swaps in the
-    // cloud's copy, which would roll an edit back, so the edit waits for it
-    // That sync then swaps the stack in, so this edit can't be saved after it
-    // either. The sheet closes rather than ask for a save that can't land.
-    if (editingItem && isSyncingRef.current) {
-      resetForm();
-      setShowAddModal(false);
-      Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
-      return;
-    }
-    // A new holding waits for a running sync too, with the sheet left open so
-    // nothing typed is lost
-    if (!editingItem && addWaitsForSync()) return;
-    // A sync, restore or account change that swapped the stack in while the
-    // sheet was open can leave another account's holding under the same
-    // local id, or none at all. The edit then belongs to a stack that's gone,
-    // and must not land on the one now on the phone or go up to its account.
+    // cloud's copy, which would roll an add or an edit back, so both wait for
+    // it with the sheet left open and nothing typed lost. Save again after it
+    // lands the edit on the cloud's copy, checked below.
+    if (addWaitsForSync()) return;
+    // A restore, a reset, an account change or a sync that replaced another
+    // account's stack while the sheet was open can leave another account's
+    // holding under the same local id, or none at all. The edit then belongs
+    // to a stack that's gone, and must not land on the one now on the phone
+    // or go up to its account. A sync of this account's own stack only swaps
+    // in the same holdings, so the edit carries across it.
     const opened = editOpenedRef.current;
-    if (editingItem && (!opened
-      || opened.gen !== stackGenRef.current
-      || opened.userId !== (supabaseUser?.id || null)
-      || ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id)))) {
+    if (editingItem && (!holdingNow || !editOutlivesSwaps(opened, {
+      gen: stackGenRef.current,
+      foreignGen: foreignSwapGenRef.current,
+      userId: supabaseUser?.id,
+    }))) {
       resetForm();
       setShowAddModal(false);
       Alert.alert('Holding Changed', 'This holding changed while you were editing it. Please open it again.');
@@ -9710,7 +9724,8 @@ function AppContent() {
     const setter = settersMap[targetMetal] || setSilverItems;
 
     if (editingItem) {
-      setter(prev => prev.map(i => i.id === editingItem.id ? item : i));
+      // The same holding the cloud write targets, by its row if it has one
+      setter(prev => prev.map(i => (base.supabase_id ? i.supabase_id === base.supabase_id : i.id === base.id) ? item : i));
     } else {
       setter(prev => [...prev, item]);
       checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
@@ -9721,9 +9736,9 @@ function AppContent() {
     if (supabaseUser) {
       trackHoldingWrite(async () => {
         try {
-          if (editingItem && editingItem.supabase_id) {
+          if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
-            await updateHolding(editingItem.supabase_id, item, targetMetal);
+            await updateHolding(base.supabase_id, item, targetMetal);
             if (__DEV__) console.log('Updated holding in Supabase');
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
@@ -9921,7 +9936,8 @@ function AppContent() {
     });
     // The holding comes from the detail view, so it counts from when that
     // opened, not from this tap
-    editOpenedRef.current = detailOpenedRef.current;
+    // with the metal it opened in, whose list Save finds it in
+    editOpenedRef.current = detailOpenedRef.current && { ...detailOpenedRef.current, metal };
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion
