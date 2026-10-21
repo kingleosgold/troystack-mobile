@@ -51,6 +51,7 @@ import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
+import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -4116,7 +4117,7 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, error } = await fullSync(
+      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4175,10 +4176,8 @@ function AppContent() {
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it
         if (refusedCount > 0) {
-          Alert.alert(
-            refusedCount === 1 ? "A holding didn't save to your account" : `${refusedCount} holdings didn't save to your account`,
-            "They're still on this phone. Check their numbers and save them again, and the next sync sends them up."
-          );
+          const { title, message } = refusedHoldingsAlert(refusedNames);
+          Alert.alert(title, message);
         }
 
         if (__DEV__) {
