@@ -15,6 +15,7 @@ import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
 import { readOAuthRedirect, readLinkRedirect, ALREADY_LINKED } from '../utils/oauthRedirect';
+import { signOutFailMessage } from '../utils/signOutError';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -435,12 +436,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const { error } = await supabase.auth.signOut();
       if (error) {
         if (__DEV__) console.error('Sign out error:', error);
-        Alert.alert('Error', 'Failed to sign out. Please try again.');
+        Alert.alert('Error', signOutFailMessage(error));
       }
       return { error: error ?? null };
     } catch (error: any) {
       if (__DEV__) console.error('Sign out error:', error);
-      Alert.alert('Error', 'Failed to sign out. Please try again.');
+      Alert.alert('Error', signOutFailMessage(error));
       return { error: error as Error };
     } finally {
       setLoading(false);
