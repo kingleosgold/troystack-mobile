@@ -437,10 +437,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (error) {
         if (__DEV__) console.error('Sign out error:', error);
         // A refresh refused on the way can end the session and still return
-        // an error. That's a sign out, so the phone gets cleared. An expired
-        // session offline reads as an error here, never as no session.
-        const left = await supabase.auth.getSession().catch(() => null);
-        if (left && !left.error && !left.data?.session) return { error: null };
+        // an error. That's a sign out, so the phone gets cleared. A network
+        // error never ends the session, so offline skips the second wait.
+        if (error.name !== 'AuthRetryableFetchError') {
+          const left = await supabase.auth.getSession().catch(() => null);
+          if (left && !left.error && !left.data?.session) return { error: null };
+        }
         Alert.alert('Error', signOutFailMessage(error));
       }
       return { error: error ?? null };

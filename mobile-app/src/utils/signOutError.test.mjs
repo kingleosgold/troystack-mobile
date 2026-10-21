@@ -35,5 +35,6 @@ test('a sign out that ended the session anyway counts as signed out', () => {
   const body = context.slice(start, context.indexOf('const resetPassword = useCallback(', start));
   const check = body.indexOf('if (left && !left.error && !left.data?.session) return { error: null };');
   assert.ok(check >= 0);
+  assert.ok(body.indexOf("if (error.name !== 'AuthRetryableFetchError') {") < check, 'offline never waits on a second check');
   assert.ok(check < body.indexOf("Alert.alert('Error', signOutFailMessage(error));"), 'no alert for a session that already ended');
 });
