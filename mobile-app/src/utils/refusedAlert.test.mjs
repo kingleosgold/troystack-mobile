@@ -18,6 +18,16 @@ test('up to three are named and the rest counted', () => {
 });
 
 test('a holding with no name still gets a label', () => {
-  const { message } = refusedHoldingsAlert(['', '  ', undefined]);
-  assert.ok(message.startsWith('A holding with no name, A holding with no name, A holding with no name. '));
+  const { message } = refusedHoldingsAlert(['', 'Gold Bar', undefined]);
+  assert.ok(message.startsWith('A holding with no name, Gold Bar, and a holding with no name. '));
+});
+
+test('two names read as a pair', () => {
+  assert.ok(refusedHoldingsAlert(['A', 'B']).message.startsWith("A and B. They're"));
+});
+
+test("a name's closing stop isn't doubled and a long name is cut", () => {
+  assert.ok(refusedHoldingsAlert(['Silver Eagle 1 oz.']).message.startsWith("Silver Eagle 1 oz. It's"));
+  const long = 'x'.repeat(80);
+  assert.ok(refusedHoldingsAlert([long]).message.startsWith(`${'x'.repeat(39)}…. It's`));
 });
