@@ -4,12 +4,16 @@ import assert from 'node:assert/strict';
 import {
   FREE_WEEK_OFFER_DELAY_MS,
   FREE_WEEK_OFFER_KEY,
+  FREE_WEEK_OFFER_TROY_DELAY_MS,
   freeWeekOfferBlocker,
+  GUEST_ACCOUNT_LINE,
+  GUEST_ACCOUNT_ACTION,
   freeWeekOfferCopy,
+  freeWeekOfferMoment,
   isFirstHolding,
   watchAlerts,
 } from './freeWeekOffer.js';
-import { TROY_GOLD_DAILY_QUESTIONS, TROY_GOLD_DAILY_VOICE } from './goldOffer.js';
+import { TROY_FREE_DAILY_QUESTIONS, TROY_GOLD_DAILY_QUESTIONS, TROY_GOLD_DAILY_VOICE } from './goldOffer.js';
 
 const WEEK = { count: 7, unit: 'day', cycle: 'yearly' };
 
@@ -19,7 +23,6 @@ function ready(overrides = {}) {
   return {
     shownBefore: false,
     firstHoldingAdded: true,
-    guest: false,
     goldScreenSeen: false,
     planKnown: true,
     paid: false,
@@ -64,12 +67,80 @@ test('once shown it never shows again, and nothing shows before the flag is read
   assert.equal(freeWeekOfferBlocker(ready({ shownBefore: undefined })), 'flag-unknown');
 });
 
-test('only after a first holding the person added', () => {
-  assert.equal(freeWeekOfferBlocker(ready({ firstHoldingAdded: false })), 'no-first-holding');
+test('only after a first holding the person added or an answer from Troy', () => {
+  assert.equal(freeWeekOfferBlocker(ready({ firstHoldingAdded: false })), 'no-moment');
+  assert.equal(freeWeekOfferBlocker(ready({ firstHoldingAdded: false, troyAnswered: false })), 'no-moment');
 });
 
-test("never for a guest: RevenueCat alone can't see a Lifetime bought on an earlier install", () => {
-  assert.equal(freeWeekOfferBlocker(ready({ guest: true })), 'guest');
+// The other moment: Troy has just answered someone who hasn't added a
+// holding, and they're still in the chat with nothing going on.
+function troyReady(overrides = {}) {
+  return ready({
+    firstHoldingAdded: false,
+    troyAnswered: true,
+    screen: 'TroyChat',
+    livePrices: false,
+    stackValue: 0,
+    troyBusy: false,
+    ...overrides,
+  });
+}
+
+test("after Troy's answer it shows in the chat, with no stack needed", () => {
+  assert.equal(freeWeekOfferBlocker(troyReady()), null);
+  assert.equal(freeWeekOfferBlocker(troyReady({ guest: true })), null);
+  assert.ok(FREE_WEEK_OFFER_TROY_DELAY_MS > FREE_WEEK_OFFER_DELAY_MS, 'the answer gets read first');
+});
+
+test("Troy's moment waits while the chat is busy and only shows in the chat", () => {
+  assert.equal(freeWeekOfferBlocker(troyReady({ troyBusy: true })), 'troy-busy');
+  assert.equal(freeWeekOfferBlocker(troyReady({ screen: 'Dashboard' })), 'not-troy-chat');
+  assert.equal(freeWeekOfferBlocker(troyReady({ screen: 'MyStack' })), 'not-troy-chat');
+});
+
+test("Troy's moment keeps every other rule", () => {
+  assert.equal(freeWeekOfferBlocker(troyReady({ shownBefore: true })), 'shown-before');
+  assert.equal(freeWeekOfferBlocker(troyReady({ goldScreenSeen: true })), 'gold-screen-seen', 'the free limit opened Gold');
+  assert.equal(freeWeekOfferBlocker(troyReady({ paid: true })), 'gold');
+  assert.equal(freeWeekOfferBlocker(troyReady({ trial: null })), 'no-trial');
+  assert.equal(freeWeekOfferBlocker(troyReady({ demo: true })), 'demo');
+  assert.equal(freeWeekOfferBlocker(troyReady({ mainScreen: false })), 'not-ready');
+  assert.equal(freeWeekOfferBlocker(troyReady({ sheets: { aiConsent: true } })), 'sheet:aiConsent');
+  assert.equal(freeWeekOfferBlocker(troyReady({ alertOpen: true })), 'alert');
+  assert.equal(freeWeekOfferBlocker(troyReady({ appActive: false })), 'app-inactive');
+});
+
+test('the moment follows the screen when both have happened', () => {
+  const both = { firstHoldingAdded: true, troyAnswered: true };
+  assert.equal(freeWeekOfferMoment({ ...both, screen: 'Dashboard' }), 'holding');
+  assert.equal(freeWeekOfferMoment({ ...both, screen: 'TroyChat' }), 'troy');
+  assert.equal(freeWeekOfferMoment({ ...both, screen: 'Analytics' }), null);
+  assert.equal(freeWeekOfferMoment({ firstHoldingAdded: true, screen: 'TroyChat' }), null);
+  assert.equal(freeWeekOfferBlocker(ready({ troyAnswered: true, screen: 'TroyChat' })), null, 'in the chat after both');
+  assert.equal(freeWeekOfferBlocker(ready({ troyAnswered: true, screen: 'Analytics' })), 'not-dashboard');
+  assert.equal(freeWeekOfferBlocker(ready({ troyBusy: true })), null, "a busy chat doesn't hold the dashboard's moment");
+});
+
+test("after Troy's answer the lead names the free limit truthfully", () => {
+  const copy = freeWeekOfferCopy(WEEK, { moment: 'troy' });
+  assert.equal(TROY_FREE_DAILY_QUESTIONS, 3);
+  assert.equal(copy.lead, "Free accounts get 3 questions to Troy a day. Here's what Gold adds.");
+  assert.doesNotMatch(copy.lead, /stack/, "they haven't started one");
+  assert.deepEqual(copy.points, freeWeekOfferCopy(WEEK).points);
+  assert.equal(copy.title, 'Try Gold free for a week');
+  assert.equal(freeWeekOfferCopy(WEEK, { moment: 'troy', guest: true }).restore, 'Already have Gold? Restore purchases');
+});
+
+test("after Troy's answer a guest isn't told what free accounts get", () => {
+  const copy = freeWeekOfferCopy(WEEK, { moment: 'troy', guest: true });
+  assert.equal(copy.lead, "Now that you've asked Troy, here's what Gold adds.");
+  assert.doesNotMatch(copy.lead, /account|stack/);
+  assert.equal(copy.account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK, { moment: 'holding', guest: true }).lead, freeWeekOfferCopy(WEEK).lead);
+});
+
+test('a guest gets it too, since every new install opens as a guest', () => {
+  assert.equal(freeWeekOfferBlocker(ready({ guest: true })), null);
 });
 
 test('a Gold screen opened this session cancels it', () => {
@@ -144,18 +215,45 @@ test("what Gold adds, as the server and the Gold screen have it", () => {
   assert.doesNotMatch(points.join(' '), /unlimited (questions|troy|voice)/i);
 });
 
-test('the sheet has no guest wording, since guests never see it', () => {
-  assert.equal('note' in freeWeekOfferCopy(WEEK), false);
-  assert.doesNotMatch(JSON.stringify(freeWeekOfferCopy(WEEK)), /account/);
+test('a signed-in account gets no Restore line and no account wording', () => {
+  assert.equal(freeWeekOfferCopy(WEEK).restore, null);
+  assert.equal(freeWeekOfferCopy(WEEK).account, null);
+  assert.doesNotMatch(JSON.stringify(Object.values(freeWeekOfferCopy(WEEK))), /account/);
+});
+
+test("a guest is told the brief and Gold's Troy need a free account", () => {
+  // On a phone with no account Troy goes through the guest route whatever the
+  // plan, voice is off and the brief is only for accounts.
+  const copy = freeWeekOfferCopy(WEEK, { guest: true });
+  assert.equal(copy.account, "The morning brief and Gold's Troy questions and voice also need a free account.");
+  assert.equal(copy.account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true, moment: 'troy' }).account, GUEST_ACCOUNT_LINE);
+  assert.equal(freeWeekOfferCopy(WEEK).account, null);
+});
+
+test("a guest's account line comes with a tap to sign up", () => {
+  assert.equal(GUEST_ACCOUNT_ACTION, 'Create a free account');
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true }).accountAction, GUEST_ACCOUNT_ACTION);
+  assert.equal(freeWeekOfferCopy(WEEK, { guest: true, moment: 'troy' }).accountAction, GUEST_ACCOUNT_ACTION);
+  assert.equal(freeWeekOfferCopy(WEEK).accountAction, null);
+  assert.equal(freeWeekOfferCopy(WEEK, { moment: 'troy' }).accountAction, null);
+});
+
+test('a guest gets a Restore line, so a Lifetime from an earlier install is one tap away', () => {
+  const copy = freeWeekOfferCopy(WEEK, { guest: true });
+  assert.equal(copy.restore, 'Already have Gold? Restore purchases');
+  assert.equal(copy.title, 'Try Gold free for a week');
 });
 
 test('no long dashes or exclamation marks in anything a person reads', () => {
   const longDash = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
   for (const trial of [WEEK, { count: 1, unit: 'month' }, { count: 14, unit: 'day' }]) {
-    const copy = freeWeekOfferCopy(trial);
-    for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later]) {
-      assert.doesNotMatch(s, longDash, s);
-      assert.doesNotMatch(s, /!/, s);
+    for (const moment of ['holding', 'troy']) {
+      const copy = freeWeekOfferCopy(trial, { guest: true, moment });
+      for (const s of [copy.title, copy.lead, ...copy.points, copy.start, copy.later, copy.restore, copy.account, copy.accountAction]) {
+        assert.doesNotMatch(s, longDash, s);
+        assert.doesNotMatch(s, /!/, s);
+      }
     }
   }
 });

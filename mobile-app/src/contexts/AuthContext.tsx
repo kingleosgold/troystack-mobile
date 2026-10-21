@@ -14,6 +14,8 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import { logLifecycleEvent } from '../utils/lifecycleLogger';
+import { readOAuthRedirect, readLinkRedirect, ALREADY_LINKED } from '../utils/oauthRedirect';
+import { signOutFailMessage } from '../utils/signOutError';
 
 // Required for expo-auth-session
 WebBrowser.maybeCompleteAuthSession();
@@ -29,6 +31,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  busy: boolean;
   linkedProviders: LinkedProviders;
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
@@ -36,7 +39,7 @@ interface AuthContextType {
   signInWithApple: () => Promise<{ error: Error | null }>;
   linkWithGoogle: () => Promise<{ error: Error | null }>;
   linkWithApple: () => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<{ error: Error | null }>;
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>;
 }
 
@@ -70,6 +73,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // A sign in, sign up or account link in flight. Kept apart from loading,
+  // which the app swaps every screen out for, so the sign in and account
+  // screens stay up and can show what went wrong.
+  const [busy, setBusy] = useState(false);
   const [linkedProviders, setLinkedProviders] = useState<LinkedProviders>({
     google: false,
     apple: false,
@@ -107,7 +114,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Sign up with email and password
   const signUp = useCallback(async (email: string, password: string) => {
-    setLoading(true);
+    setBusy(true);
     try {
       // Add 30-second timeout for network issues
       const signUpPromise = supabase.auth.signUp({
@@ -124,13 +131,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error: any) {
       return { error: error as AuthError };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with email and password
   const signIn = useCallback(async (email: string, password: string) => {
-    setLoading(true);
+    setBusy(true);
     try {
       // Add 30-second timeout for network issues
       const signInPromise = supabase.auth.signInWithPassword({
@@ -147,14 +154,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error: any) {
       return { error: error as AuthError };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with Google
   const signInWithGoogle = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Get the redirect URL
       const redirectUrl = AuthSession.makeRedirectUri({
@@ -191,28 +198,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const result = await Promise.race([browserPromise, timeoutPromise]) as any;
 
-      if (result.type === 'success') {
-        // Extract tokens from URL
-        const url = new URL(result.url);
-        const params = new URLSearchParams(url.hash.substring(1));
-        const accessToken = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
+      // Only a redirect that carries a session signs in. Anything else
+      // returns an error, so the sign in screen never reports a success
+      // with no account behind it.
+      const redirect = readOAuthRedirect(result);
+      if (redirect.error) return { error: new Error(redirect.error) };
 
-        if (accessToken) {
-          // Set session manually
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken || '',
-          });
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: redirect.accessToken,
+        refresh_token: redirect.refreshToken,
+      });
 
-          if (sessionError) {
-            throw sessionError;
-          }
-        }
-      } else if (result.type === 'cancel') {
-        return { error: new Error('Sign in cancelled') };
-      } else if (result.type === 'dismiss') {
-        return { error: new Error('Sign in cancelled') };
+      if (sessionError) {
+        throw sessionError;
       }
 
       return { error: null };
@@ -220,14 +218,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (__DEV__) console.error('Google sign in error:', error);
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign in with Apple
   const signInWithApple = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Check if Apple Authentication is available
       const isAvailable = await AppleAuthentication.isAvailableAsync();
@@ -297,14 +295,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         : `Apple Sign In failed: ${error.message}`;
       return { error: new Error(debugMsg) };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Link Google account to existing user
   const linkWithGoogle = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Get the redirect URL
       const redirectUrl = AuthSession.makeRedirectUri({
@@ -335,34 +333,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
         redirectUrl
       );
 
-      if (result.type === 'success') {
-        // Refresh the session to get updated user with new identity
-        const { error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          if (__DEV__) console.error('Failed to refresh session after linking:', refreshError);
-        }
-        Alert.alert('Success', 'Google account linked successfully!');
-      } else if (result.type === 'cancel') {
-        return { error: new Error('Linking cancelled') };
+      // Only a redirect that carries a session links. A refused consent or
+      // a dismiss reads as cancelled rather than linked.
+      const redirect = readLinkRedirect(result);
+      if (redirect.error) return { error: new Error(redirect.error) };
+
+      // Refresh the session to get updated user with new identity
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        if (__DEV__) console.error('Failed to refresh session after linking:', refreshError);
       }
+      Alert.alert('Success', 'Google account linked successfully!');
 
       return { error: null };
     } catch (error: any) {
       if (__DEV__) console.error('Google link error:', error);
       // Check for already linked error
       if (error.message?.includes('already linked') || error.message?.includes('identity_already_exists')) {
-        Alert.alert('Already Linked', 'This Google account is already linked to another user.');
+        return { error: new Error(ALREADY_LINKED) };
       }
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Link Apple account to existing user
   const linkWithApple = useCallback(async () => {
     try {
-      setLoading(true);
+      setBusy(true);
 
       // Check if Apple Authentication is available
       const isAvailable = await AppleAuthentication.isAvailableAsync();
@@ -395,32 +394,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw new Error('No identity token returned from Apple');
       }
 
-      // Link with Supabase using the Apple token
+      // Link with Supabase using the Apple token. The ID token link adds the
+      // identity to the signed-in user and saves the updated session. It
+      // never signs in as whoever owns the Apple ID, so a failure can't
+      // switch accounts.
       const { error } = await supabase.auth.linkIdentity({
         provider: 'apple',
-        options: {
-          skipBrowserRedirect: true,
-        },
+        token: credential.identityToken,
+        nonce: nonce,
       });
 
-      // Note: Supabase's linkIdentity with Apple might need a different approach
-      // For now, we'll try using signInWithIdToken which may automatically link
-      // if the user is already signed in
       if (error) {
-        // Try alternative approach - this may link if email matches
-        const { error: idTokenError } = await supabase.auth.signInWithIdToken({
-          provider: 'apple',
-          token: credential.identityToken,
-          nonce: nonce,
-        });
-
-        if (idTokenError) {
-          throw idTokenError;
-        }
+        throw error;
       }
 
-      // Refresh session to get updated identities
-      await supabase.auth.refreshSession();
       Alert.alert('Success', 'Apple account linked successfully!');
 
       return { error: null };
@@ -432,23 +419,37 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (__DEV__) console.error('Apple link error:', error);
       // Check for already linked error
       if (error.message?.includes('already linked') || error.message?.includes('identity_already_exists')) {
-        Alert.alert('Already Linked', 'This Apple account is already linked to another user.');
+        return { error: new Error('This Apple account is already linked to another user.') };
       }
       return { error: error as Error };
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
   // Sign out
+  // Sign out. A failure is returned as well as shown, since Supabase keeps
+  // the session then and callers must not clear the account's data.
   const signOut = useCallback(async () => {
     setLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {
         if (__DEV__) console.error('Sign out error:', error);
-        Alert.alert('Error', 'Failed to sign out. Please try again.');
+        // A refresh refused on the way can end the session and still return
+        // an error. That's a sign out, so the phone gets cleared. A network
+        // error never ends the session, so offline skips the second wait.
+        if (error.name !== 'AuthRetryableFetchError') {
+          const left = await supabase.auth.getSession().catch(() => null);
+          if (left && !left.error && !left.data?.session) return { error: null };
+        }
+        Alert.alert('Error', signOutFailMessage(error));
       }
+      return { error: error ?? null };
+    } catch (error: any) {
+      if (__DEV__) console.error('Sign out error:', error);
+      Alert.alert('Error', signOutFailMessage(error));
+      return { error: error as Error };
     } finally {
       setLoading(false);
     }
@@ -466,6 +467,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     session,
     loading,
+    busy,
     linkedProviders,
     signUp,
     signIn,

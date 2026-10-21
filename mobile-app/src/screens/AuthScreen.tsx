@@ -27,12 +27,13 @@ type AuthMode = 'signIn' | 'signUp';
 
 interface AuthScreenProps {
   onAuthSuccess?: () => void;
+  initialMode?: AuthMode;
 }
 
-export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
-  const { signIn, signUp, signInWithGoogle, signInWithApple, resetPassword, loading } = useAuth();
+export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: AuthScreenProps) {
+  const { signIn, signUp, signInWithGoogle, signInWithApple, resetPassword, busy: loading } = useAuth();
 
-  const [mode, setMode] = useState<AuthMode>('signIn');
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -72,6 +73,8 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   };
 
   const handleEmailAuth = async () => {
+    // One sign in at a time. The screen stays up while one runs now.
+    if (loading) return;
     setError(null);
     Keyboard.dismiss();
 
@@ -125,6 +128,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   };
 
   const handleGoogleAuth = async () => {
+    if (loading) return;
     setError(null);
     try {
       const { error } = await signInWithGoogle();
@@ -141,6 +145,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   };
 
   const handleAppleAuth = async () => {
+    if (loading) return;
     setError(null);
     try {
       const { error } = await signInWithApple();
@@ -225,11 +230,12 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <Text style={styles.logoTitle}>TroyStack</Text>
             </View>
 
-            {/* Tab Selector */}
+            {/* Tab Selector, held while a sign in runs so its result lands on its own tab */}
             <View style={styles.tabContainer}>
               <TouchableOpacity
                 style={[styles.tab, mode === 'signIn' && styles.tabActive]}
                 onPress={() => { setMode('signIn'); setError(null); }}
+                disabled={loading}
               >
                 <Text style={[styles.tabText, mode === 'signIn' && styles.tabTextActive]}>
                   Sign In
@@ -238,6 +244,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <TouchableOpacity
                 style={[styles.tab, mode === 'signUp' && styles.tabActive]}
                 onPress={() => { setMode('signUp'); setError(null); }}
+                disabled={loading}
               >
                 <Text style={[styles.tabText, mode === 'signUp' && styles.tabTextActive]}>
                   Sign Up
@@ -291,6 +298,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <TouchableOpacity
                 style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 8 }}
                 onPress={openForgotPassword}
+                disabled={loading}
               >
                 <Text style={{ color: '#fbbf24', fontSize: 13, fontWeight: '500' }}>
                   Forgot password?
@@ -351,13 +359,15 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
 
               {/* Apple Button (iOS only) - Native Apple Sign In Button */}
               {Platform.OS === 'ios' && isAppleAvailable && (
-                <AppleAuthentication.AppleAuthenticationButton
-                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
-                  cornerRadius={12}
-                  style={styles.appleNativeButton}
-                  onPress={handleAppleAuth}
-                />
+                <View pointerEvents={loading ? 'none' : 'auto'} style={{ opacity: loading ? 0.5 : 1 }}>
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                    buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                    cornerRadius={12}
+                    style={styles.appleNativeButton}
+                    onPress={handleAppleAuth}
+                  />
+                </View>
               )}
               {Platform.OS === 'ios' && !isAppleAvailable && (
                 <View style={{ padding: 12, backgroundColor: 'rgba(239, 68, 68, 0.15)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' }}>

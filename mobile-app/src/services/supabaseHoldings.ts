@@ -1,4 +1,8 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
+import { asRestoredBy, holdingsToUpload } from '../utils/holdingsUpload';
+import { insertRows } from '../utils/insertRows';
+import { purchaseDateForCloud } from '../utils/purchaseDate';
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -47,35 +51,6 @@ interface HoldingNotes {
   cost_basis?: number;
 }
 
-// Validate and format date for Supabase (must be YYYY-MM-DD or null)
-function formatDateForSupabase(dateStr: string | undefined | null): string | null {
-  if (!dateStr || dateStr.trim() === '') return null;
-
-  // Check if already in YYYY-MM-DD format
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return dateStr;
-  }
-
-  // Try to parse and reformat
-  try {
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      if (y >= 1900 && y <= 2100) {
-        return `${y}-${m}-${d}`;
-      }
-    }
-  } catch (e) {
-    // Ignore parse errors
-  }
-
-  // Invalid date - return null to prevent Supabase error 22008
-  console.warn('Invalid date format, setting to null:', dateStr);
-  return null;
-}
-
 // Convert local holding to Supabase format
 export function localToSupabase(
   holding: LocalHolding,
@@ -102,7 +77,7 @@ export function localToSupabase(
     weight_unit: 'oz',
     quantity: holding.quantity,
     purchase_price: holding.unitPrice,
-    purchase_date: formatDateForSupabase(holding.datePurchased),
+    purchase_date: purchaseDateForCloud(holding.datePurchased),
     notes: JSON.stringify(notesData),
   };
 }
@@ -146,14 +121,18 @@ export async function fetchHoldings(userId: string): Promise<{
   error: Error | null;
 }> {
   try {
-    const { data, error } = await supabase
-      .from('holdings')
-      .select('*')
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+    // Every page, not just the first 1000 rows. The pages go by id, so the
+    // newest first order comes after.
+    const { data: rows, error } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('*')
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+    );
 
     if (error) throw error;
+    const data = newestFirst(rows || []);
 
     const silverItems: LocalHolding[] = [];
     const goldItems: LocalHolding[] = [];
@@ -231,7 +210,7 @@ export async function updateHolding(
       weight: holding.ozt,
       quantity: holding.quantity,
       purchase_price: holding.unitPrice,
-      purchase_date: formatDateForSupabase(holding.datePurchased),
+      purchase_date: purchaseDateForCloud(holding.datePurchased),
       metal,
       notes: JSON.stringify(notesData),
       updated_at: new Date().toISOString(),
@@ -279,12 +258,19 @@ export async function findHoldingByLocalId(
   metal: 'silver' | 'gold' | 'platinum' | 'palladium'
 ): Promise<SupabaseHolding | null> {
   try {
-    const { data, error } = await supabase
-      .from('holdings')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('metal', metal)
-      .is('deleted_at', null);
+    // One read finds a row that was already there. Reading until the stack
+    // settles could end in an error that reads as not found, and the edit
+    // would upload the holding again.
+    const { data, error } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('metal', metal)
+        .is('deleted_at', null),
+      undefined,
+      { settle: false }
+    );
 
     if (error) throw error;
 
@@ -316,24 +302,31 @@ export async function syncLocalToSupabase(
 ): Promise<{
   syncedCount: number;
   skippedCount: number;
+  rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[];
   error: Error | null;
 }> {
   let syncedCount = 0;
   let skippedCount = 0;
+  const rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
 
   try {
-    // Get existing holdings to avoid duplicates
-    const { data: existingHoldings, error: fetchError } = await supabase
-      .from('holdings')
-      .select('notes')
-      .eq('user_id', userId)
-      .is('deleted_at', null);
+    // Get existing holdings to avoid duplicates, deleted ones included so a
+    // holding this account deleted doesn't come back from an old copy
+    const { data: existingHoldings, error: fetchError } = await fetchAllRows(() =>
+      supabase
+        .from('holdings')
+        .select('id, notes, deleted_at, created_at')
+        .eq('user_id', userId)
+    );
 
     if (fetchError) throw fetchError;
 
-    // Build set of existing local_ids (stored in notes JSON)
+    // This account's row ids and their local_ids (stored in notes JSON),
+    // deleted rows included
+    const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
     (existingHoldings || []).forEach((h: any) => {
+      existingRowIds.add(h.id);
       if (h.notes) {
         try {
           const notesData = JSON.parse(h.notes);
@@ -346,8 +339,9 @@ export async function syncLocalToSupabase(
       }
     });
 
-    // Prepare holdings to insert
+    // Prepare holdings to insert, with the local holding each row came from
     const holdingsToInsert: any[] = [];
+    const sources: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
 
     const metalGroups: { items: LocalHolding[]; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [
       { items: silverItems, metal: 'silver' },
@@ -357,40 +351,41 @@ export async function syncLocalToSupabase(
     ];
 
     for (const { items, metal } of metalGroups) {
-      for (const item of items) {
-        if (existingLocalIds.has(item.id)) {
-          skippedCount++;
-          continue;
-        }
+      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
+      skippedCount += items.length - toUpload.length;
+      for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));
+        sources.push({ item, metal });
       }
     }
 
-    // Batch insert
-    if (holdingsToInsert.length > 0) {
-      const { error: insertError } = await supabase
-        .from('holdings')
-        .insert(holdingsToInsert);
+    // Batch insert, row by row if the database refuses the batch over one
+    // row's data, so that row can't hold back every later sync
+    const { insertedCount, rejected: rejectedRows, error: insertError } = await insertRows(
+      holdingsToInsert,
+      async (rows: any[]) => supabase.from('holdings').insert(rows)
+    );
+    syncedCount = insertedCount;
+    if (insertError) throw insertError;
+    rejectedRows.forEach((index: number) => rejected.push(sources[index]));
+    if (rejected.length) console.warn(`Supabase refused ${rejected.length} holding(s); they stay on the phone`);
 
-      if (insertError) throw insertError;
-
-      syncedCount = holdingsToInsert.length;
-    }
-
-    return { syncedCount, skippedCount, error: null };
+    return { syncedCount, skippedCount, rejected, error: null };
   } catch (err) {
     console.error('Error syncing local to Supabase:', err);
-    return { syncedCount, skippedCount, error: err as Error };
+    return { syncedCount, skippedCount, rejected: [], error: err as Error };
   }
 }
 
 // Full sync: Supabase is source of truth when signed in
-// Only uploads local holdings if Supabase is empty (first-time migration)
+// With uploadLocal it first uploads the local holdings App.js picked for this
+// account (src/utils/holdingsUpload.js), and syncLocalToSupabase skips any the
+// cloud already has.
 export async function fullSync(
   userId: string,
   localSilver: LocalHolding[],
   localGold: LocalHolding[],
-  isFirstSync: boolean = false,
+  uploadLocal: boolean = false,
   localPlatinum: LocalHolding[] = [],
   localPalladium: LocalHolding[] = []
 ): Promise<{
@@ -399,6 +394,8 @@ export async function fullSync(
   platinumItems: LocalHolding[];
   palladiumItems: LocalHolding[];
   syncedToCloud: number;
+  refusedCount: number;
+  refusedNames: string[];
   error: Error | null;
 }> {
   try {
@@ -410,12 +407,13 @@ export async function fullSync(
     const hasRemoteData = remoteSilver.length > 0 || remoteGold.length > 0 || remotePlatinum.length > 0 || remotePalladium.length > 0;
     const hasLocalData = localSilver.length > 0 || localGold.length > 0 || localPlatinum.length > 0 || localPalladium.length > 0;
 
-    // If this is first sync AND Supabase is empty AND we have local data,
-    // migrate local holdings to Supabase
+    // Add the local holdings App.js picked for this account (src/utils/
+    // holdingsUpload.js), whether or not it already has some, so a guest who
+    // signs in keeps their stack
     let syncedCount = 0;
-    if (isFirstSync && !hasRemoteData && hasLocalData) {
-      console.log('First sync with empty Supabase - migrating local holdings...');
-      const { syncedCount: uploaded, error: syncError } = await syncLocalToSupabase(
+    if (uploadLocal && hasLocalData) {
+      console.log(`Adding local holdings (cloud ${hasRemoteData ? 'has holdings' : 'empty'})...`);
+      const { syncedCount: uploaded, rejected, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,
         localGold,
@@ -423,21 +421,28 @@ export async function fullSync(
         localPalladium
       );
 
-      if (syncError) {
-        console.warn('Migration to cloud had errors:', syncError);
-      } else {
-        syncedCount = uploaded;
-        // Re-fetch after migration to get the items with supabase_ids
-        const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium } = await fetchHoldings(userId);
-        return {
-          silverItems: newSilver,
-          goldItems: newGold,
-          platinumItems: newPlatinum,
-          palladiumItems: newPalladium,
-          syncedToCloud: syncedCount,
-          error: null,
-        };
-      }
+      // A failed upload keeps the local stack on screen and this sync unmarked,
+      // so the holdings aren't replaced by the cloud's and a later sync retries
+      if (syncError) throw syncError;
+      syncedCount = uploaded;
+      // Re-fetch after migration to get the items with supabase_ids. If that
+      // fails, the error keeps the local stack on screen instead of empty lists.
+      const { silverItems: newSilver, goldItems: newGold, platinumItems: newPlatinum, palladiumItems: newPalladium, error: refetchError } = await fetchHoldings(userId);
+      if (refetchError) throw refetchError;
+      // A holding the database refused stays on the phone beside the cloud's
+      // copy, marked for this account so the next sync tries it again
+      const lists = { silver: newSilver, gold: newGold, platinum: newPlatinum, palladium: newPalladium };
+      rejected.forEach(({ item, metal }) => lists[metal].push(...asRestoredBy([item], userId)));
+      return {
+        silverItems: newSilver,
+        goldItems: newGold,
+        platinumItems: newPlatinum,
+        palladiumItems: newPalladium,
+        syncedToCloud: syncedCount,
+        refusedCount: rejected.length,
+        refusedNames: rejected.map(({ item }) => item.productName),
+        error: null,
+      };
     }
 
     // Return Supabase holdings as source of truth
@@ -448,6 +453,8 @@ export async function fullSync(
       platinumItems: remotePlatinum,
       palladiumItems: remotePalladium,
       syncedToCloud: syncedCount,
+      refusedCount: 0,
+      refusedNames: [],
       error: null,
     };
   } catch (err) {
@@ -458,6 +465,8 @@ export async function fullSync(
       platinumItems: localPlatinum,
       palladiumItems: localPalladium,
       syncedToCloud: 0,
+      refusedCount: 0,
+      refusedNames: [],
       error: err as Error,
     };
   }

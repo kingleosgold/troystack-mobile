@@ -19,7 +19,7 @@ import { deleteAccount } from '../utils/accountDelete';
 interface AccountScreenProps {
   apiBase: string;
   onClose: () => void;
-  onSignOut: () => void | Promise<void>;
+  onSignOut: () => void | Promise<boolean | void>;
   hasGold: boolean;
   hasLifetime: boolean;
   colors: {
@@ -42,7 +42,7 @@ export default function AccountScreen({
   hasLifetime,
   colors,
 }: AccountScreenProps) {
-  const { user, linkedProviders, linkWithGoogle, linkWithApple, signOut } = useAuth();
+  const { user, busy, linkedProviders, linkWithGoogle, linkWithApple, signOut } = useAuth();
   const [deleting, setDeleting] = useState(false);
 
   const email = user?.email || 'Unknown';
@@ -80,9 +80,15 @@ export default function AccountScreen({
     if (result.kind === 'deleted') {
       // Signed out and cleared first, and waited for, so nothing of the
       // deleted account is left on the phone if the app is closed while the
-      // alert is up.
-      await onSignOut();
-      Alert.alert('Account deleted', 'Your account and its synced data are gone.');
+      // alert is up. A sign out that failed cleared nothing, so the words
+      // say how to finish.
+      const signedOut = await onSignOut();
+      Alert.alert(
+        'Account deleted',
+        signedOut === false
+          ? "Your account and its synced data are gone. This phone couldn't sign out yet, so tap Sign Out once you're connected to clear it."
+          : 'Your account and its synced data are gone.'
+      );
     } else if (result.kind === 'expired') {
       Alert.alert('Sign in again', 'Your session ran out. Sign out, sign back in, and then delete your account.');
     } else if (result.kind === 'plan') {
@@ -107,6 +113,7 @@ export default function AccountScreen({
   };
 
   const handleLinkGoogle = async () => {
+    if (busy) return;
     const { error } = await linkWithGoogle();
     if (error && error.message !== 'Linking cancelled') {
       Alert.alert('Link Failed', error.message);
@@ -114,6 +121,7 @@ export default function AccountScreen({
   };
 
   const handleLinkApple = async () => {
+    if (busy) return;
     const { error } = await linkWithApple();
     if (error && error.message !== 'Linking cancelled') {
       Alert.alert('Link Failed', error.message);
@@ -186,7 +194,7 @@ export default function AccountScreen({
                   <Text style={{ color: colors.success, fontSize: 14 }}>✓</Text>
                 </View>
               ) : (
-                <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border }]} onPress={handleLinkGoogle}>
+                <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]} onPress={handleLinkGoogle} disabled={busy}>
                   <Text style={[styles.linkButtonText, { color: colors.gold }]}>Link</Text>
                 </TouchableOpacity>
               )}
@@ -207,7 +215,7 @@ export default function AccountScreen({
                     <Text style={{ color: colors.success, fontSize: 14 }}>✓</Text>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border }]} onPress={handleLinkApple}>
+                  <TouchableOpacity style={[styles.linkButton, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]} onPress={handleLinkApple} disabled={busy}>
                     <Text style={[styles.linkButtonText, { color: colors.gold }]}>Link</Text>
                   </TouchableOpacity>
                 )}
@@ -238,12 +246,13 @@ export default function AccountScreen({
         <TouchableOpacity
           style={[styles.signOutButton, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
           onPress={handleSignOut}
+          disabled={busy}
         >
           <Text style={[styles.signOutText, { color: colors.error }]}>Sign Out</Text>
         </TouchableOpacity>
 
         {/* Delete Account */}
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting}>
+        <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting || busy}>
           {deleting ? (
             <ActivityIndicator color={colors.muted} />
           ) : (

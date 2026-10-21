@@ -15,6 +15,8 @@
 // midnight Eastern time.
 export const TROY_GOLD_DAILY_QUESTIONS = 30;
 export const TROY_GOLD_DAILY_VOICE = 20;
+// The app stops a free account at 3 questions a day (TROY_FREE_LIMIT in App.js).
+export const TROY_FREE_DAILY_QUESTIONS = 3;
 
 // RevenueCat's INTRO_ELIGIBILITY_STATUS_ELIGIBLE.
 export const INTRO_ELIGIBLE = 2;

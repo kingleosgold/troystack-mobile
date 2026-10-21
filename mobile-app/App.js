@@ -5,7 +5,16 @@
  */
 
 import 'react-native-reanimated';
-import React, { useState, useEffect, useRef, Component, useCallback } from 'react';
+// metro.config.js turns on inline requires, which load a module on first use.
+// These three have to run at launch: the gesture handler sets itself up, the
+// URL polyfill fills in globals before any fetch builds a URL, and the
+// background task has to be defined before iOS wakes the app to run it. Each
+// is also on metro.config.js's LAUNCH_REQUIRES, since a bare import alone gets
+// merged with the names App.js imports from the same module.
+import 'react-native-gesture-handler';
+import 'react-native-url-polyfill/auto';
+import './src/utils/backgroundTasks';
+import React, { useState, useEffect, useLayoutEffect, useRef, Component, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Platform, SafeAreaView, StatusBar, ActivityIndicator,
@@ -16,32 +25,33 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import ErrorBoundary from './ErrorBoundary';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import * as ImagePicker from 'expo-image-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
-import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio, InterruptionModeIOS } from 'expo-av';
 import { setAudioModeAsync as setAudioModeAsyncV2 } from 'expo-audio';
 import TrackPlayer, { Capability, Event, State } from 'react-native-track-player';
 import Purchases from 'react-native-purchases';
-import * as XLSX from 'xlsx';
 import * as Notifications from 'expo-notifications';
-import * as StoreReview from 'expo-store-review';
 import { CloudStorage, CloudStorageScope } from 'react-native-cloud-storage';
 import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitlements, restorePurchases, logoutRevenueCat, loadGoldOffering } from './src/utils/entitlements';
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
-import { unlockLine, TROY_GOLD_LINE, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, isFirstHolding, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
+import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
+import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
+import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
+import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
+import { checkMinVersion } from './src/utils/minVersion';
+import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
+import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -1032,12 +1042,7 @@ import Tutorial from './src/components/Tutorial';
 import TroyCoinIcon from './src/components/TroyCoinIcon';
 import GlobeIcon from './src/components/GlobeIcon';
 import StackSignalIcon from './src/components/StackSignalIcon';
-import ViewShot from 'react-native-view-shot';
-import Markdown from 'react-native-markdown-display';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
-import AuthScreen from './src/screens/AuthScreen';
-import AccountScreen from './src/screens/AccountScreen';
-import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import { AppleLogo, GoogleLogo, ProfileIcon, DashboardIcon, HoldingsIcon, AnalyticsIcon, SettingsIcon, SortIcon, TodayIcon, BellIcon, TrendingUpIcon, CalculatorIcon, TrophyIcon } from './src/components/icons';
 import {
   fetchHoldings,
@@ -1048,6 +1053,21 @@ import {
   findHoldingByLocalId,
 } from './src/services/supabaseHoldings';
 import { supabase } from './src/lib/supabase';
+import { lazyModule, lazyComponent } from './src/utils/lazyLoad';
+
+// Screens and libraries the dashboard doesn't need load the first time they're
+// used. Receipt scanning, export and import, the share card, Troy's markdown
+// and the account screens stay out of the cold start (src/utils/lazyLoad.js).
+const ImagePicker = lazyModule(() => require('expo-image-picker'));
+const FileSystem = lazyModule(() => require('expo-file-system/legacy'));
+const Sharing = lazyModule(() => require('expo-sharing'));
+const DocumentPicker = lazyModule(() => require('expo-document-picker'));
+const StoreReview = lazyModule(() => require('expo-store-review'));
+const ViewShot = lazyComponent(React, () => require('react-native-view-shot'));
+const Markdown = lazyComponent(React, () => require('react-native-markdown-display'));
+const AuthScreen = lazyComponent(React, () => require('./src/screens/AuthScreen'));
+const AccountScreen = lazyComponent(React, () => require('./src/screens/AccountScreen'));
+const ResetPasswordScreen = lazyComponent(React, () => require('./src/screens/ResetPasswordScreen'));
 
 // Counts open alerts so the free week offer never comes up on top of one.
 // React Native can't say whether an alert is showing, and AppState stays
@@ -1128,16 +1148,6 @@ const useSwipeBack = (onClose) => {
       return false;
     },
   });
-};
-
-const isVersionBelow = (current, minimum) => {
-  const cur = current.split('.').map(Number);
-  const min = minimum.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((cur[i] || 0) < (min[i] || 0)) return true;
-    if ((cur[i] || 0) > (min[i] || 0)) return false;
-  }
-  return false;
 };
 
 /**
@@ -2413,8 +2423,14 @@ function AppContent() {
   }, [setOnOpenFull]);
 
   // Supabase Auth
-  const { user: supabaseUser, session, loading: authLoading, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
+  const { user: supabaseUser, session, loading: authLoading, busy: authBusy, signOut: supabaseSignOut, linkedProviders, linkWithGoogle, linkWithApple } = useAuth();
   const [guestMode, setGuestMode] = useState(null); // null = loading, true = guest, false = require auth
+  const [authStartMode, setAuthStartMode] = useState('signIn'); // the tab AuthScreen opens on
+  // Once anyone is signed in the next AuthScreen opens on sign in again, since an
+  // email sign up confirmed by its link never reaches handleAuthSuccess
+  useEffect(() => {
+    if (supabaseUser?.id) setAuthStartMode('signIn');
+  }, [supabaseUser?.id]);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showAccountScreen, setShowAccountScreen] = useState(false);
   const [showResetPasswordScreen, setShowResetPasswordScreen] = useState(false);
@@ -2423,6 +2439,9 @@ function AppContent() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
+  // Counts restores, so a sync that was already running when one landed
+  // leaves the restored stack for the next sync instead of replacing it
+  const restoreCountRef = useRef(0);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -2556,12 +2575,16 @@ function AppContent() {
   const [troyConversations, setTroyConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [troyMessages, setTroyMessages] = useState([]);
+  // A guest's questions left today from /v1/troy/ask, null until read.
+  const [guestTroyQuota, setGuestTroyQuota] = useState(null);
   const [troyLoading, setTroyLoading] = useState(false);
   const [troyInputText, setTroyInputText] = useState('');
   const [advisorQuestionsToday, setAdvisorQuestionsToday] = useState(0);
   const [playingMessageId, setPlayingMessageId] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  // 'idle', 'recording' or 'transcribing'
+  const [voiceState, setVoiceState] = useState('idle');
   const currentRecordingRef = useRef(null);
   const recordingStartInFlightRef = useRef(false);
   // Local cache-file URI of the Troy-voice clip TrackPlayer is currently playing,
@@ -2677,6 +2700,13 @@ function AppContent() {
   const storePlanRef = useRef(null);
   // The account signed in now, so a sync answer for another one is dropped.
   const signedInIdRef = useRef(null);
+  // Goes up at each sign out, account change and data wipe. A holdings sync
+  // that started before one stops at its next step and writes nothing, so it
+  // can't put the last account's owner or stack back on the phone. Unlike
+  // signedInIdRef it never reads null while the same account stays signed in.
+  const accountGenRef = useRef(0);
+  // The account the last account change left signed in, or null.
+  const lastAccountIdRef = useRef(null);
   // The sync after Purchases.logIn runs at most once per account per launch.
   const [claimStoreSync] = useState(() => oncePerAccount());
   // Profile writes go out one at a time, newest wins. See src/utils/profileWrites.js.
@@ -2706,6 +2736,24 @@ function AppContent() {
   const [scanStatus, setScanStatus] = useState(null);
   const [scanMessage, setScanMessage] = useState('');
   const [editingItem, setEditingItem] = useState(null);
+  // Counts each time something swaps the whole stack in: a sync, a restore,
+  // a claim or a reset. The edit sheet keeps the count and the account from
+  // when it opened, and Save drops an edit made across a swap, since the
+  // holding on screen may now be another account's with the same local id.
+  const stackGenRef = useRef(0);
+  const editOpenedRef = useRef(null);
+  // The same for the detail view, which edits open from. Its holding is a
+  // copy taken when it opened, so the count and account are taken then too.
+  const detailOpenedRef = useRef(null);
+  // Every whole-stack swap goes through here. An open detail view shows a
+  // copy of a holding from the stack that's gone, maybe another account's,
+  // so it closes rather than show it or act on it.
+  const bumpStackGen = () => {
+    stackGenRef.current += 1;
+    setShowDetailView(false);
+    setDetailItem(null);
+    setDetailMetal(null);
+  };
 
   // Push Notifications State
   const [expoPushToken, setExpoPushToken] = useState(null);
@@ -2740,6 +2788,9 @@ function AppContent() {
 
   // Post-sign-in loading gate — show loading screen until Supabase sync completes after sign-in
   const [needsPostSignInSync, setNeedsPostSignInSync] = useState(false);
+  // Holds the loading screen while a sign out runs, so the sign in screen
+  // can't start a guest or another account before the old one is cleared
+  const [signingOut, setSigningOut] = useState(false);
 
   // Share My Stack
   const shareViewRef = useRef(null);
@@ -2961,9 +3012,12 @@ function AppContent() {
 
   // Reset all in-memory state to defaults (used by both clearAllData and performSignOut)
   // fullReset=true (default): resets everything including app preferences (for clearAllData)
-  // fullReset=false: preserves theme, large text, tutorial flags, and keeps dataLoaded true (for sign-out)
+  // fullReset=false: preserves theme, large text and tutorial flags (for sign-out)
+  // dataLoaded stays true either way: the empty stack matches what's stored,
+  // and saves and sign in's sync wait on it until the next launch otherwise
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
+    bumpStackGen();
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
@@ -3008,6 +3062,10 @@ function AppContent() {
     setShowAccountScreen(false);
     setShowBenefitsScreen(false);
     setHasSyncedOnce(false);
+    // Both clear paths remove the stored iCloud setting. Turning it off here
+    // too stops the iCloud sync from writing the empty stack over a backup.
+    setICloudSyncEnabled(false);
+    setLastSyncTime(null);
 
     // Only reset app-level preferences on full reset (clearAllData from settings)
     if (fullReset) {
@@ -3015,29 +3073,59 @@ function AppContent() {
       setLargeText(false);
       setHideWidgetValues(false);
       setSpotChangeDisplayMode('percent');
-      setDataLoaded(false);
     }
   };
 
   // Clear all app data and reset to fresh state (user-initiated from Settings)
   const clearAllData = async () => {
     try {
+      // A signed-in account's holdings stay in the cloud. Sign it out first,
+      // so the next sync doesn't bring them straight back onto a wiped phone.
+      const signedIn = !!supabaseUser;
+      // A sign out that failed has already said so and cleared nothing.
+      // Wiping now would bring the cloud stack straight back under the same
+      // account.
+      if (signedIn && !(await performSignOut())) return;
+      // The loading screen holds through the wipe too
+      setSigningOut(true);
+      accountGenRef.current += 1;
       await AsyncStorage.clear();
+      accountGenRef.current += 1;
       resetAllState();
+      // A guest stays a guest, as on a first launch
+      if (!signedIn) {
+        setGuestMode(true);
+        AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
+          if (__DEV__) console.error('Failed to save guest mode:', error);
+        });
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Data Cleared', 'All your data has been erased. The app has been reset to its initial state.');
+      Alert.alert('Data Cleared', clearDataDone(signedIn));
     } catch (error) {
       if (__DEV__) console.error('Failed to clear data:', error);
       Alert.alert('Error', 'Failed to clear data. Please try again.');
+    } finally {
+      setSigningOut(false);
     }
   };
 
   // Sign out: clear user data, logout services, navigate to auth screen
   // Preserves app preferences (theme, large text, tutorial flags, etc.)
+  // Returns whether the sign out took. A failed one clears nothing.
   const performSignOut = async () => {
+    setSigningOut(true);
     try {
       const userId = supabaseUser?.id;
-      // 0. A web plan belongs to the account, not the phone
+      // A holdings sync still running for this account writes nothing more
+      accountGenRef.current += 1;
+      // 1. Sign out from Supabase first. A failed sign out, offline say, keeps
+      // the session and has said so. Nothing has changed yet, so the account
+      // keeps its plan and its data on this phone.
+      const { error: signOutError } = await supabaseSignOut();
+      if (signOutError) return false;
+      // A sync the auto sync started again while that ran stops here too
+      accountGenRef.current += 1;
+      // 2. A web plan belongs to the account, not the phone
       webPlanGenRef.current += 1;
       rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
       lastWebCheckRef.current = { at: 0, plan: undefined };
@@ -3049,10 +3137,8 @@ function AppContent() {
       // A guest purchase or restore before the next sign-in moves to that
       // account at its login, so even the same account syncs again then.
       claimStoreSync.reset();
-      // 1. Logout from RevenueCat
-      try { await logoutRevenueCat(); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
-      // 2. Sign out from Supabase
-      await supabaseSignOut();
+      // Logout from RevenueCat. One that hangs doesn't hold the loading screen.
+      try { await withTimeout(logoutRevenueCat(), WEB_PLAN_TIMEOUT_MS); } catch (e) { if (__DEV__) console.error('RevenueCat logout failed:', e); }
       // 3. Selective clear — remove user data, preserve app preferences
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
@@ -3065,16 +3151,24 @@ function AppContent() {
         'stack_review_prompts', 'stack_first_open_date',
         'lastSnapshotDate',
         'stack_guest_mode',
+        HOLDINGS_OWNER_KEY,
       ];
       if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
-      await AsyncStorage.multiRemove(userKeys);
+      // Every account's synced key goes with the stack, a key left by a
+      // session that ended without a sign out included
+      const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
+      await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
       setGuestMode(false);
+      return true;
     } catch (error) {
       if (__DEV__) console.error('Sign out failed:', error);
       Alert.alert('Error', 'Failed to sign out. Please try again.');
+      return false;
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -3436,32 +3530,14 @@ function AppContent() {
     let _authOk = false;
     let _authError;
     try {
-      // Minimum version check — fail open
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const versionRes = await fetch('https://api.stacktrackergold.com/v1/min-version', {
-          signal: controller.signal
-        });
-        clearTimeout(timeout);
-        if (versionRes.ok) {
-          const versionData = await versionRes.json();
-          const platform = Platform.OS;
-          const platformData = versionData[platform];
-          if (versionData.enforced && platformData && isVersionBelow(appVersion, platformData.minVersion)) {
-            setForceUpdate({
-              message: versionData.message,
-              storeUrl: platformData.store_url
-            });
-            _authError = 'force_update_required';
-            logLifecycleEvent('app:authenticate_end', { ok: false, method: 'skipped', error: _authError });
-            return; // Stop all further initialization — app is blocked
-          }
+      // Minimum version check runs beside launch so a slow network never holds the
+      // loading screen. An enforced update still covers the app when it answers.
+      checkMinVersion({ fetchFn: fetch, platform: Platform.OS, appVersion }).then((update) => {
+        if (update) {
+          setForceUpdate(update);
+          logLifecycleEvent('app:force_update_required');
         }
-      } catch (e) {
-        // Fail open — if endpoint is unreachable, let the user in
-        console.log('Version check skipped:', e.message);
-      }
+      });
 
       // Wrap all authentication in defensive try-catch
       let shouldAuthenticate = false;
@@ -3496,15 +3572,12 @@ function AppContent() {
       // Only update state and load data if authentication succeeded or was skipped
       if (shouldAuthenticate) {
         setIsAuthenticated(true);
-        // Wrap loadData in setTimeout to ensure state update completes first
-        logLifecycleEvent('app:setTimeout_50ms_scheduled');
-        setTimeout(() => {
-          logLifecycleEvent('app:setTimeout_50ms_fired');
-          loadData().catch(err => {
-            if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
-            setIsLoading(false); // Still hide loading even if data fails
-          });
-        }, 50);
+        // loadData's first step is an await on storage, so the state update
+        // above lands without a timer in front of it.
+        loadData().catch(err => {
+          if (__DEV__) console.error('loadData failed (non-fatal):', err?.message || err);
+          setIsLoading(false); // Still hide loading even if data fails
+        });
       }
     } catch (e) {
       if (__DEV__) console.error('authenticate outer catch:', e?.message || e);
@@ -3533,7 +3606,7 @@ function AppContent() {
         AsyncStorage.getItem('stack_platinum_spot'),
         AsyncStorage.getItem('stack_palladium_spot'),
         AsyncStorage.getItem('stack_price_timestamp'),
-        AsyncStorage.getItem('stack_has_seen_tutorial'),
+        AsyncStorage.getItem(SEEN_FIRST_LAUNCH_KEY),
         AsyncStorage.getItem('stack_theme_preference'),
         AsyncStorage.getItem('stack_spot_change_display_mode'),
         AsyncStorage.getItem('stack_large_text'),
@@ -3591,12 +3664,16 @@ function AppContent() {
         setLastReachedGoldMilestone(parseFloat(storedLastGoldReached));
       }
 
-      // Guest mode is session-only now — always start at auth screen on cold launch
-      // Clear any legacy persisted guest mode flag
-      if (storedGuestMode) {
-        AsyncStorage.removeItem('stack_guest_mode');
+      // A guest stays a guest across launches, with their holdings saved on this phone.
+      // A first launch opens as a guest on the Dashboard, with no sign-in and no tutorial
+      const hasStoredHoldings = _silverCount + _goldCount + _platinumCount + _palladiumCount > 0;
+      const firstLaunch = !supabaseUser && isFirstLaunch(storedGuestMode, hasSeenTutorial, hasStoredHoldings);
+      setGuestMode(guestModeAtLaunch(storedGuestMode, !!supabaseUser, firstLaunch));
+      if (firstLaunch) {
+        AsyncStorage.multiSet([[GUEST_MODE_KEY, 'true'], [SEEN_FIRST_LAUNCH_KEY, 'true']]).catch((error) => {
+          if (__DEV__) console.error('Failed to save first launch:', error);
+        });
       }
-      setGuestMode(false);
 
       // Load hide widget values preference
       if (storedHideWidgetValues === 'true') {
@@ -3614,8 +3691,8 @@ function AppContent() {
         } catch (e) { if (__DEV__) console.error('Failed to parse ai_consent'); }
       }
 
-      // Show tutorial if user hasn't seen it
-      if (!hasSeenTutorial) {
+      // Show tutorial if user hasn't seen it, never on a first launch
+      if (!hasSeenTutorial && !firstLaunch) {
         setShowTutorial(true);
       }
 
@@ -3641,10 +3718,11 @@ function AppContent() {
         durationMs: Date.now() - _loadDataStart,
       });
 
-      // Delay fetchSpotPrices to not block the main thread
-      logLifecycleEvent('app:setTimeout_100ms_scheduled');
-      setTimeout(() => {
-        logLifecycleEvent('app:setTimeout_100ms_fired');
+      // Live prices start now. fetchSpotPrices is async and its first step is
+      // the network call, so nothing here waits on it. It still starts after
+      // the cached prices above are set, so a cached price never lands over a
+      // live one.
+      {
         logLifecycleEvent('app:initial_spot_fetch_start');
         const _spotStart = Date.now();
         // fetchSpotPrices swallows errors internally, so promise resolution
@@ -3664,7 +3742,7 @@ function AppContent() {
           logLifecycleEvent('app:initial_spot_fetch_end', { ok: false, durationMs: Date.now() - _spotStart, error: err?.message || String(err) });
           if (__DEV__ && err?.name !== 'AbortError') console.error('fetchSpotPrices failed:', err?.message);
         });
-      }, 100);
+      }
     } catch (error) {
       if (__DEV__) console.error('Error loading data:', error?.message || error);
       logLifecycleEvent('app:load_data_end', {
@@ -3783,7 +3861,7 @@ function AppContent() {
   const hasPaidAccess = hasGoldAccess;
 
   // Troy daily question limits
-  const TROY_FREE_LIMIT = 3;
+  const TROY_FREE_LIMIT = TROY_FREE_DAILY_QUESTIONS;
 
   // Save holdings to iCloud
   const syncToCloud = async (silver = silverItems, gold = goldItems, platinum = platinumItems, palladium = palladiumItems) => {
@@ -3863,17 +3941,26 @@ function AppContent() {
           // Cloud data is newer - ask user or auto-apply
           Alert.alert(
             'iCloud Data Found',
-            'Found newer data in iCloud. Would you like to use it?',
+            supabaseUser
+              ? "Found newer data in iCloud. Would you like to use it? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay."
+              : 'Found newer data in iCloud. Would you like to use it?',
             [
               { text: 'Keep Local', style: 'cancel', onPress: () => syncToCloud() },
               {
                 text: 'Use iCloud',
                 onPress: () => {
-                  if (cloudData.silverItems) setSilverItems(cloudData.silverItems);
-                  if (cloudData.goldItems) setGoldItems(cloudData.goldItems);
-                  if (cloudData.platinumItems) setPlatinumItems(cloudData.platinumItems);
-                  if (cloudData.palladiumItems) setPalladiumItems(cloudData.palladiumItems);
+                  bumpStackGen();
+                  if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
+                  if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
+                  if (cloudData.platinumItems) setPlatinumItems(asRestoredBy(cloudData.platinumItems, supabaseUser?.id || null));
+                  if (cloudData.palladiumItems) setPalladiumItems(asRestoredBy(cloudData.palladiumItems, supabaseUser?.id || null));
                   setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+                  restoreCountRef.current += 1;
+                  if (supabaseUser) {
+                    // Send it up to the account now, even after a failed sync
+                    setSyncError(null);
+                    setHasSyncedOnce(false);
+                  }
                   setLastSyncTime(cloudData.lastModified);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
@@ -3932,22 +4019,22 @@ function AppContent() {
 
   useEffect(() => {
     // Only save after initial data has been loaded to prevent overwriting with empty arrays
-    // Skip saving for guest mode — data is session-only
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_silver', silverItems);
-  }, [silverItems, isAuthenticated, dataLoaded, guestMode]);
+    // A guest's holdings save on this phone too
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_silver', silverItems);
+  }, [silverItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
     // Only save after initial data has been loaded to prevent overwriting with empty arrays
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_gold', goldItems);
-  }, [goldItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_gold', goldItems);
+  }, [goldItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_platinum', platinumItems);
-  }, [platinumItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_platinum', platinumItems);
+  }, [platinumItems, isAuthenticated, dataLoaded]);
 
   useEffect(() => {
-    if (isAuthenticated && dataLoaded && !guestMode) saveData('stack_palladium', palladiumItems);
-  }, [palladiumItems, isAuthenticated, dataLoaded, guestMode]);
+    if (canSaveHoldings({ isAuthenticated, dataLoaded })) saveData('stack_palladium', palladiumItems);
+  }, [palladiumItems, isAuthenticated, dataLoaded]);
 
   // Manual sync function - can be called on pull-to-refresh or button press
   const syncHoldingsWithSupabase = async (force = false) => {
@@ -3971,40 +4058,127 @@ function AppContent() {
 
     setIsSyncing(true);
     setSyncError(null);
+    const restoresAtStart = restoreCountRef.current;
+    // A sign out, account change or wipe since this sync began makes the rest
+    // of it moot, and checked after each wait it writes nothing more
+    const accountGen = accountGenRef.current;
+    const accountChanged = () => accountGenRef.current !== accountGen;
 
     try {
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
-      const hasEverSynced = await AsyncStorage.getItem(syncKey);
+      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
+        AsyncStorage.getItem(syncKey),
+        AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+        // A failed listing fails the sync, since without the keys an older
+        // build's stack would read as unowned and could go up to this account
+        AsyncStorage.getAllKeys(),
+      ]);
+      // An older build left no owner, only stack_synced_<id> keys, so those
+      // name the owner until one is recorded
+      if (accountChanged()) return false;
+      const stackOwner = stackOwnerOf(recordedOwner, storageKeys, supabaseUser.id);
+      // On the first sync the phone's stack goes up whole if it's a guest's,
+      // from before accounts, or this account's own. Of another account's
+      // stack, and on any later sync, only what was added as a guest goes up.
       const isFirstSync = !hasEverSynced;
+      const toSync = (items) => localHoldingsToSync(items, stackOwner, supabaseUser.id, isFirstSync);
+      const toUpload = [silverItems, goldItems, platinumItems, palladiumItems].map(toSync);
+      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
+      // An unowned stack is this account's from here, before anything that can
+      // fail, so a failed sync can't leave it for the next account to take.
+      // Its guest marks come off too, or they'd let the next account take it,
+      // and both are stored in one write so a kill between them can't split
+      // them. On a later sync the marks stay until the cloud's copy replaces
+      // them, so a failed upload is tried again.
+      const claimWrites = stackOwner ? [] : [[HOLDINGS_OWNER_KEY, supabaseUser.id]];
+      const claimsStack = isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id);
+      if (claimsStack) {
+        [['stack_silver', silverItems], ['stack_gold', goldItems], ['stack_platinum', platinumItems], ['stack_palladium', palladiumItems]]
+          .forEach(([key, items]) => {
+            const cleaned = withoutGuestMark(items);
+            if (cleaned !== items) claimWrites.push([key, JSON.stringify(cleaned)]);
+          });
+      }
+      if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
+      // The marks come off in state even if the account changed meanwhile,
+      // since storage already has them off and a marked copy left in state
+      // could go up to the next account. After a sign out's reset it's a no-op.
+      if (claimsStack) {
+        bumpStackGen();
+        setSilverItems(withoutGuestMark);
+        setGoldItems(withoutGuestMark);
+        setPlatinumItems(withoutGuestMark);
+        setPalladiumItems(withoutGuestMark);
+      }
+      if (accountChanged()) return false;
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
-      // fullSync will:
-      // - If first sync AND Supabase empty: migrate local holdings to Supabase
-      // - Otherwise: just fetch from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, error } = await fullSync(
+      // fullSync uploads toUpload when uploadLocal is set, then fetches the
+      // account's holdings from Supabase (source of truth)
+      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
         supabaseUser.id,
-        silverItems,
-        goldItems,
-        isFirstSync,
-        platinumItems,
-        palladiumItems
+        toUpload[0],
+        toUpload[1],
+        uploadLocal,
+        toUpload[2],
+        toUpload[3]
       );
 
+      if (accountChanged()) return false;
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
-        setSyncError(error.message);
+        // A restore that landed while this sync ran is sent up by the next
+        // auto sync, so its failure doesn't hold that one back
+        if (restoreCountRef.current === restoresAtStart) setSyncError(error.message);
         return false;
       } else {
-        // Mark that this user has synced at least once
-        await AsyncStorage.setItem(syncKey, 'true');
+        // A holding the database refused is on this phone only. If a restore
+        // landed meanwhile the stack isn't replaced, so on a first sync the
+        // refused holding would stay unmarked and the next sync, no longer a
+        // first, would never send it. Leave this sync unmarked and the auto
+        // sync tries again as a first sync.
+        const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
+        if (refusedCount > 0 && restoreLanded()) return false;
+        // Mark that this user has synced at least once, and that the stack on
+        // this phone is now theirs. With refused holdings the stack carrying
+        // their retry marks goes in the same write, so a kill before the save
+        // effects run can't leave the phone marked synced over an unmarked one.
+        const stackWrites = refusedCount > 0
+          ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
+            .map(([key, items]) => [key, JSON.stringify(items)])
+          : [];
+        await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        if (accountChanged()) return false;
+        // Other accounts' synced keys named the owner only until one was
+        // recorded, and the stack they named is gone from the phone now
+        const staleSynced = syncedKeys(storageKeys, supabaseUser.id);
+        if (staleSynced.length) await AsyncStorage.multiRemove(staleSynced).catch(() => {});
+        if (accountChanged()) return false;
+
+        // A restore that landed while this sync ran isn't in what it sent up,
+        // so the cloud's copy would drop it. Leave the stack as it is and
+        // hasSyncedOnce false, and the auto sync sends it up next. With refused
+        // holdings the synced key comes back off, so that sync is a first one.
+        if (restoreLanded()) {
+          if (refusedCount > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
+          return false;
+        }
 
         // Replace local state with Supabase data (Supabase is source of truth)
+        bumpStackGen();
         setSilverItems(remoteSilver);
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
         setPalladiumItems(remotePalladium);
+
+        // A holding the database refused stays on this phone only, so say so
+        // while there's still a chance to fix it before a sign out clears it
+        if (refusedCount > 0) {
+          const { title, message } = refusedHoldingsAlert(refusedNames);
+          Alert.alert(title, message);
+        }
 
         if (__DEV__) {
           if (__DEV__) console.log(`Supabase sync complete: ${syncedToCloud} items migrated, ${remoteSilver.length} silver, ${remoteGold.length} gold, ${remotePlatinum.length} platinum, ${remotePalladium.length} palladium from cloud`);
@@ -4015,12 +4189,24 @@ function AppContent() {
       return true;
     } catch (err) {
       if (__DEV__) console.error('Supabase sync failed:', err);
-      setSyncError(err.message || 'Sync failed');
+      if (!accountChanged() && restoreCountRef.current === restoresAtStart) setSyncError(err.message || 'Sync failed');
       return false;
     } finally {
       setIsSyncing(false);
     }
   };
+
+  // A change away from a signed-in account stops that account's sync. As a
+  // layout effect it runs inside the commit that shows the new account, so
+  // the old account's sync can't land a write between that commit and the
+  // bump, and it runs before the auto sync, so a switch straight to another
+  // account doesn't stop the new account's sync. Only a sync for an account
+  // that was signed in can be running, so a sign in from no account leaves
+  // the count alone.
+  useLayoutEffect(() => {
+    if (lastAccountIdRef.current) accountGenRef.current += 1;
+    lastAccountIdRef.current = supabaseUser?.id || null;
+  }, [supabaseUser?.id]);
 
   // Supabase Holdings Sync - sync on app load when user is already signed in
   useEffect(() => {
@@ -4028,20 +4214,51 @@ function AppContent() {
     // 1. User is signed in with Supabase
     // 2. Data has been loaded from local storage
     // 3. Haven't synced yet this session
-    if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing) {
+    // 4. The last try didn't fail. Pull to refresh and the spaced out retry
+    //    below try again, so a failure doesn't retry in a loop each time
+    //    isSyncing turns back to false.
+    if (supabaseUser && dataLoaded && !hasSyncedOnce && !isSyncing && !syncError) {
       if (__DEV__) console.log('Auto-sync triggered: user signed in, data loaded');
+      // A sync cut by a sign out or account change leaves the loading screen
+      // alone, since it may belong to the next account's sign in. That
+      // account's own sync takes it down.
+      const accountGen = accountGenRef.current;
       syncHoldingsWithSupabase().finally(() => {
-        setNeedsPostSignInSync(false);
+        if (accountGenRef.current === accountGen) setNeedsPostSignInSync(false);
       });
     }
-  }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing]);
+  }, [supabaseUser, dataLoaded, hasSyncedOnce, isSyncing, syncError]);
 
-  // Reset sync flag when user signs out
+  // Any sign in ends guest mode, not only one through AuthScreen. An email
+  // sign up confirmed by its link, a password reset and a session restored at
+  // launch never reach handleAuthSuccess, and a guest flag left behind would
+  // open this account's stack as a guest's once its session ends. Waits for
+  // the stored data, so it lands after a launch that wrote the flag before
+  // the session had loaded.
   useEffect(() => {
-    if (!supabaseUser) {
-      setHasSyncedOnce(false);
-    }
-  }, [supabaseUser]);
+    if (!supabaseUser?.id || !dataLoaded) return;
+    setGuestMode(false);
+    AsyncStorage.removeItem(GUEST_MODE_KEY).catch((error) => {
+      if (__DEV__) console.error('Failed to remove guest mode:', error);
+    });
+  }, [supabaseUser?.id, dataLoaded]);
+
+  // The loading screen after sign in waits for this sign-in's sync. A sync
+  // that finished or failed before the screen came up won't run again, so
+  // that screen comes down as soon as nothing is syncing.
+  useEffect(() => {
+    if (needsPostSignInSync && !isSyncing && (hasSyncedOnce || syncError)) setNeedsPostSignInSync(false);
+  }, [needsPostSignInSync, isSyncing, hasSyncedOnce, syncError]);
+
+  // Reset sync flag when the account changes, a sign out included. A session
+  // that ends under the loading screen takes it down too, since the sync it
+  // waited on was cut and won't. Only an end does: a sign in can put the
+  // screen up a moment before its account arrives.
+  useEffect(() => {
+    setHasSyncedOnce(false);
+    setSyncError(null);
+    if (!supabaseUser?.id) setNeedsPostSignInSync(false);
+  }, [supabaseUser?.id]);
 
   // Milestone Reached Detection
   useEffect(() => {
@@ -4631,7 +4848,7 @@ function AppContent() {
     try {
       const restored = await restorePurchases();
       syncStoreAfterRestore();
-      if (restored.hasGold || restored.hasSilver) {
+      if (restored.hasGold || restored.hasSilver || restored.hasLifetime) {
         await checkEntitlements(); // Re-check all entitlements to set correct tier
         Alert.alert('Purchases Restored!', 'Your subscription has been restored.');
       } else {
@@ -4917,8 +5134,10 @@ function AppContent() {
   // FREE WEEK OFFER
   // Once per device, right after someone adds their first holding (by hand,
   // from a receipt scan or from an import), the app offers Gold's free trial
-  // when they're back on the dashboard looking at the stack's live value. The
-  // rules and the words are in src/utils/freeWeekOffer.js.
+  // when they're back on the dashboard looking at the stack's live value.
+  // Someone who talks to Troy first gets it in the chat instead, once they've
+  // had a moment with his answer. The rules and the words are in
+  // src/utils/freeWeekOffer.js.
   // ============================================
 
   // Whether this device has shown the offer: null until the flag is read, and
@@ -4927,8 +5146,11 @@ function AppContent() {
   // Set by an add that made the stack's first holding. Holdings that arrive
   // by sync, restore or a launch never set it.
   const [firstHoldingAdded, setFirstHoldingAdded] = useState(false);
-  // The sheet, with the trial it offered.
-  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null });
+  // Set when Troy answers a question sent this session. Conversations loaded
+  // from the server never set it.
+  const [troyAnswered, setTroyAnswered] = useState(false);
+  // The sheet, with the trial it offered and the moment it came up at.
+  const [freeWeekOffer, setFreeWeekOffer] = useState({ visible: false, trial: null, guest: false, moment: 'holding' });
   const [alertOpen, setAlertOpen] = useState(() => alertWatch.isOpen());
   const [appActive, setAppActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -4957,6 +5179,39 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
 
+  // A failed holdings sync tries again on its own, a few times and spaced out,
+  // by clearing the error the auto sync waits on. A new account, a good sync
+  // or coming back to the app starts the count over, so a failure in the
+  // background is tried again as soon as the app is open. See
+  // src/utils/syncRetry.js.
+  const syncTriesRef = useRef(0);
+  useEffect(() => {
+    syncTriesRef.current = 0;
+  }, [supabaseUser?.id, hasSyncedOnce]);
+  // Only coming back counts. A trip to inactive and back, for a Face ID
+  // prompt or Control Center, doesn't buy another round of tries.
+  const wasBackgroundRef = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') wasBackgroundRef.current = true;
+      else if (state === 'active' && wasBackgroundRef.current) {
+        wasBackgroundRef.current = false;
+        syncTriesRef.current = 0;
+      }
+    });
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (!syncRetryDue({ signedIn: !!supabaseUser, syncError, hasSyncedOnce, appActive })) return;
+    const delay = syncRetryDelay(syncTriesRef.current);
+    if (delay == null) return;
+    const timer = setTimeout(() => {
+      syncTriesRef.current += 1;
+      setSyncError(null);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [supabaseUser?.id, syncError, hasSyncedOnce, appActive]);
+
   // Set once the Gold screen has opened this session, from any button. Someone
   // who has just looked at Gold and closed it doesn't get a second pitch.
   const [goldScreenSeen, setGoldScreenSeen] = useState(false);
@@ -4971,6 +5226,7 @@ function AppContent() {
   // switches accounts it mustn't come back on the next account, which may pay.
   useEffect(() => {
     setFirstHoldingAdded(false);
+    setTroyAnswered(false);
     freeWeekGoldRef.current = null;
     setFreeWeekOffer((offer) => (offer.visible ? { ...offer, visible: false } : offer));
   }, [supabaseUser?.id]);
@@ -4980,7 +5236,7 @@ function AppContent() {
   // up on: if that goes, a reset password link for the same account say, the
   // sheet closes for good as well.
   const mainScreenShown = !showResetPasswordScreen
-    && !(isLoading || authLoading || guestMode === null || needsPostSignInSync)
+    && !(isLoading || authLoading || signingOut || guestMode === null || needsPostSignInSync)
     && (!!supabaseUser || !!guestMode)
     && isAuthenticated;
   useEffect(() => {
@@ -5000,7 +5256,7 @@ function AppContent() {
   const freeWeekOfferBlock = freeWeekOfferBlocker({
     shownBefore: freeWeekOfferShown,
     firstHoldingAdded,
-    guest: !supabaseUser,
+    troyAnswered,
     goldScreenSeen,
     planKnown: !subscriptionLoading && planForPrompts !== 'unknown',
     paid: planForPrompts === 'paid',
@@ -5010,6 +5266,7 @@ function AppContent() {
     screen: currentScreen,
     livePrices: spotPricesLive,
     stackValue: totalMeltValue,
+    troyBusy: troyLoading || !!playingMessageId || isRecording || voiceState !== 'idle' || troyInputText.trim().length > 0,
     sheets: {
       gold: showPaywallModal,
       tutorial: showTutorial,
@@ -5042,22 +5299,26 @@ function AppContent() {
     appActive,
   });
 
-  // Shows the sheet once the dashboard has been on screen for a moment, as
-  // long as nothing above changes first. It's marked shown as it opens, so
-  // it never shows again whatever's tapped.
+  // Shows the sheet once the dashboard, or Troy's answer, has been on screen
+  // for a moment, as long as nothing above changes first. It's marked shown
+  // as it opens, so it never shows again whatever's tapped.
+  const freeWeekMoment = freeWeekOfferMoment({ firstHoldingAdded, troyAnswered, screen: currentScreen });
   useEffect(() => {
     if (freeWeekOfferBlock !== null) return undefined;
+    const moment = freeWeekMoment;
     const timer = setTimeout(() => {
       if (alertWatch.isOpen()) return; // an alert that came up since this render
       freeWeekChoiceRef.current = null;
       setFreeWeekOfferShown(true);
       setFirstHoldingAdded(false);
-      setFreeWeekOffer({ visible: true, trial: trialForPrompts });
+      setTroyAnswered(false);
+      if (moment === 'troy') Keyboard.dismiss(); // the chat's input may still have it up
+      setFreeWeekOffer({ visible: true, trial: trialForPrompts, guest: !supabaseUser, moment });
       AsyncStorage.setItem(FREE_WEEK_OFFER_KEY, new Date().toISOString()).catch(() => {});
-      logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null });
-    }, FREE_WEEK_OFFER_DELAY_MS);
+      logLifecycleEvent('free_week_offer:shown', { cycle: trialForPrompts?.cycle || null, moment });
+    }, moment === 'troy' ? FREE_WEEK_OFFER_TROY_DELAY_MS : FREE_WEEK_OFFER_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [freeWeekOfferBlock, trialForPrompts, supabaseUser?.id]);
+  }, [freeWeekOfferBlock, freeWeekMoment, trialForPrompts, supabaseUser?.id]);
 
   // The start button opens the Gold screen on the plan whose trial the sheet
   // offered. On iOS that waits for the sheet to finish closing, since a new
@@ -5070,12 +5331,24 @@ function AppContent() {
     openGoldScreen(pending.cycle);
   };
 
-  // choice is 'start' or 'later'. The first tap is the one that counts.
+  // choice is 'start', 'restore', 'account' or 'later'. The first tap is the one that counts.
   const closeFreeWeekOffer = (choice) => {
     if (!freeWeekOffer.visible || freeWeekChoiceRef.current) return;
     freeWeekChoiceRef.current = choice;
     logLifecycleEvent(`free_week_offer:${choice}`);
     setFreeWeekOffer((offer) => ({ ...offer, visible: false }));
+    if (choice === 'account') {
+      // Sign up takes the screen once the sheet has gone, as the Gold screen waits
+      if (Platform.OS === 'ios') setTimeout(openSignUp, 700);
+      else openSignUp();
+      return;
+    }
+    if (choice === 'restore') {
+      // Its result alert waits for the sheet to go, like the Gold screen does
+      if (Platform.OS === 'ios') setTimeout(handleRestore, 700);
+      else handleRestore();
+      return;
+    }
     if (choice !== 'start') return;
     freeWeekGoldRef.current = { cycle: freeWeekOffer.trial?.cycle || null };
     if (Platform.OS === 'ios') setTimeout(openGoldAfterFreeWeekOffer, 700);
@@ -5269,7 +5542,7 @@ function AppContent() {
   // Tutorial completion handler
   const handleTutorialComplete = async () => {
     try {
-      await AsyncStorage.setItem('stack_has_seen_tutorial', 'true');
+      await AsyncStorage.setItem(SEEN_FIRST_LAUNCH_KEY, 'true');
       setShowTutorial(false);
     } catch (error) {
       if (__DEV__) console.error('Error saving tutorial status:', error);
@@ -5314,7 +5587,24 @@ function AppContent() {
         signal,
       });
       return res.json();
-    }
+    },
+    // A guest has no account, so Troy answers through the visitor route and
+    // keeps nothing. The chat so far rides along for context.
+    async ask(message, history, signal) {
+      const res = await fetch(`${API_BASE_URL}/v1/troy/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(guestAskBody(message, history)),
+        signal,
+      });
+      const body = await res.json().catch(() => null);
+      return readGuestAsk(res.status, body);
+    },
+    async askStatus() {
+      const res = await fetch(`${API_BASE_URL}/v1/troy/ask/status`);
+      if (!res.ok) return null;
+      return guestQuota(await res.json().catch(() => null));
+    },
   };
 
   // Stack Signal API
@@ -5498,6 +5788,8 @@ function AppContent() {
 
   const loadConversation = async (conversationId) => {
     const session = ++troySessionRef.current;
+    // Another chat doesn't hold the answer the free week offer was waiting on.
+    setTroyAnswered(false);
     setTroyLoading(true);
     try {
       const data = await troyAPI.getConversation(conversationId);
@@ -5510,9 +5802,30 @@ function AppContent() {
     if (troySessionRef.current === session) setTroyLoading(false);
   };
 
+  // Troy's questions for the day are used up. Said the way troystack.ai's
+  // limit card says it, and only an account known to be free is pitched Gold.
+  const showTroyLimit = (quota) => {
+    const prompt = troyLimitPrompt({ quota, plan: planForPrompts, trial: trialForPrompts });
+    Alert.alert(prompt.title, prompt.message, prompt.action ? [
+      { text: 'Not now', style: 'cancel' },
+      { text: prompt.action, onPress: () => openGoldScreen(trialForPrompts?.cycle) },
+    ] : undefined);
+  };
+
+  // A guest's questions are used up. The way on is a free account.
+  const showGuestTroyLimit = (quota) => {
+    const prompt = guestLimitPrompt(quota);
+    Alert.alert(prompt.title, prompt.message, [
+      { text: 'Not now', style: 'cancel' },
+      { text: prompt.action, onPress: () => disableGuestMode() },
+    ]);
+  };
+
   const startNewConversation = () => {
     // Drop any send or load still in flight so it can't refill this chat.
     troySessionRef.current += 1;
+    // The free week offer waits on an answer on screen, and a new chat has none.
+    setTroyAnswered(false);
     if (troyAbortRef.current) {
       troyAbortRef.current.abort();
       troyAbortRef.current = null;
@@ -5540,6 +5853,7 @@ function AppContent() {
       if (activeConversationId === conversationId) {
         setActiveConversationId(null);
         setTroyMessages([]);
+        setTroyAnswered(false);
       }
     } catch (e) {
       console.error('Failed to delete conversation:', e);
@@ -5572,8 +5886,8 @@ function AppContent() {
     setIsPaused(false);
   };
 
-  // Voice recording state: 'idle' | 'recording' | 'transcribing'
-  const [voiceState, setVoiceState] = useState('idle');
+  // Sets voiceState ('idle' | 'recording' | 'transcribing', declared with the
+  // Troy state above) and logs the change
   const setVoiceStateLog = (newState) => {
     console.log('[Voice] voiceState →', newState);
     setVoiceState(newState);
@@ -5585,6 +5899,14 @@ function AppContent() {
     if (!aiConsentGivenRef.current) {
       pendingTroyActionRef.current = () => startVoiceRecording();
       setShowAiConsentModal(true);
+      return;
+    }
+    // Speech to text needs an account on the server, so a guest types instead.
+    if (!supabaseUser) {
+      Alert.alert('Troy', 'Asking Troy out loud needs a free account. You can still type your question.', [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Create a free account', onPress: () => disableGuestMode() },
+      ]);
       return;
     }
     // In-flight start lock: prevent concurrent starts from a fast double-tap.
@@ -5841,6 +6163,19 @@ function AppContent() {
     // Stop if already playing this message
     if (playingMessageId === messageId) {
       await stopTroyAudio();
+      return;
+    }
+
+    // Troy's voice needs an account on the server, Gold or not, so a guest is
+    // asked for a free account instead of being offered Gold's trial, whatever
+    // the reply's length
+    if (!supabaseUser) {
+      if (!auto) {
+        Alert.alert('Troy', "Hearing Troy's answers out loud needs a free account.", [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Create a free account', onPress: () => disableGuestMode() },
+        ]);
+      }
       return;
     }
 
@@ -6118,6 +6453,11 @@ function AppContent() {
       return;
     }
 
+    if (!supabaseUser) {
+      await sendGuestTroyMessage(text, !messageText);
+      return;
+    }
+
     // Daily limit check. Free gets 3 a day here. Gold and Lifetime aren't
     // capped in the app, but the server stops them at 30 a day
     // (GOLD_DAILY_LIMIT in the API's troy-chat.js).
@@ -6125,7 +6465,7 @@ function AppContent() {
     const isPaidUser = hasGoldAccess || userTier === 'gold' || userTier === 'lifetime' || hasLifetimeAccess;
     console.log('[Troy] Tier check:', { hasGold, hasLifetimeAccess, hasGoldAccess, userTier, isPaidUser, questions: advisorQuestionsToday });
     if (!isPaidUser && advisorQuestionsToday >= TROY_FREE_LIMIT) {
-      setShowPaywallModal(true);
+      showTroyLimit({ questionsLimit: TROY_FREE_LIMIT });
       return;
     }
 
@@ -6184,6 +6524,19 @@ function AppContent() {
       troyAbortRef.current = null;
       if (__DEV__) console.log('🧠 [Troy] Response keys:', Object.keys(response), 'preview:', response.preview, 'message?.id:', response.message?.id, 'error:', response.error);
 
+      // The day's questions are used up on the server's count, which the
+      // webapp shares, so it can come before the phone's own count does.
+      if (isQuotaRefusal(response)) {
+        setTroyMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+        setTroyLoading(false);
+        // No answer is coming, so a spoken question's autoplay is dropped, and
+        // the question, typed or spoken, goes back in the box to ask again.
+        autoPlayNextResponseRef.current = false;
+        setTroyInputText(text);
+        showTroyLimit(response);
+        return;
+      }
+
       // Handle API error responses (e.g. profanity filter, server error)
       if (response.error && !response.message?.content) {
         console.log('[Troy] API returned error:', response.error);
@@ -6225,6 +6578,7 @@ function AppContent() {
         ];
       });
       Animated.spring(assistAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+      setTroyAnswered(true);
 
       // Update conversation title if it changed (first message auto-titles)
       if (response.title) {
@@ -6253,6 +6607,122 @@ function AppContent() {
 
     setTroyLoading(false);
   };
+
+  // A guest's question goes to /v1/troy/ask with the answered turns so far,
+  // and the chat stays on this phone. fromInput is whether it came from the box.
+  const sendGuestTroyMessage = async (text, fromInput) => {
+    const left = guestQuestionsLeft(guestTroyQuota);
+    if (left === 0) {
+      if (!fromInput) setTroyInputText(text);
+      autoPlayNextResponseRef.current = false;
+      showGuestTroyLimit(guestTroyQuota);
+      return;
+    }
+    if (text.length > GUEST_MESSAGE_MAX) {
+      // A spoken or handed-over question waits in the box to be cut down.
+      if (!fromInput) setTroyInputText(text);
+      autoPlayNextResponseRef.current = false;
+      Alert.alert('Troy', `Keep it under ${GUEST_MESSAGE_MAX} characters, or create a free account for longer questions.`);
+      return;
+    }
+    if (fromInput) setTroyInputText('');
+
+    const session = troySessionRef.current;
+    const history = answeredTurns(troyMessages);
+    const userMsg = { id: 'guest-user-' + Date.now(), role: 'user', content: text, created_at: new Date().toISOString() };
+    const userAnim = new Animated.Value(0);
+    messageAnimsRef.current.set(userMsg.id, userAnim);
+    setTroyMessages(prev => [...prev, userMsg]);
+    Animated.spring(userAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+    setTroyLoading(true);
+
+    // No answer is coming, so the question comes off the chat, a spoken
+    // question's autoplay is dropped and the question goes back in the box,
+    // unless something new was typed there meanwhile.
+    const giveBack = () => {
+      setTroyMessages(prev => prev.filter(m => m.id !== userMsg.id));
+      autoPlayNextResponseRef.current = false;
+      setTroyInputText(prev => prev || text);
+      setTroyLoading(false);
+    };
+
+    let result;
+    try {
+      troyAbortRef.current = new AbortController();
+      result = await troyAPI.ask(text, history, troyAbortRef.current.signal);
+    } catch (e) {
+      if (troySessionRef.current !== session) return;
+      troyAbortRef.current = null;
+      // Stop means no answer is coming either, so the question comes back
+      // without an alert
+      if (e.name === 'AbortError') {
+        giveBack();
+        return;
+      }
+      giveBack();
+      Alert.alert('Troy', "Troy couldn't answer that just now. Try again in a moment.");
+      return;
+    }
+    if (troySessionRef.current !== session) return;
+    troyAbortRef.current = null;
+
+    if (result.kind === 'limit') {
+      giveBack();
+      setGuestTroyQuota(result.quota);
+      showGuestTroyLimit(result.quota);
+      return;
+    }
+    if (result.kind === 'unavailable') {
+      giveBack();
+      Alert.alert('Troy', 'Create a free account to ask Troy.', [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Create a free account', onPress: () => disableGuestMode() },
+      ]);
+      return;
+    }
+    if (result.kind !== 'reply') {
+      giveBack();
+      Alert.alert('Troy', result.error || "Troy couldn't answer that just now. Try again in a moment.");
+      return;
+    }
+
+    if (result.quota) setGuestTroyQuota(result.quota);
+    const assistantMsg = { id: 'guest-troy-' + Date.now(), role: 'assistant', content: result.reply, created_at: new Date().toISOString(), preview: null };
+    const assistAnim = new Animated.Value(0);
+    messageAnimsRef.current.set(assistantMsg.id, assistAnim);
+    setTroyMessages(prev => [...prev, assistantMsg]);
+    Animated.spring(assistAnim, { toValue: 1, damping: 15, stiffness: 200, useNativeDriver: true }).start();
+    setTroyAnswered(true);
+    setTroyLoading(false);
+
+    if (autoPlayNextResponseRef.current) {
+      autoPlayNextResponseRef.current = false;
+      playTroyVoice(assistantMsg.content, assistantMsg.id, { auto: true });
+    }
+  };
+
+  // A guest's questions left, read each time the chat opens.
+  useEffect(() => {
+    if (currentScreen !== 'TroyChat' || supabaseUser) return undefined;
+    let cancelled = false;
+    troyAPI.askStatus()
+      .then(quota => { if (!cancelled && quota) setGuestTroyQuota(quota); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentScreen, supabaseUser?.id]);
+
+  // A guest's chat is on this phone only, and an account's chat is that
+  // account's. When someone signs in or out the chat on screen goes, along
+  // with any answer still on its way.
+  const troyAccountRef = useRef(supabaseUser?.id || null);
+  useEffect(() => {
+    const id = supabaseUser?.id || null;
+    if (troyAccountRef.current === id) return;
+    troyAccountRef.current = id;
+    startNewConversation();
+    setTroyConversations([]);
+    setGuestTroyQuota(null);
+  }, [supabaseUser?.id]);
 
   useEffect(() => {
     if (currentScreen !== 'TroyChat' || !pendingTroyPrompt || activeConversationId || troyLoading) return;
@@ -7428,17 +7898,26 @@ function AppContent() {
 
       Alert.alert(
         'Restore Backup',
-        `Replace current data with backup from ${backup.timestamp}?`,
+        supabaseUser
+          ? `Restore the backup from ${backup.timestamp}? Its holdings are added to your account, except any you've deleted from it. Holdings already in your account stay.`
+          : `Replace current data with backup from ${backup.timestamp}?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Restore',
             onPress: async () => {
-              if (backup.data.silverItems) setSilverItems(backup.data.silverItems);
-              if (backup.data.goldItems) setGoldItems(backup.data.goldItems);
-              if (backup.data.platinumItems) setPlatinumItems(backup.data.platinumItems);
-              if (backup.data.palladiumItems) setPalladiumItems(backup.data.palladiumItems);
+              bumpStackGen();
+              if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
+              if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
+              if (backup.data.platinumItems) setPlatinumItems(asRestoredBy(backup.data.platinumItems, supabaseUser?.id || null));
+              if (backup.data.palladiumItems) setPalladiumItems(asRestoredBy(backup.data.palladiumItems, supabaseUser?.id || null));
               setFirstHoldingAdded(false); // a restored stack isn't one the person just started
+              restoreCountRef.current += 1;
+              if (supabaseUser) {
+                // Send it up to the account now, even after a failed sync
+                setSyncError(null);
+                setHasSyncedOnce(false);
+              }
               Alert.alert('Success', 'Backup restored!');
             }
           }
@@ -8406,7 +8885,7 @@ function AppContent() {
         // Process ALL items and prepare them for preview
         const processedItems = [];
         for (const item of items) {
-          const extractedMetal = item.metal === 'gold' ? 'gold' : 'silver';
+          const extractedMetal = holdingMetal(item.metal);
 
           // Get historical spot price for this item (with time if available)
           let spotPrice = '';
@@ -8545,6 +9024,8 @@ function AppContent() {
       }
 
       // Parse with XLSX - use raw:true to prevent date conversion to serial numbers
+      // Loaded on first import so the spreadsheet parser stays out of cold start
+      const XLSX = require('xlsx');
       const workbook = XLSX.read(bytes, { type: 'array', cellDates: true, raw: false });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
@@ -8791,7 +9272,7 @@ function AppContent() {
         }
         existingKeys.add(itemKey); // Prevent duplicates within the same import batch
 
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -8804,7 +9285,7 @@ function AppContent() {
           shipping: item.shipping || 0,
           spotPrice: item.spotPrice || 0,
           premium: item.premium || 0,
-        };
+        }, !!supabaseUser);
 
         const importSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
         const metalKey = (item.metal || 'silver').toLowerCase();
@@ -8860,7 +9341,7 @@ function AppContent() {
       const newItems = [];
 
       scannedItems.forEach((item, index) => {
-        const newItem = {
+        const newItem = asAddedBy({
           id: Date.now() + index,
           productName: item.productName,
           source: item.source,
@@ -8873,12 +9354,11 @@ function AppContent() {
           shipping: item.shipping,
           spotPrice: item.spotPrice,
           premium: item.premium,
-        };
+        }, !!supabaseUser);
 
         const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
-        const metalKey = (item.metal || 'silver').toLowerCase();
-        const setter = scanSetters[metalKey] || setSilverItems;
-        setter(prev => [...prev, newItem]);
+        const metalKey = holdingMetal(item.metal);
+        scanSetters[metalKey](prev => [...prev, newItem]);
         if (metalKey === 'silver') silverCount++;
         else if (metalKey === 'gold') goldCount++;
         newItems.push({ ...newItem, metal: metalKey });
@@ -8923,7 +9403,7 @@ function AppContent() {
   // Add a single scanned item and go to next or close
   const addScannedItemIndividually = (index) => {
     const item = scannedItems[index];
-    const newItem = {
+    const newItem = asAddedBy({
       id: Date.now(),
       productName: item.productName,
       source: item.source,
@@ -8936,14 +9416,24 @@ function AppContent() {
       shipping: item.shipping,
       spotPrice: item.spotPrice,
       premium: item.premium,
-    };
+    }, !!supabaseUser);
 
-    if (item.metal === 'silver') {
-      setSilverItems(prev => [...prev, newItem]);
-    } else {
-      setGoldItems(prev => [...prev, newItem]);
-    }
+    const scanSetters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    const metalKey = holdingMetal(item.metal);
+    scanSetters[metalKey](prev => [...prev, newItem]);
     noteHoldingsAdded(silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length, 1);
+
+    // Sync to Supabase if signed in
+    if (supabaseUser) {
+      (async () => {
+        try {
+          await addHolding(supabaseUser.id, newItem, metalKey);
+          if (__DEV__) console.log('Synced scanned item to Supabase');
+        } catch (err) {
+          if (__DEV__) console.error('Failed to sync scanned item to Supabase:', err);
+        }
+      })();
+    }
 
     // Remove this item from scannedItems
     const remainingItems = scannedItems.filter((_, i) => i !== index);
@@ -9088,7 +9578,7 @@ function AppContent() {
       return;
     }
 
-    const item = {
+    const item = asAddedBy({
       id: editingItem?.id || Date.now(),
       productName: form.productName, source: form.source, datePurchased: form.datePurchased,
       timePurchased: form.timePurchased || undefined, // Optional time field
@@ -9097,7 +9587,10 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
-    };
+      // A restored holding keeps its restore mark and row through an edit, so
+      // the next sync still sends it up to the account that restored it
+      ...(editingItem?.restoredFor ? { restoredFor: editingItem.restoredFor, supabase_id: editingItem.supabase_id } : {}),
+    }, editingItem ? !editingItem.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
     if (editingItem && editingItem.scannedIndex !== undefined) {
@@ -9143,6 +9636,30 @@ function AppContent() {
     }
 
     // Normal add/edit flow for holdings
+    // A running sync uploads the stack as it read it and then swaps in the
+    // cloud's copy, which would roll an edit back, so the edit waits for it
+    // That sync then swaps the stack in, so this edit can't be saved after it
+    // either. The sheet closes rather than ask for a save that can't land.
+    if (editingItem && isSyncing) {
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Syncing', 'Your stack is syncing. Please open the holding again in a moment.');
+      return;
+    }
+    // A sync, restore or account change that swapped the stack in while the
+    // sheet was open can leave another account's holding under the same
+    // local id, or none at all. The edit then belongs to a stack that's gone,
+    // and must not land on the one now on the phone or go up to its account.
+    const opened = editOpenedRef.current;
+    if (editingItem && (!opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || ![silverItems, goldItems, platinumItems, palladiumItems].some((list) => list.some((i) => i.id === editingItem.id)))) {
+      resetForm();
+      setShowAddModal(false);
+      Alert.alert('Holding Changed', 'This holding changed while you were editing it. Please open it again.');
+      return;
+    }
     // IMPORTANT: metalTab can be 'silver', 'gold', 'platinum', 'palladium', or 'both' - we must check explicitly
     const targetMetal = metalTab === 'both' ? 'silver' : metalTab; // Default to silver if 'both' (shouldn't happen but safety)
 
@@ -9171,15 +9688,25 @@ function AppContent() {
             await updateHolding(editingItem.supabase_id, item, targetMetal);
             if (__DEV__) console.log('Updated holding in Supabase');
           } else if (editingItem) {
+            // Who owns the phone's stack, read before the lookup so a sync that
+            // finishes during it can't make another account's holding read as ours.
+            // A failed read only holds back the add, never the update of a row.
+            const ownerRead = await Promise.all([
+              AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+              AsyncStorage.getAllKeys(),
+            ]).catch(() => null);
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
               await updateHolding(existingHolding.id, item, targetMetal);
               if (__DEV__) console.log('Updated existing holding in Supabase');
             } else {
-              // Not in Supabase yet, add it
-              const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-              if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              // Not in Supabase yet. Add it if it's this account's to take, never
+              // a holding of another account's stack left on the phone
+              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
+                const { data } = await addHolding(supabaseUser.id, item, targetMetal);
+                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              }
             }
           } else {
             // New item - add to Supabase
@@ -9220,6 +9747,24 @@ function AppContent() {
     const itemsMap = { silver: silverItems, gold: goldItems, platinum: platinumItems, palladium: palladiumItems };
     const items = itemsMap[metal] || silverItems;
     const itemToDelete = items.find(i => i.id === id);
+    // Delete opens from the detail view, whose holding is a copy from when it
+    // opened. Across a swap or an account change the same id can be another
+    // account's holding, so the delete is refused, here and at the confirm.
+    const opened = detailOpenedRef.current;
+    const stale = () => !opened
+      || opened.gen !== stackGenRef.current
+      || opened.userId !== (supabaseUser?.id || null)
+      || !itemToDelete;
+    const refuse = () => {
+      setShowDetailView(false);
+      setDetailItem(null);
+      setDetailMetal(null);
+      Alert.alert('Holding Changed', 'This holding changed while it was open. Please open it again.');
+    };
+    if (stale()) {
+      refuse();
+      return;
+    }
 
     Alert.alert(
       'Delete Item',
@@ -9230,6 +9775,10 @@ function AppContent() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (opened.gen !== stackGenRef.current) {
+              refuse();
+              return;
+            }
             // Haptic feedback on delete
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
@@ -9270,6 +9819,7 @@ function AppContent() {
   };
 
   const viewItemDetail = (item, metal) => {
+    detailOpenedRef.current = { gen: stackGenRef.current, userId: supabaseUser?.id || null };
     setDetailItem(item);
     setDetailMetal(metal);
     setShowDetailView(true);
@@ -9320,6 +9870,9 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
+    // The holding comes from the detail view, so it counts from when that
+    // opened, not from this tap
+    editOpenedRef.current = detailOpenedRef.current;
     setEditingItem(item);
     setSpotPriceSource(null); // Clear source warning when editing existing item
     setHistoricalSpotSuggestion(null); // Clear any previous suggestion
@@ -9588,27 +10141,35 @@ function AppContent() {
   // LOADING & AUTH SCREENS
   // ============================================
 
-  // Helper to enable guest mode (session-only — not persisted, so reopening app shows auth screen)
+  // Helper to enable guest mode, kept across launches until sign in or sign out
   const enableGuestMode = () => {
     setGuestMode(true);
+    AsyncStorage.setItem(GUEST_MODE_KEY, 'true').catch((error) => {
+      if (__DEV__) console.error('Failed to save guest mode:', error);
+    });
   };
 
-  // Helper to disable guest mode (when user signs in)
-  const disableGuestMode = async () => {
+  // Helper to show the sign-in screen from guest mode. The stored flag stays
+  // until sign-in succeeds, so backing out keeps the guest stack next launch
+  const disableGuestMode = () => {
+    setAuthStartMode('signIn');
     setGuestMode(false);
-    try {
-      await AsyncStorage.removeItem('stack_guest_mode');
-    } catch (error) {
-      if (__DEV__) console.error('Failed to remove guest mode:', error);
-    }
+  };
+
+  // The same, opened on the sign up tab for a guest who asked to make an account
+  const openSignUp = () => {
+    setAuthStartMode('signUp');
+    setGuestMode(false);
   };
 
   // Handle successful auth from AuthScreen
-  // If guest had in-memory holdings, they'll be persisted now that guestMode is false
-  // (the save effects trigger when guestMode changes)
+  // A new account's first sync moves the guest's holdings to the cloud
   const handleAuthSuccess = () => {
     setShowAuthScreen(false);
     disableGuestMode();
+    AsyncStorage.removeItem(GUEST_MODE_KEY).catch((error) => {
+      if (__DEV__) console.error('Failed to remove guest mode:', error);
+    });
     setNeedsPostSignInSync(true); // Show loading until sync completes
   };
 
@@ -9651,28 +10212,6 @@ function AppContent() {
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: false }), 50);
   };
 
-  // Group conversations by date
-  const groupConversationsByDate = (convos) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-    const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 7);
-    const groups = [];
-    const todayItems = [], yesterdayItems = [], weekItems = [], earlierItems = [];
-    for (const c of convos) {
-      const d = new Date(c.updated_at || c.created_at);
-      if (d >= today) todayItems.push(c);
-      else if (d >= yesterday) yesterdayItems.push(c);
-      else if (d >= weekAgo) weekItems.push(c);
-      else earlierItems.push(c);
-    }
-    if (todayItems.length) groups.push({ label: 'Today', items: todayItems });
-    if (yesterdayItems.length) groups.push({ label: 'Yesterday', items: yesterdayItems });
-    if (weekItems.length) groups.push({ label: 'This Week', items: weekItems });
-    if (earlierItems.length) groups.push({ label: 'Earlier', items: earlierItems });
-    return groups;
-  };
-
   // CustomSidebar — rendered by React Navigation drawer
   const renderCustomSidebar = useCallback((drawerProps) => {
     // Store drawer navigation for use in header ☰ button
@@ -9681,8 +10220,12 @@ function AppContent() {
     }
 
     console.log('[Troy] Sidebar rendering, conversations:', troyConversations.length);
-    const conversationGroups = groupConversationsByDate(troyConversations);
     const isGoldUser = hasGoldAccess;
+    // A free account sees its newest few chats, as on troystack.ai. One whose
+    // plan isn't known yet may have Gold, so nothing is held back until it is.
+    const shownChats = planForPrompts !== 'free' ? troyConversations : groupConversations(troyConversations).flatMap((g) => g.items).slice(0, FREE_CHAT_HISTORY);
+    const hiddenChats = troyConversations.length - shownChats.length;
+    const conversationGroups = groupConversations(shownChats);
 
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0E' }}>
@@ -9750,66 +10293,48 @@ function AppContent() {
           <Text style={{ color: '#71717a', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>Recents</Text>
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
             {troyConversations.length === 0 ? (
-              <Text style={{ color: '#52525b', fontSize: 13, textAlign: 'center', marginTop: 20, paddingHorizontal: 16 }}>No conversations yet. Tap + to start.</Text>
-            ) : isGoldUser ? (
-              conversationGroups.map((group) => (
-                <View key={group.label}>
-                  <Text style={{ color: '#52525b', fontSize: 11, fontWeight: '600', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{group.label}</Text>
-                  {group.items.map((conv) => (
-                    <TouchableOpacity
-                      key={conv.id}
-                      onPress={() => {
-                        loadConversation(conv.id);
-                        setCurrentScreen('TroyChat');
-                        drawerProps.navigation.closeDrawer();
-                      }}
-                      onLongPress={() => {
-                        Alert.alert('Delete Conversation', 'Are you sure?', [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Delete', style: 'destructive', onPress: () => deleteConversation(conv.id) },
-                        ]);
-                      }}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 10,
-                        paddingHorizontal: 16, paddingVertical: 10,
-                        backgroundColor: conv.id === activeConversationId ? 'rgba(201,168,76,0.08)' : 'transparent',
-                      }}
-                    >
-                      <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
-                      <Text style={{ color: conv.id === activeConversationId ? '#C9A84C' : '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>
-                        {conv.title || 'New conversation'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ))
+              <Text style={{ color: '#52525b', fontSize: 13, textAlign: 'center', marginTop: 20, paddingHorizontal: 16 }}>{supabaseUser ? 'Your chats with Troy show up here, on the web and in the app.' : 'No conversations yet. Tap + to start.'}</Text>
             ) : (
-              // Free users: show last 3, then upgrade CTA
               <>
-                {troyConversations.slice(0, 3).map((conv) => (
-                  <TouchableOpacity
-                    key={conv.id}
-                    onPress={() => {
-                      loadConversation(conv.id);
-                      setCurrentScreen('TroyChat');
-                      drawerProps.navigation.closeDrawer();
-                    }}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, opacity: 0.6 }}
-                  >
-                    <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
-                    <Text style={{ color: '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>{conv.title || 'New conversation'}</Text>
-                  </TouchableOpacity>
+                {conversationGroups.map((group) => (
+                  <View key={group.label}>
+                    <Text style={{ color: '#52525b', fontSize: 11, fontWeight: '600', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{group.label}</Text>
+                    {group.items.map((conv) => (
+                      <TouchableOpacity
+                        key={conv.id}
+                        onPress={() => {
+                          loadConversation(conv.id);
+                          setCurrentScreen('TroyChat');
+                          drawerProps.navigation.closeDrawer();
+                        }}
+                        onLongPress={isGoldUser ? () => {
+                          Alert.alert('Delete Conversation', 'Are you sure?', [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Delete', style: 'destructive', onPress: () => deleteConversation(conv.id) },
+                          ]);
+                        } : undefined}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 10,
+                          paddingHorizontal: 16, paddingVertical: 10,
+                          backgroundColor: conv.id === activeConversationId ? 'rgba(201,168,76,0.08)' : 'transparent',
+                        }}
+                      >
+                        <Image source={TROY_AVATAR} style={{ width: 20, height: 20, borderRadius: 10 }} />
+                        <Text style={{ color: conv.id === activeConversationId ? '#C9A84C' : '#a1a1aa', fontSize: 14, flex: 1 }} numberOfLines={1}>
+                          {conv.title || 'New chat'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 ))}
-                {troyConversations.length > 3 && (
+                {hiddenChats > 0 && (
                   <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-                    <Text style={{ color: '#71717a', fontSize: 13, lineHeight: 18 }}>
-                      You had {troyConversations.length} conversations with Troy. Upgrade to Gold to save and resume them.
-                    </Text>
+                    <Text style={{ color: '#71717a', fontSize: 13, lineHeight: 18 }}>{chatHistoryNote(troyConversations.length)}</Text>
                     <TouchableOpacity
                       onPress={() => { drawerProps.navigation.closeDrawer(); setShowPaywallModal(true); }}
                       style={{ marginTop: 8, backgroundColor: '#C9A84C', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}
                     >
-                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Upgrade for $4.99 a month</Text>
+                      <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>See Gold</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -9877,7 +10402,81 @@ function AppContent() {
         </View>
       </SafeAreaView>
     );
-  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics]);
+  }, [currentScreen, troyConversations, activeConversationId, hasGoldAccess, hasGold, hasLifetimeAccess, drawerNavigation, showDiagnostics, supabaseUser, planForPrompts]);
+  // An enforced update covers every screen, the loading screen included
+  if (forceUpdate) {
+    return (
+      <View style={[styles.container, { backgroundColor: '#0A0A0E' }]}>
+        <StatusBar barStyle="light-content" />
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {}}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.95)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 32,
+          }}>
+            <View style={{
+              backgroundColor: '#1a1a1a',
+              borderRadius: 16,
+              padding: 32,
+              width: '100%',
+              maxWidth: 340,
+              alignItems: 'center',
+            }}>
+              <Text style={{
+                color: '#C9A84C',
+                fontSize: 22,
+                fontWeight: '700',
+                marginBottom: 16,
+                textAlign: 'center',
+              }}>
+                Update Required
+              </Text>
+              <Text style={{
+                color: '#ccc',
+                fontSize: 15,
+                lineHeight: 22,
+                textAlign: 'center',
+                marginBottom: 28,
+              }}>
+                {forceUpdate.message}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (forceUpdate.storeUrl) {
+                    Linking.openURL(forceUpdate.storeUrl);
+                  }
+                }}
+                style={{
+                  backgroundColor: '#C9A84C',
+                  borderRadius: 8,
+                  paddingVertical: 14,
+                  paddingHorizontal: 40,
+                  width: '100%',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{
+                  color: '#000',
+                  fontSize: 16,
+                  fontWeight: '700',
+                }}>
+                  Update Now
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  }
+
   if (showResetPasswordScreen) {
     return (
       <View style={[styles.container, { backgroundColor: '#09090b' }]}>
@@ -9887,7 +10486,7 @@ function AppContent() {
     );
   }
 
-  if (isLoading || authLoading || guestMode === null || needsPostSignInSync) {
+  if (isLoading || authLoading || signingOut || guestMode === null || needsPostSignInSync) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#0A0A0E' }]}>
         <Image source={TROY_AVATAR} style={{ width: 72, height: 72, borderRadius: 36, marginBottom: 16 }} />
@@ -9902,7 +10501,7 @@ function AppContent() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-        <AuthScreen onAuthSuccess={handleAuthSuccess} />
+        <AuthScreen initialMode={authStartMode} onAuthSuccess={handleAuthSuccess} />
         {/* Skip for now button */}
         <View style={{
           position: 'absolute',
@@ -9913,15 +10512,18 @@ function AppContent() {
           paddingBottom: Platform.OS === 'ios' ? 50 : 30,
           backgroundColor: colors.background,
         }}>
+          {/* Held while a sign in is in flight, so it can't land on a guest */}
           <TouchableOpacity
             style={{
               paddingVertical: 16,
               alignItems: 'center',
+              opacity: authBusy ? 0.5 : 1,
             }}
             onPress={enableGuestMode}
+            disabled={authBusy}
           >
-            <Text style={{ color: colors.muted, fontSize: scaledFonts.medium }}>
-              Continue without signing in
+            <Text style={{ color: colors.gold, fontSize: scaledFonts.medium, fontWeight: '600' }}>
+              {GUEST_CONTINUE}
             </Text>
           </TouchableOpacity>
         </View>
@@ -10001,7 +10603,14 @@ function AppContent() {
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginLeft: 6 }} />
                     )}
                   </View>
-                  <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : 'Your Stack Analyst'}</Text>
+                  {/* A free account sees its plan as troystack.ai shows it, and a tap opens Gold. */}
+                  {voiceState === 'idle' && supabaseUser && planForPrompts === 'free' ? (
+                    <TouchableOpacity onPress={() => setShowPaywallModal(true)} activeOpacity={0.7} accessibilityRole="button">
+                      <Text style={{ color: '#D4A843', fontSize: 12, fontWeight: '600' }}>{FREE_PLAN_LINE}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={{ color: voiceState === 'transcribing' ? '#DAA520' : '#999', fontSize: 12 }}>{voiceState === 'recording' ? 'Listening...' : voiceState === 'transcribing' ? 'Transcribing...' : (!supabaseUser && guestQuestionsLine(guestTroyQuota)) || 'Your Stack Analyst'}</Text>
+                  )}
                 </View>
               </View>
             </>
@@ -10061,8 +10670,8 @@ function AppContent() {
         </View>
       </View>
 
-      {/* Guest Mode Banner */}
-      {guestMode && !supabaseUser && (
+      {/* Guest Mode Banner, once there's a stack worth backing up */}
+      {guestMode && !supabaseUser && (silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length) > 0 && (
         <TouchableOpacity
           onPress={() => disableGuestMode()}
           style={{
@@ -10078,7 +10687,7 @@ function AppContent() {
           }}
         >
           <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: '600' }}>
-            Create an account to save your stack
+            {GUEST_BANNER}
           </Text>
           <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny }}>→</Text>
         </TouchableOpacity>
@@ -13008,16 +13617,24 @@ function AppContent() {
                     <Image source={TROY_AVATAR} style={{ width: 64, height: 64, borderRadius: 32 }} />
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', marginTop: 16 }}>Ask Troy anything</Text>
                     <Text style={{ color: '#999', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-                      Your personal stack analyst. I know your stack{'\n'}and can help you make smarter decisions.
+                      {supabaseUser
+                        ? <>Your personal stack analyst. I know your stack{'\n'}and can help you make smarter decisions.</>
+                        : <>Your stack analyst. Ask about prices,{'\n'}the ratio or what's moving the market.</>}
                     </Text>
                     <View style={{ marginTop: 24, gap: 10, alignSelf: 'stretch', paddingHorizontal: 16 }}>
-                      {[
+                      {/* A guest's stack and brief aren't on the server, so a guest gets market questions. */}
+                      {(supabaseUser ? [
                         { label: "Today's Brief", action: 'brief' },
                         { label: "How's my stack?", action: 'send', text: "How's my stack performing?" },
                         { label: 'Gold/Silver Ratio', action: 'send', text: 'Analyze my gold-to-silver ratio' },
                         { label: 'Purchasing Power', action: 'send', text: "What can my stack buy in real terms? Show me purchasing power." },
                         { label: 'Scan a receipt', action: 'scan' },
-                      ].map((chip, i) => (
+                      ] : [
+                        { label: "What's moving gold today?", action: 'send', text: "What's moving gold today?" },
+                        { label: 'Gold/Silver Ratio', action: 'send', text: 'What is the gold-to-silver ratio telling us right now?' },
+                        { label: 'Silver this week', action: 'send', text: 'How has silver done this week?' },
+                        { label: 'Scan a receipt', action: 'scan' },
+                      ]).map((chip, i) => (
                         <TouchableOpacity
                           key={i}
                           style={{
@@ -13088,7 +13705,7 @@ function AppContent() {
                         bullet_list: { marginTop: 2, marginBottom: 2 },
                         ordered_list: { marginTop: 2, marginBottom: 2 },
                         list_item: { marginTop: 1, marginBottom: 1 },
-                      }}>{item.content}</Markdown>
+                      }}>{plainDashes(item.content)}</Markdown>
                     )}
                     {/* Inline rich content card — renders inside the bubble */}
                     {item.role === 'assistant' && item.preview && renderInlineCard(item.preview, openPreview)}
@@ -13113,6 +13730,9 @@ function AppContent() {
                   {/* Troy Voice pause, resume or listen per message, and Report */}
                   {item.role === 'assistant' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {!!replyTimeLabel(item.created_at) && (
+                      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 6, paddingLeft: 4, paddingRight: 4 }}>{replyTimeLabel(item.created_at)}</Text>
+                    )}
                     <TouchableOpacity
                       onPress={async () => {
                         if (playingMessageId === item.id && !isPaused) {
@@ -13239,6 +13859,7 @@ function AppContent() {
                 placeholderTextColor="#666"
                 value={troyInputText}
                 onChangeText={setTroyInputText}
+                maxLength={supabaseUser ? undefined : GUEST_MESSAGE_MAX}
                 multiline={true}
                 textAlignVertical="top"
                 returnKeyType="default"
@@ -13587,7 +14208,7 @@ function AppContent() {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                             Alert.alert(
                               'Clear All Data',
-                              'Are you sure? This will permanently delete all your holdings and settings.',
+                              clearDataPrompt(!!supabaseUser),
                               [
                                 { text: 'Cancel', style: 'cancel' },
                                 {
@@ -14155,7 +14776,7 @@ function AppContent() {
                 <View style={{ backgroundColor: isDarkMode ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)', paddingVertical: 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={{ fontSize: scaledFonts.small }}>⚠️</Text>
                   <Text style={{ color: colors.gold, fontSize: scaledFonts.small, flex: 1 }}>
-                    You're not signed in. This data won't be saved when you close the app.
+                    {GUEST_SAVE_NOTE}
                   </Text>
                 </View>
               )}
@@ -15916,9 +16537,9 @@ function AppContent() {
         onComplete={handleTutorialComplete}
       />
 
-      {/* Free week offer, once after the first holding (see FREE WEEK OFFER above) */}
+      {/* Free week offer, once after the first holding or a Troy answer (see FREE WEEK OFFER above) */}
       {freeWeekOffer.trial && (() => {
-        const copy = freeWeekOfferCopy(freeWeekOffer.trial);
+        const copy = freeWeekOfferCopy(freeWeekOffer.trial, { guest: freeWeekOffer.guest, moment: freeWeekOffer.moment });
         const bodyLine = Math.round(scaledFonts.normal * 1.5);
         return (
           <Modal
@@ -15943,6 +16564,18 @@ function AppContent() {
                       <Text style={{ flex: 1, color: '#e4e4e7', fontSize: scaledFonts.normal, lineHeight: bodyLine }}>{point}</Text>
                     </View>
                   ))}
+                  {copy.account && (
+                    <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.small, lineHeight: Math.round(scaledFonts.small * 1.5), marginTop: 6 }}>{copy.account}</Text>
+                  )}
+                  {copy.accountAction && (
+                    <TouchableOpacity
+                      onPress={() => closeFreeWeekOffer('account')}
+                      style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+                      accessibilityRole="button"
+                    >
+                      <Text style={{ color: '#C9A84C', fontSize: scaledFonts.small, fontWeight: '600' }}>{copy.accountAction}</Text>
+                    </TouchableOpacity>
+                  )}
                 </ScrollView>
                 <TouchableOpacity
                   onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); closeFreeWeekOffer('start'); }}
@@ -15958,6 +16591,15 @@ function AppContent() {
                 >
                   <Text style={{ color: '#a1a1aa', fontSize: scaledFonts.medium, fontWeight: '600' }}>{copy.later}</Text>
                 </TouchableOpacity>
+                {copy.restore && (
+                  <TouchableOpacity
+                    onPress={() => closeFreeWeekOffer('restore')}
+                    style={{ paddingVertical: 10, alignItems: 'center' }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>{copy.restore}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </Modal>
@@ -15966,73 +16608,6 @@ function AppContent() {
 
       {/* Old custom drawer removed — replaced by React Navigation drawer */}
 
-      {forceUpdate && (
-        <Modal
-          visible={true}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => {}}
-        >
-          <View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.95)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 32,
-          }}>
-            <View style={{
-              backgroundColor: '#1a1a1a',
-              borderRadius: 16,
-              padding: 32,
-              width: '100%',
-              maxWidth: 340,
-              alignItems: 'center',
-            }}>
-              <Text style={{
-                color: '#C9A84C',
-                fontSize: 22,
-                fontWeight: '700',
-                marginBottom: 16,
-                textAlign: 'center',
-              }}>
-                Update Required
-              </Text>
-              <Text style={{
-                color: '#ccc',
-                fontSize: 15,
-                lineHeight: 22,
-                textAlign: 'center',
-                marginBottom: 28,
-              }}>
-                {forceUpdate.message}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  if (forceUpdate.storeUrl) {
-                    Linking.openURL(forceUpdate.storeUrl);
-                  }
-                }}
-                style={{
-                  backgroundColor: '#C9A84C',
-                  borderRadius: 8,
-                  paddingVertical: 14,
-                  paddingHorizontal: 40,
-                  width: '100%',
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{
-                  color: '#000',
-                  fontSize: 16,
-                  fontWeight: '700',
-                }}>
-                  Update Now
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-      )}
     </SafeAreaView>
         )}
       </Drawer.Screen>
