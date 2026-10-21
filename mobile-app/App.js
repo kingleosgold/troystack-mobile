@@ -2510,6 +2510,13 @@ function AppContent() {
   const [platinumItems, setPlatinumItems] = useState([]);
   const [palladiumItems, setPalladiumItems] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false); // Prevents saving until initial load completes
+  // The stack as last committed. A sync reads it after its wait for writes in
+  // flight, since the arrays its own render saw can predate a delete made in
+  // the same frame, and a first sync would send that holding up again.
+  const committedStackRef = useRef(null);
+  useLayoutEffect(() => {
+    committedStackRef.current = [silverItems, goldItems, platinumItems, palladiumItems];
+  });
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -4111,7 +4118,11 @@ function AppContent() {
       // stack, and on any later sync, only what was added as a guest goes up.
       const isFirstSync = !hasEverSynced;
       const toSync = (items) => localHoldingsToSync(items, stackOwner, supabaseUser.id, isFirstSync);
-      const toUpload = [silverItems, goldItems, platinumItems, palladiumItems].map(toSync);
+      // Read after the waits, so a delete whose cloud write held the sync is
+      // gone from it. Adds, edits and deletes have waited since the sync began.
+      // A restore doesn't wait, and restoreCountRef covers it below.
+      const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current;
+      const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take.
@@ -4122,7 +4133,7 @@ function AppContent() {
       const claimWrites = stackOwner ? [] : [[HOLDINGS_OWNER_KEY, supabaseUser.id]];
       const claimsStack = isFirstSync && mayUploadLocalStack(stackOwner, supabaseUser.id);
       if (claimsStack) {
-        [['stack_silver', silverItems], ['stack_gold', goldItems], ['stack_platinum', platinumItems], ['stack_palladium', palladiumItems]]
+        [['stack_silver', localSilver], ['stack_gold', localGold], ['stack_platinum', localPlatinum], ['stack_palladium', localPalladium]]
           .forEach(([key, items]) => {
             const cleaned = withoutGuestMark(items);
             if (cleaned !== items) claimWrites.push([key, JSON.stringify(cleaned)]);
