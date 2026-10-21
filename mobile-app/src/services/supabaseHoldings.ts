@@ -395,6 +395,7 @@ export async function fullSync(
   palladiumItems: LocalHolding[];
   syncedToCloud: number;
   refusedCount: number;
+  refusedNames: string[];
   error: Error | null;
 }> {
   try {
@@ -439,6 +440,7 @@ export async function fullSync(
         palladiumItems: newPalladium,
         syncedToCloud: syncedCount,
         refusedCount: rejected.length,
+        refusedNames: rejected.map(({ item }) => item.productName),
         error: null,
       };
     }
@@ -452,6 +454,7 @@ export async function fullSync(
       palladiumItems: remotePalladium,
       syncedToCloud: syncedCount,
       refusedCount: 0,
+      refusedNames: [],
       error: null,
     };
   } catch (err) {
@@ -463,6 +466,7 @@ export async function fullSync(
       palladiumItems: localPalladium,
       syncedToCloud: 0,
       refusedCount: 0,
+      refusedNames: [],
       error: err as Error,
     };
   }

@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/insertRows.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { insertRows, isRowRejection } from './insertRows.js';
+import { insertRows, isRowRejection, refusedHoldingsAlert } from './insertRows.js';
 
 // A table that refuses any row whose bad field is set, the way Postgres
 // refuses a whole batch over one row
@@ -54,7 +54,7 @@ test('one bad row no longer holds back the rest', async () => {
   const result = await insertRows([{ id: 1 }, { id: 2, bad: true }, { id: 3 }], t.insert);
   assert.deepEqual(result, { insertedCount: 2, rejected: [1], error: null });
   assert.deepEqual(t.saved.map((row) => row.id), [1, 3]);
-  assert.deepEqual(t.calls, [3, 1, 1, 1]);
+  assert.deepEqual(t.calls, [3, 2, 1, 1, 1]);
 });
 
 test('a lone bad row comes back rejected, not as a failed sync', async () => {
@@ -80,6 +80,61 @@ test('a connection lost partway through the rows stops there with an error', asy
     return { error: offline };
   };
   const result = await insertRows([{ id: 1 }, { id: 2 }, { id: 3 }], insert);
-  assert.deepEqual(result, { insertedCount: 1, rejected: [], error: offline });
+  assert.deepEqual(result, { insertedCount: 2, rejected: [], error: offline });
   assert.equal(call, 3);
+});
+
+test('one bad row among many is found in a few requests, not one per row', async () => {
+  const t = table();
+  const rows = Array.from({ length: 200 }, (_, i) => ({ id: i, bad: i === 137 }));
+  const result = await insertRows(rows, t.insert);
+  assert.deepEqual(result, { insertedCount: 199, rejected: [137], error: null });
+  assert.equal(t.saved.length, 199);
+  assert.ok(t.calls.length <= 2 * Math.ceil(Math.log2(rows.length)) + 1, `${t.calls.length} requests`);
+});
+
+test('several bad rows come back in order and every good row goes up once', async () => {
+  const t = table();
+  const bad = new Set([0, 5, 6, 19]);
+  const rows = Array.from({ length: 20 }, (_, i) => ({ id: i, bad: bad.has(i) }));
+  const result = await insertRows(rows, t.insert);
+  assert.deepEqual(result.rejected, [0, 5, 6, 19]);
+  assert.equal(result.insertedCount, 16);
+  assert.deepEqual(t.saved.map((row) => row.id).sort((a, b) => a - b), rows.filter((r) => !r.bad).map((r) => r.id));
+});
+
+test('every row bad comes back rejected with nothing inserted', async () => {
+  const t = table();
+  const rows = Array.from({ length: 5 }, (_, i) => ({ id: i, bad: true }));
+  assert.deepEqual(await insertRows(rows, t.insert), { insertedCount: 0, rejected: [0, 1, 2, 3, 4], error: null });
+});
+
+test('a lost connection in the second half stops before anything else is sent', async () => {
+  const offline = new TypeError('Network request failed');
+  const sent = [];
+  const insert = async (batch) => {
+    sent.push(batch.map((row) => row.id));
+    if (batch.length === 4) return { error: { code: '22003' } };
+    if (batch[0].id === 0) return { error: null };
+    return { error: offline };
+  };
+  const result = await insertRows([{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }], insert);
+  assert.deepEqual(result, { insertedCount: 2, rejected: [], error: offline });
+  assert.deepEqual(sent, [[0, 1, 2, 3], [0, 1], [2, 3]]);
+});
+
+test('the refused alert names one holding', () => {
+  const { title, message } = refusedHoldingsAlert(['2024 Silver Eagle']);
+  assert.equal(title, "2024 Silver Eagle didn't save to your account");
+  assert.match(message, /^They're still on this phone/);
+});
+
+test('the refused alert lists three names and counts the rest', () => {
+  const { title, message } = refusedHoldingsAlert(['A', 'B', '', 'D', 'E']);
+  assert.equal(title, "5 holdings didn't save to your account");
+  assert.match(message, /^A, B, A holding and 2 more\. They're still on this phone/);
+});
+
+test('a refused holding with no name still reads as a holding', () => {
+  assert.equal(refusedHoldingsAlert([undefined]).title, "A holding didn't save to your account");
 });

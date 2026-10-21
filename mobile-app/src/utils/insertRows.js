@@ -4,8 +4,9 @@
  * A sync sends its new holdings up in one insert. Postgres refuses the whole
  * batch when one row breaks a rule, say a number too big for its column, and
  * that row would then fail every later sync and keep the cloud's copy off the
- * phone. So when the database refuses the batch over its data, each row goes
- * up on its own and the ones it refuses come back to stay on the phone. Any
+ * phone. So when the database refuses the batch over its data, the batch is
+ * halved until the rows it refuses stand alone, and those come back to stay on
+ * the phone. Any
  * other failure, a dropped connection or a refused session, fails the sync as
  * before, so nothing is dropped. Nothing here imports React Native, so it
  * runs under `node --test`.
@@ -25,24 +26,46 @@ export function isRowRejection(error) {
 
 /**
  * Inserts rows through insert(batch), which resolves to { error }. Tries
- * them all at once, then one at a time if the database refused the batch
- * over its data. Resolves to { insertedCount, rejected, error }, where
- * rejected holds the indexes of the rows the database refused. error is set
- * when anything else went wrong, and rows inserted before it stay inserted.
+ * them all at once, then halves a batch the database refused over its data
+ * until each refused row stands alone, so one bad row among many costs a few
+ * requests rather than one per row. Resolves to { insertedCount, rejected,
+ * error }, where rejected holds the indexes of the rows the database refused,
+ * in order. error is set when anything else went wrong, and rows inserted
+ * before it stay inserted.
  */
 export async function insertRows(rows, insert) {
-  if (!rows.length) return { insertedCount: 0, rejected: [], error: null };
-  const { error: batchError } = await insert(rows);
-  if (!batchError) return { insertedCount: rows.length, rejected: [], error: null };
-  if (!isRowRejection(batchError)) return { insertedCount: 0, rejected: [], error: batchError };
+  const result = { insertedCount: 0, rejected: [], error: null };
+  if (rows.length) await insertRange(rows, 0, rows.length, insert, result);
+  return result;
+}
 
-  let insertedCount = 0;
-  const rejected = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const { error } = await insert([rows[i]]);
-    if (!error) insertedCount += 1;
-    else if (isRowRejection(error)) rejected.push(i);
-    else return { insertedCount, rejected, error };
+async function insertRange(rows, from, to, insert, result) {
+  const { error } = await insert(rows.slice(from, to));
+  if (!error) {
+    result.insertedCount += to - from;
+  } else if (!isRowRejection(error)) {
+    result.error = error;
+  } else if (to - from === 1) {
+    result.rejected.push(from);
+  } else {
+    const mid = from + Math.ceil((to - from) / 2);
+    await insertRange(rows, from, mid, insert, result);
+    if (!result.error) await insertRange(rows, mid, to, insert, result);
   }
-  return { insertedCount, rejected, error: null };
+}
+
+/**
+ * The alert after a sync the database refused holdings in, naming them so
+ * the user knows which ones to check. Names past the third are counted.
+ */
+export function refusedHoldingsAlert(names) {
+  const named = names.map((name) => (typeof name === 'string' && name.trim() ? name.trim() : 'A holding'));
+  const title = named.length === 1
+    ? `${named[0]} didn't save to your account`
+    : `${named.length} holdings didn't save to your account`;
+  const listed = named.length === 1 ? '' : `${named.slice(0, 3).join(', ')}${named.length > 3 ? ` and ${named.length - 3} more` : ''}. `;
+  return {
+    title,
+    message: `${listed}They're still on this phone. Check their numbers and save them again, and the next sync sends them up.`,
+  };
 }

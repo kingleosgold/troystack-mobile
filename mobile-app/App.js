@@ -41,6 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
+import { refusedHoldingsAlert } from './src/utils/insertRows';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
@@ -4095,7 +4096,7 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, error } = await fullSync(
+      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4153,10 +4154,8 @@ function AppContent() {
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it
         if (refusedCount > 0) {
-          Alert.alert(
-            refusedCount === 1 ? "A holding didn't save to your account" : `${refusedCount} holdings didn't save to your account`,
-            "They're still on this phone. Check their numbers and save them again, and the next sync sends them up."
-          );
+          const { title, message } = refusedHoldingsAlert(refusedNames);
+          Alert.alert(title, message);
         }
 
         if (__DEV__) {
