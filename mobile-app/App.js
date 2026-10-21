@@ -6616,11 +6616,12 @@ function AppContent() {
     setTroyLoading(true);
 
     // No answer is coming, so the question comes off the chat, a spoken
-    // question's autoplay is dropped and the question goes back in the box.
+    // question's autoplay is dropped and the question goes back in the box,
+    // unless something new was typed there meanwhile.
     const giveBack = () => {
       setTroyMessages(prev => prev.filter(m => m.id !== userMsg.id));
       autoPlayNextResponseRef.current = false;
-      setTroyInputText(text);
+      setTroyInputText(prev => prev || text);
       setTroyLoading(false);
     };
 
@@ -6631,9 +6632,10 @@ function AppContent() {
     } catch (e) {
       if (troySessionRef.current !== session) return;
       troyAbortRef.current = null;
+      // Stop means no answer is coming either, so the question comes back
+      // without an alert
       if (e.name === 'AbortError') {
-        autoPlayNextResponseRef.current = false;
-        setTroyLoading(false);
+        giveBack();
         return;
       }
       giveBack();
