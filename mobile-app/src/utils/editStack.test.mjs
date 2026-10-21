@@ -49,14 +49,16 @@ test('a delete waits for a running sync, at the tap and at the confirm', () => {
   assert.ok(tap >= 0 && tap < del.indexOf("Alert.alert(\n      'Delete Item'"));
   assert.ok(confirm > tap && confirm < removed);
   assert.match(del.slice(0, 1600), /if \(!userIdRef\.current \|\| !isSyncingRef\.current\) return false;/);
-  assert.match(app, /isSyncingRef\.current = isSyncing;/);
+  // Only the sync sets the ref, so no render can set it back mid sync
+  assert.doesNotMatch(app, /isSyncingRef\.current = isSyncing;/);
+  assert.equal((app.match(/isSyncingRef\.current = (true|false);/g) || []).length, 2);
 });
 
 test('every add waits for a running sync, with nothing cleared', () => {
   const at = app.indexOf('const addWaitsForSync = () => {');
   assert.ok(at >= 0);
   const helper = app.slice(at, app.indexOf('return true;', at));
-  assert.match(helper, /if \(!supabaseUser \|\| !isSyncing\) return false;/);
+  assert.match(helper, /if \(!supabaseUser \|\| !isSyncingRef\.current\) return false;/);
   assert.doesNotMatch(helper, /resetForm\(\)|setShowAddModal\(false\)/);
   // Each add path checks it first, before it touches state or the cloud
   for (const start of ['const confirmImport = () => {', 'const confirmScannedItems = () => {', 'const addScannedItemIndividually = (index) => {']) {
@@ -81,7 +83,7 @@ test('an edit counts from when the detail view it opened from was opened', () =>
 });
 
 test('a save during a sync closes the sheet rather than ask for a save that cannot land', () => {
-  const at = app.indexOf('if (editingItem && isSyncing) {');
+  const at = app.indexOf('if (editingItem && isSyncingRef.current) {');
   assert.ok(at >= 0);
   assert.match(app.slice(at, at + 200), /resetForm\(\);\s*setShowAddModal\(false\);/);
 });
