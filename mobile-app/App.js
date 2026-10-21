@@ -2752,10 +2752,11 @@ function AppContent() {
   // The same for the detail view, which edits open from. Its holding is a
   // copy taken when it opened, so the count and account are taken then too.
   const detailOpenedRef = useRef(null);
-  // The sync flag and the account as of the latest render, for a delete's
-  // confirm, which runs after the render that showed it
+  // Whether a sync is running right now, for the add, edit and delete gates.
+  // Only the sync sets it, at its start and in its finally, since a render
+  // still showing isSyncing false could otherwise set it back mid sync. The
+  // account as of the latest render, for a delete's confirm.
   const isSyncingRef = useRef(false);
-  isSyncingRef.current = isSyncing;
   const userIdRef = useRef(null);
   userIdRef.current = supabaseUser?.id || null;
   // Every whole-stack swap goes through here. An open detail view shows a
