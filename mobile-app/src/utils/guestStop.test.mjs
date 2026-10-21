@@ -18,3 +18,10 @@ test('a stopped guest question comes off the chat and goes back in the box', () 
   // The stale reply guard still runs first, so a new chat isn't touched.
   assert.ok(body.indexOf('troySessionRef.current !== session') < body.indexOf("e.name === 'AbortError'"));
 });
+
+test('giving a question back keeps a draft the guest typed while waiting', () => {
+  const start = app.indexOf('const giveBack = () => {');
+  assert.ok(start > 0);
+  const body = app.slice(start, app.indexOf('};', start));
+  assert.match(body, /setTroyInputText\(cur => \(cur && cur\.trim\(\) \? cur : text\)\)/);
+});
