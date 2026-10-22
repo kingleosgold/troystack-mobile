@@ -163,3 +163,29 @@ test('the Supabase client is built with the timed fetch', () => {
   assert.match(src, /import \{ fetchWithTimeout \} from '\.\.\/utils\/fetchTimeout';/);
   assert.match(src, /global:\s*\{\s*fetch:\s*fetchWithTimeout\(\),?\s*\}/);
 });
+
+// A read the limit cuts short must not read as a holding missing from the
+// cloud, or an edit adds it twice and a delete skips the row.
+test('findHoldingByLocalId throws on a failed read instead of returning not found', () => {
+  const src = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  const start = src.indexOf('export async function findHoldingByLocalId(');
+  const fn = src.slice(start, src.indexOf('\n}\n', start));
+  const handler = fn.slice(fn.lastIndexOf('} catch (err) {'));
+  assert.match(handler, /throw err;/);
+  assert.doesNotMatch(handler, /return null;/);
+});
+
+test('both callers of findHoldingByLocalId sit inside a try that catches', () => {
+  const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  let at = app.indexOf('await findHoldingByLocalId(');
+  let seen = 0;
+  while (at !== -1) {
+    seen += 1;
+    const before = app.slice(Math.max(0, at - 2500), at);
+    const after = app.slice(at, at + 2500);
+    assert.ok(before.lastIndexOf('try {') > before.lastIndexOf('} catch'), 'lookup sits in a try');
+    assert.match(after, /\} catch \(err\) \{/);
+    at = app.indexOf('await findHoldingByLocalId(', at + 1);
+  }
+  assert.equal(seen, 2);
+});

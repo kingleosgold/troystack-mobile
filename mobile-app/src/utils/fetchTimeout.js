@@ -35,8 +35,10 @@ export const fetchWithTimeout = (fetchImpl = fetch, timeoutMs = REST_TIMEOUT_MS)
     }
     try {
       const res = await fetchImpl(input, { ...init, signal: controller.signal });
-      // The body is read inside the limit too, since a page of rows can stall
-      // after the headers arrive. The client reads it as text either way.
+      // The body is read inside the limit too. React Native's fetch only
+      // answers once the whole body is in, so there this read is instant,
+      // but a fetch that streams could stall after the headers. The client
+      // reads the body as text either way.
       const body = await res.text();
       // A 204, 205 or 304 answer can't carry a body, even an empty one.
       const empty = [204, 205, 304].includes(res.status);
