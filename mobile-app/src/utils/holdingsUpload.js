@@ -80,6 +80,22 @@ export function withoutGuestMark(items) {
 }
 
 /**
+ * The holdings with the guest mark taken off those in claimed, a set of the
+ * holding objects a claim covered, and left on any added since. A guest who
+ * adds a holding after a sign out, while the old account's claim is still
+ * landing, keeps the mark, so the holding goes up to the next account. The
+ * same array comes back when nothing changes.
+ */
+export function withoutGuestMarkOn(items, claimed) {
+  if (!(items || []).some((item) => item.addedAsGuest && claimed.has(item))) return items;
+  return items.map((item) => {
+    if (!item.addedAsGuest || !claimed.has(item)) return item;
+    const { addedAsGuest, ...rest } = item;
+    return rest;
+  });
+}
+
+/**
  * The local holdings a sync may add to this account. On its first sync on
  * this phone a stack with no owner, or this account's own, goes up whole. Of
  * a stack that belongs to another account, and on any later sync, only the
