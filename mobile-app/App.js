@@ -2449,7 +2449,8 @@ function AppContent() {
   const holdingWritesRef = useRef(null);
   if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
   const holdingWrites = holdingWritesRef.current;
-  // Every caller writes for the signed in account, which a sync waits on
+  // Every caller writes for the account signed in at the handler's render,
+  // which a sync waits on and each cloud write is pinned to
   const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
 
   // Theme
@@ -9757,7 +9758,7 @@ function AppContent() {
         try {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
-            await updateHolding(base.supabase_id, item, targetMetal);
+            await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
             if (__DEV__) console.log('Updated holding in Supabase');
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
@@ -9770,7 +9771,7 @@ function AppContent() {
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
-              await updateHolding(existingHolding.id, item, targetMetal);
+              await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
               if (__DEV__) console.log('Updated existing holding in Supabase');
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
@@ -9872,13 +9873,13 @@ function AppContent() {
               await trackHoldingWrite(async () => {
                 try {
                   if (itemToDelete.supabase_id) {
-                    await deleteHoldingFromSupabase(itemToDelete.supabase_id);
+                    await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (__DEV__) console.log('Deleted holding from Supabase');
                   } else {
                     // Find in Supabase by local_id
                     const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
-                      await deleteHoldingFromSupabase(existingHolding.id);
+                      await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
                       if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
                     }
                   }

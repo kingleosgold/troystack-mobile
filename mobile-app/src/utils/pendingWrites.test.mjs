@@ -140,6 +140,19 @@ test('every holdings write to the cloud goes through the tracker', () => {
   }
 });
 
+test('every cloud update and delete is pinned to the account the tracker waits on', () => {
+  const calls = [...app.matchAll(/await (updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
+  assert.equal(calls.length, 4);
+  for (const call of calls) assert.equal(call[2], 'supabaseUser.id', `${call[1]} at ${call.index}`);
+  const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  for (const name of ['updateHolding', 'deleteHolding']) {
+    const at = service.indexOf(`export async function ${name}(`);
+    const body = service.slice(at, service.indexOf('\n}\n', at));
+    assert.match(body, /^export async function \w+\(\n\s*userId: string,\n\s*supabaseId: string/);
+    assert.match(body, /\.eq\('id', supabaseId\)\n\s*\.eq\('user_id', userId\)/);
+  }
+});
+
 test('the sync closes the gates before its first wait and waits for writes before it reads', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
