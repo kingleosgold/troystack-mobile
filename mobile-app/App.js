@@ -2449,7 +2449,8 @@ function AppContent() {
   const holdingWritesRef = useRef(null);
   if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
   const holdingWrites = holdingWritesRef.current;
-  const trackHoldingWrite = (run) => holdingWrites.track(run);
+  // Every caller writes for the signed in account, which a sync waits on
+  const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -4099,8 +4100,9 @@ function AppContent() {
       // A write that started before the gates closed may not have landed, and
       // the cloud's copy fetched without it would drop it at the swap. A write
       // that hangs ends this sync instead of holding the gates shut, and the
-      // spaced out retry waits for it again.
-      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS);
+      // spaced out retry waits for it again. Only this account's writes, since
+      // the cloud copy it fetches holds no other account's rows.
+      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id);
       if (accountChanged()) return false;
       if (!writesLanded) {
         if (restoreCountRef.current === restoresAtStart) setSyncError('A change is still saving to the cloud');
