@@ -4,6 +4,10 @@
 // add or brings a delete back. The sync waits for these before it reads.
 // Nothing here imports React Native, so it runs under `node --test`.
 
+// How long a sync waits for writes in flight before it gives up and leaves
+// the spaced out retry to try again
+export const HOLDING_WRITES_WAIT_MS = 30000;
+
 export const pendingWrites = () => {
   const writes = new Set();
   return {
@@ -17,9 +21,16 @@ export const pendingWrites = () => {
       return write;
     },
     // Settles once every write started before the call has, whatever each
-    // one's result. A write started after the call isn't waited for.
-    settled() {
-      return Promise.all([...writes]).then(() => {});
+    // one's result. A write started after the call isn't waited for. With a
+    // limit it answers false once that many ms pass first, since the Supabase
+    // client has no request timeout and a stalled write would hold the
+    // waiter, and the gates it keeps shut, for as long as it hangs.
+    settled(limitMs) {
+      const all = Promise.all([...writes]).then(() => true);
+      if (!(limitMs > 0)) return all;
+      let timer;
+      const late = new Promise((resolve) => { timer = setTimeout(() => resolve(false), limitMs); });
+      return Promise.race([all, late]).finally(() => clearTimeout(timer));
     },
     get size() {
       return writes.size;

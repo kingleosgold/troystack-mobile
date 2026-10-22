@@ -53,7 +53,7 @@ import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMA
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
-import { pendingWrites } from './src/utils/pendingWrites';
+import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -4097,9 +4097,15 @@ function AppContent() {
 
     try {
       // A write that started before the gates closed may not have landed, and
-      // the cloud's copy fetched without it would drop it at the swap
-      await holdingWrites.settled();
+      // the cloud's copy fetched without it would drop it at the swap. A write
+      // that hangs ends this sync instead of holding the gates shut, and the
+      // spaced out retry waits for it again.
+      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS);
       if (accountChanged()) return false;
+      if (!writesLanded) {
+        if (restoreCountRef.current === restoresAtStart) setSyncError('A change is still saving to the cloud');
+        return false;
+      }
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
       const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
