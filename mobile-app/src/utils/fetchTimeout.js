@@ -1,23 +1,29 @@
-// A time limit on the app's database requests. The Supabase client has none,
-// and React Native's fetch can wait on a stalled connection for a long time,
-// so a sync stuck on one request held every add and delete waiting behind it
-// with nothing on screen. With the limit the request aborts, the client
-// returns it as an error, and the sync's retry takes over.
+// A time limit on the app's database reads. The Supabase client has none, so
+// a sync stuck reading the cloud copy on a stalled connection held every add
+// and delete waiting behind it with nothing on screen. With the limit the
+// read aborts, the client returns it as an error, the sync fails and its
+// retry takes over.
 // Nothing here imports React Native, so it runs under `node --test`.
 
 export const REST_TIMEOUT_MS = 30000;
 
-// Only the database's REST calls get the limit. Auth calls are left alone: a
-// token refresh aborted after the server rotated the token would leave the
-// phone holding a used refresh token, and reusing it can end the session.
-const isRestRequest = (input) => {
+// Only the database's REST reads get the limit.
+// Writes are left alone. An aborted insert, update or delete may still land
+// on the server, and the app has no queue to retry a single add or delete, so
+// cutting one short could drop it from the phone or bring a deleted holding
+// back. A big first sync insert can also take longer than any fixed limit.
+// Auth calls are left alone too. A token refresh aborted after the server
+// rotated the token would leave the phone holding a used refresh token, and
+// reusing it can end the session.
+const isRestRead = (input, init) => {
   const url = typeof input === 'string' ? input : input?.url ?? String(input);
-  return url.includes('/rest/v1/');
+  const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase();
+  return url.includes('/rest/v1/') && (method === 'GET' || method === 'HEAD');
 };
 
 export const fetchWithTimeout = (fetchImpl = fetch, timeoutMs = REST_TIMEOUT_MS) =>
-  (input, init = {}) => {
-    if (!isRestRequest(input)) return fetchImpl(input, init);
+  async (input, init = {}) => {
+    if (!isRestRead(input, init)) return fetchImpl(input, init);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     // A caller's own abort still aborts the request.
@@ -27,12 +33,18 @@ export const fetchWithTimeout = (fetchImpl = fetch, timeoutMs = REST_TIMEOUT_MS)
       if (outer.aborted) controller.abort();
       else outer.addEventListener('abort', forward);
     }
-    const done = () => {
+    try {
+      const res = await fetchImpl(input, { ...init, signal: controller.signal });
+      // The body is read inside the limit too, since a page of rows can stall
+      // after the headers arrive. The client reads it as text either way.
+      const body = await res.text();
+      // A 204, 205 or 304 answer can't carry a body, even an empty one.
+      const empty = [204, 205, 304].includes(res.status);
+      return new Response(empty ? null : body, {
+        status: res.status, statusText: res.statusText, headers: res.headers,
+      });
+    } finally {
       clearTimeout(timer);
       outer?.removeEventListener('abort', forward);
-    };
-    return fetchImpl(input, { ...init, signal: controller.signal }).then(
-      (res) => { done(); return res; },
-      (err) => { done(); throw err; },
-    );
+    }
   };
