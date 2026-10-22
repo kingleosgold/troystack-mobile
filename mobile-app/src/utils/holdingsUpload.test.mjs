@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withRetryMarks, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -196,4 +196,22 @@ test("an edit adds a restored holding only to the account that restored it", () 
   assert.equal(mayAddEditedHolding(forA, 'b', 'b'), false);
   assert.equal(mayAddEditedHolding(forA, 'b', 'a'), true);
   assert.equal(mayAddEditedHolding(forA, null, 'a'), true);
+});
+
+test('a holding whose cloud add failed takes the retry mark for its account', () => {
+  const items = [{ id: 1 }, { id: 2 }, { id: 3, supabase_id: 'r3' }];
+  const marked = withRetryMarks(items, new Map([[2, 'a'], [3, 'a']]), 'a');
+  assert.deepEqual(marked, [{ id: 1 }, { id: 2, restoredFor: 'a' }, { id: 3, supabase_id: 'r3' }]);
+  // the next sync, no longer a first, sends it up and nothing else
+  assert.deepEqual(localHoldingsToSync(marked, 'a', 'a', false), [{ id: 2, restoredFor: 'a' }]);
+  // and never to another account
+  assert.deepEqual(localHoldingsToSync(marked, 'a', 'b', false), []);
+});
+
+test('a retry mark for another account, or none, changes nothing', () => {
+  const items = [{ id: 1 }, { id: 2, restoredFor: 'b' }];
+  assert.equal(withRetryMarks(items, new Map([[1, 'b'], [2, 'a']]), 'a'), items);
+  assert.equal(withRetryMarks(items, new Map(), 'a'), items);
+  assert.equal(withRetryMarks(items, new Map([[1, 'a']]), null), items);
+  assert.equal(withRetryMarks(undefined, new Map([[1, 'a']]), 'a'), undefined);
 });

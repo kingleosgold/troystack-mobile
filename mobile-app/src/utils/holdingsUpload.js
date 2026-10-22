@@ -70,6 +70,25 @@ export function asRestoredBy(items, userId) {
 }
 
 /**
+ * The holdings with a retry mark on each one whose cloud add failed for this
+ * account, by local id. That's the restoredFor mark a refused holding takes,
+ * so a later sync, which sends up only marked holdings, tries it again
+ * instead of replacing the stack with the cloud's copy, which lacks it. A
+ * holding with a row, or one marked for another account, isn't marked. The
+ * same array comes back when nothing changes.
+ */
+export function withRetryMarks(items, marks, userId) {
+  if (!userId || !marks?.size || !Array.isArray(items)) return items;
+  let changed = false;
+  const marked = items.map((item) => {
+    if (item.supabase_id || item.restoredFor || marks.get(item.id) !== userId) return item;
+    changed = true;
+    return { ...item, restoredFor: userId };
+  });
+  return changed ? marked : items;
+}
+
+/**
  * The holdings with the guest mark taken off, once an account has claimed
  * the stack they're in, so a mark only ever names a holding no account owns.
  * The same array comes back when nothing carries the mark.

@@ -84,10 +84,13 @@ test('the sync closes the gates before its first wait and waits for writes befor
 test('the sync reads the stack as committed after its waits, not as its render saw it', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
-  const read = body.indexOf('= committedStackRef.current;');
+  const read = body.indexOf('= committedStackRef.current\n');
   assert.ok(read > body.indexOf('holdingWrites.settled()'), 'after the wait for writes in flight');
   assert.ok(read > body.indexOf('AsyncStorage.getAllKeys()'), 'after the storage reads');
   assert.ok(read < body.indexOf('const toUpload ='), 'before it picks what goes up');
+  // with the retry marks of adds that failed put back, since a mark set by a
+  // write it waited for may not be committed yet
+  assert.ok(body.indexOf('withRetryMarks(items, retryMarksRef.current, supabaseUser.id)') > read, 'with the retry marks');
   // Neither the upload nor the claim's storage write reads the render's arrays
   assert.doesNotMatch(body, /\[silverItems, goldItems, platinumItems, palladiumItems\]/);
   assert.doesNotMatch(body, /\['stack_silver', silverItems\]/);

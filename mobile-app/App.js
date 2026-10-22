@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withRetryMarks, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -2450,6 +2450,10 @@ function AppContent() {
   if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
   const holdingWrites = holdingWritesRef.current;
   const trackHoldingWrite = (run) => holdingWrites.track(run);
+  // Local ids of holdings whose cloud add failed, each with its account. A
+  // sync that waited for the write can read the stack before React commits
+  // the holding's retry mark, so it puts these marks back on what it reads.
+  const retryMarksRef = useRef(new Map());
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -3042,9 +3046,22 @@ function AppContent() {
   // fullReset=false: preserves theme, large text and tutorial flags (for sign-out)
   // dataLoaded stays true either way: the empty stack matches what's stored,
   // and saves and sign in's sync wait on it until the next launch otherwise
+  // A signed-in add whose cloud write failed is on this phone only, and a
+  // later sync sends up only marked holdings and then swaps in the cloud's
+  // copy, so the holding takes a retry mark for its account. Nothing is
+  // marked once the account has changed since the write began.
+  const markForRetry = (metal, localId, userId, accountGen) => {
+    if (accountGenRef.current !== accountGen) return;
+    retryMarksRef.current.set(localId, userId);
+    const mark = new Map([[localId, userId]]);
+    const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
+  };
+
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
     bumpStackGen();
+    retryMarksRef.current.clear();
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
@@ -4121,7 +4138,8 @@ function AppContent() {
       // Read after the waits, so a delete whose cloud write held the sync is
       // gone from it. Adds, edits and deletes have waited since the sync began.
       // A restore doesn't wait, and restoreCountRef covers it below.
-      const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current;
+      const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current
+        .map((items) => withRetryMarks(items, retryMarksRef.current, supabaseUser.id));
       const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
@@ -4213,6 +4231,9 @@ function AppContent() {
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
         setPalladiumItems(remotePalladium);
+        // What the retry marks named went up with this sync, or came back
+        // refused and marked again
+        retryMarksRef.current.clear();
 
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it
@@ -9352,15 +9373,14 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
+        const userId = supabaseUser.id;
+        const accountGen = accountGenRef.current;
         trackHoldingWrite(async () => {
-          try {
-            for (const item of newItems) {
-              await addHolding(supabaseUser.id, item, item.metal);
-            }
-            if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
-          } catch (err) {
-            if (__DEV__) console.error('Failed to sync imported items to Supabase:', err);
+          for (const item of newItems) {
+            const { error } = await addHolding(userId, item, item.metal);
+            if (error) markForRetry(item.metal, item.id, userId, accountGen);
           }
+          if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
         });
       }
 
@@ -9421,15 +9441,14 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
+        const userId = supabaseUser.id;
+        const accountGen = accountGenRef.current;
         trackHoldingWrite(async () => {
-          try {
-            for (const item of newItems) {
-              await addHolding(supabaseUser.id, item, item.metal);
-            }
-            if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
-          } catch (err) {
-            if (__DEV__) console.error('Failed to sync scanned items to Supabase:', err);
+          for (const item of newItems) {
+            const { error } = await addHolding(userId, item, item.metal);
+            if (error) markForRetry(item.metal, item.id, userId, accountGen);
           }
+          if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
         });
       }
 
@@ -9479,13 +9498,12 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
+      const userId = supabaseUser.id;
+      const accountGen = accountGenRef.current;
       trackHoldingWrite(async () => {
-        try {
-          await addHolding(supabaseUser.id, newItem, metalKey);
-          if (__DEV__) console.log('Synced scanned item to Supabase');
-        } catch (err) {
-          if (__DEV__) console.error('Failed to sync scanned item to Supabase:', err);
-        }
+        const { error } = await addHolding(userId, newItem, metalKey);
+        if (error) markForRetry(metalKey, newItem.id, userId, accountGen);
+        else if (__DEV__) console.log('Synced scanned item to Supabase');
       });
     }
 
@@ -9745,6 +9763,11 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
+      const userId = supabaseUser.id;
+      const accountGen = accountGenRef.current;
+      // Whether the holding may go up to this account as a new row, so a
+      // failed add or lookup leaves it marked for the next sync to send
+      let addsRow = !editingItem;
       trackHoldingWrite(async () => {
         try {
           if (editingItem && base.supabase_id) {
@@ -9759,27 +9782,30 @@ function AppContent() {
               AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
               AsyncStorage.getAllKeys(),
             ]).catch(() => null);
+            // Not in Supabase yet, it's added if it's this account's to take,
+            // never a holding of another account's stack left on the phone
+            addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
+              addsRow = false;
               await updateHolding(existingHolding.id, item, targetMetal);
               if (__DEV__) console.log('Updated existing holding in Supabase');
-            } else {
-              // Not in Supabase yet. Add it if it's this account's to take, never
-              // a holding of another account's stack left on the phone
-              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
-                const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
-              }
+            } else if (addsRow) {
+              const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
+              if (error) markForRetry(targetMetal, item.id, userId, accountGen);
+              else if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
             }
           } else {
             // New item - add to Supabase
-            const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-            if (data && __DEV__) console.log('Added new holding to Supabase');
+            const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
+            if (error) markForRetry(targetMetal, item.id, userId, accountGen);
+            else if (data && __DEV__) console.log('Added new holding to Supabase');
           }
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
+          if (addsRow) markForRetry(targetMetal, item.id, userId, accountGen);
         }
       });
     }

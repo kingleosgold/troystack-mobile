@@ -126,3 +126,18 @@ test('save drops an edit made across a swap or an account change', () => {
   // It runs before the edit touches state or the cloud
   assert.ok(at < app.indexOf('const targetMetal = metalTab ===', at));
 });
+
+test('every signed-in add whose cloud write fails leaves its holding marked for the next sync', () => {
+  // addHolding returns its error rather than throwing, so each call reads it
+  const adds = [...app.matchAll(/await addHolding\(/g)].map((m) => m.index);
+  assert.equal(adds.length, 5);
+  for (const at of adds) {
+    const line = app.slice(app.lastIndexOf('\n', at), app.indexOf('\n', at));
+    assert.match(line, /const \{ (data, )?error \} = await addHolding\(/);
+    assert.match(app.slice(at, at + 200), /if \(error\) markForRetry\(/);
+  }
+  // A mark lands only for the account the write began under
+  assert.match(app, /const markForRetry = \(metal, localId, userId, accountGen\) => \{\n    if \(accountGenRef\.current !== accountGen\) return;/);
+  // and a sync that clears the marks has just swapped in the cloud's copy
+  assert.match(app, /setPalladiumItems\(remotePalladium\);\n(\s*\/\/.*\n)*\s*retryMarksRef\.current\.clear\(\);/);
+});
