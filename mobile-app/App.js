@@ -3048,10 +3048,12 @@ function AppContent() {
   // and saves and sign in's sync wait on it until the next launch otherwise
   // A signed-in add whose cloud write failed is on this phone only, and a
   // later sync sends up only marked holdings and then swaps in the cloud's
-  // copy, so the holding takes a retry mark for its account. Nothing is
-  // marked once the account has changed since the write began.
-  const markForRetry = (metal, localId, userId, accountGen) => {
-    if (accountGenRef.current !== accountGen) return;
+  // copy, so the holding takes a retry mark for its account. The mark names
+  // that account, so it never sends the holding to another one, and it still
+  // lands after the account changed, as when the add failed because the
+  // session ended and the same account signs back in. After a sign out's
+  // reset there's no holding left to mark.
+  const markForRetry = (metal, localId, userId) => {
     retryMarksRef.current.set(localId, userId);
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
@@ -9374,11 +9376,10 @@ function AppContent() {
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         const userId = supabaseUser.id;
-        const accountGen = accountGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
             const { error } = await addHolding(userId, item, item.metal);
-            if (error) markForRetry(item.metal, item.id, userId, accountGen);
+            if (error) markForRetry(item.metal, item.id, userId);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
         });
@@ -9442,11 +9443,10 @@ function AppContent() {
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         const userId = supabaseUser.id;
-        const accountGen = accountGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
             const { error } = await addHolding(userId, item, item.metal);
-            if (error) markForRetry(item.metal, item.id, userId, accountGen);
+            if (error) markForRetry(item.metal, item.id, userId);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
         });
@@ -9499,10 +9499,9 @@ function AppContent() {
     // Sync to Supabase if signed in
     if (supabaseUser) {
       const userId = supabaseUser.id;
-      const accountGen = accountGenRef.current;
       trackHoldingWrite(async () => {
         const { error } = await addHolding(userId, newItem, metalKey);
-        if (error) markForRetry(metalKey, newItem.id, userId, accountGen);
+        if (error) markForRetry(metalKey, newItem.id, userId);
         else if (__DEV__) console.log('Synced scanned item to Supabase');
       });
     }
@@ -9764,7 +9763,6 @@ function AppContent() {
     // Sync to Supabase if signed in
     if (supabaseUser) {
       const userId = supabaseUser.id;
-      const accountGen = accountGenRef.current;
       // Whether the holding may go up to this account as a new row, so a
       // failed add or lookup leaves it marked for the next sync to send
       let addsRow = !editingItem;
@@ -9793,19 +9791,19 @@ function AppContent() {
               if (__DEV__) console.log('Updated existing holding in Supabase');
             } else if (addsRow) {
               const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
-              if (error) markForRetry(targetMetal, item.id, userId, accountGen);
+              if (error) markForRetry(targetMetal, item.id, userId);
               else if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
             }
           } else {
             // New item - add to Supabase
             const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
-            if (error) markForRetry(targetMetal, item.id, userId, accountGen);
+            if (error) markForRetry(targetMetal, item.id, userId);
             else if (data && __DEV__) console.log('Added new holding to Supabase');
           }
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
-          if (addsRow) markForRetry(targetMetal, item.id, userId, accountGen);
+          if (addsRow) markForRetry(targetMetal, item.id, userId);
         }
       });
     }

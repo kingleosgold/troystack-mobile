@@ -136,8 +136,14 @@ test('every signed-in add whose cloud write fails leaves its holding marked for 
     assert.match(line, /const \{ (data, )?error \} = await addHolding\(/);
     assert.match(app.slice(at, at + 200), /if \(error\) markForRetry\(/);
   }
-  // A mark lands only for the account the write began under
-  assert.match(app, /const markForRetry = \(metal, localId, userId, accountGen\) => \{\n    if \(accountGenRef\.current !== accountGen\) return;/);
+  // A mark names the account the write began under, and lands even after a
+  // session that ended mid-write, since that account signs back in to it
+  assert.match(app, /const markForRetry = \(metal, localId, userId\) => \{\s*retryMarksRef\.current\.set\(localId, userId\);/);
+  // A failed lookup or add in an edit marks the holding only when it's this
+  // account's to take
+  assert.match(app, /if \(addsRow\) markForRetry\(targetMetal, item\.id, userId\);/);
+  // and a reset drops the marks with the stack
+  assert.ok(before('retryMarksRef.current.clear();', 'const resetAllState = (fullReset = true) => {', 120));
   // and a sync that clears the marks has just swapped in the cloud's copy
   assert.match(app, /setPalladiumItems\(remotePalladium\);\n(\s*\/\/.*\n)*\s*retryMarksRef\.current\.clear\(\);/);
 });
