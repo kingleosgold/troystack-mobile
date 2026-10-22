@@ -223,6 +223,9 @@ export async function updateHolding(
       .update(updateData)
       .eq('id', supabaseId)
       .eq('user_id', userId)
+      // A row another device deleted stays as it was deleted, and the edit
+      // reads back as no row rather than as saved
+      .is('deleted_at', null)
       .select()
       .single();
 

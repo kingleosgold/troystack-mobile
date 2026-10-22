@@ -9758,8 +9758,8 @@ function AppContent() {
         try {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
-            await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
-            if (__DEV__) console.log('Updated holding in Supabase');
+            const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
+            if (__DEV__) console.log(error ? 'Holding not updated in Supabase' : 'Updated holding in Supabase');
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
@@ -9771,8 +9771,8 @@ function AppContent() {
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
-              await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
-              if (__DEV__) console.log('Updated existing holding in Supabase');
+              const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
+              if (__DEV__) console.log(error ? 'Existing holding not updated in Supabase' : 'Updated existing holding in Supabase');
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone

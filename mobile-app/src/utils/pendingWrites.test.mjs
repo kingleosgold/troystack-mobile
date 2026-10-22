@@ -153,6 +153,16 @@ test('every cloud update and delete is pinned to the account the tracker waits o
   }
 });
 
+test('a cloud update leaves a deleted row alone and the edit reads the miss', () => {
+  const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  const at = service.indexOf('export async function updateHolding(');
+  const body = service.slice(at, service.indexOf('\n}\n', at));
+  assert.match(body, /\.eq\('user_id', userId\)\n(\s*\/\/.*\n)*\s*\.is\('deleted_at', null\)\n\s*\.select\(\)\n\s*\.single\(\);/);
+  const calls = [...app.matchAll(/(.*)await updateHolding\(/g)];
+  assert.equal(calls.length, 2);
+  for (const call of calls) assert.match(call[1], /const \{ error \} = $/, `updateHolding at ${call.index}`);
+});
+
 test('the sync closes the gates before its first wait and waits for writes before it reads', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
