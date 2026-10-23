@@ -128,16 +128,37 @@ export function pendingEdits(lists, userId) {
 
 /**
  * The cloud's copy with each edit the sync couldn't send put back over its
- * row, mark and all, so the next sync tries it again. An edit whose row is
- * gone from the cloud's copy, as when another device deleted it, is dropped.
- * The same arrays come back when there's nothing to put back.
+ * row, mark and all, so the next sync tries it again. The edit goes in its
+ * own metal's list, since an edit that moved a holding to another metal finds
+ * its row still under the old one, and the next sync reads the metal from
+ * the list. An edit whose row is gone from the cloud's copy, as when another
+ * device deleted it, is dropped. The same arrays come back when there's
+ * nothing to put back, and so does each list the edits don't touch.
  */
 export function withPendingEdits(lists, unsent) {
   if (!unsent?.length) return lists;
-  const byRow = new Map(unsent.map(({ item }) => [item.supabase_id, item]));
-  return lists.map((items) => (items.some((row) => byRow.has(row.supabase_id))
-    ? items.map((row) => byRow.get(row.supabase_id) || row)
-    : items));
+  const inCloud = new Set(lists.flatMap((items) => items.map((row) => row.supabase_id)));
+  const back = unsent.filter(({ item }) => inCloud.has(item.supabase_id));
+  if (!back.length) return lists;
+  const byRow = new Map(back.map(({ item }) => [item.supabase_id, item]));
+  return lists.map((items, index) => {
+    const metal = HOLDING_METALS[index];
+    const here = back.filter((edit) => edit.metal === metal);
+    if (!here.length && !items.some((row) => byRow.has(row.supabase_id))) return items;
+    // Each edit takes its row's place when it stays in this metal, and joins
+    // the end when it moved here from another
+    const placed = new Set();
+    const kept = items.flatMap((row) => {
+      const edit = byRow.get(row.supabase_id);
+      if (!edit) return [row];
+      if (here.some((e) => e.item === edit)) {
+        placed.add(edit);
+        return [edit];
+      }
+      return [];
+    });
+    return [...kept, ...here.map((e) => e.item).filter((item) => !placed.has(item))];
+  });
 }
 
 /**

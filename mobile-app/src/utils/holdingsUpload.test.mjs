@@ -280,6 +280,17 @@ test("an edit the sync couldn't send goes back over its row in the cloud's copy"
   assert.equal(withPendingEdits(cloud, []), cloud);
 });
 
+test("an edit that moved a holding to another metal goes back under its new metal, not its row's old one", () => {
+  const edited = { id: 2, productName: 'moved', supabase_id: 'r2', editPendingFor: 'a' };
+  const cloud = [[{ id: 1, supabase_id: 'r1' }], [{ id: 2, productName: 'old', supabase_id: 'r2' }, { id: 3, supabase_id: 'r3' }], [], []];
+  const merged = withPendingEdits(cloud, [{ item: edited, metal: 'silver' }]);
+  assert.deepEqual(merged, [[{ id: 1, supabase_id: 'r1' }, edited], [{ id: 3, supabase_id: 'r3' }], [], []]);
+  // so the next sync sends it with its new metal
+  assert.deepEqual(pendingEdits(merged, 'a'), [{ item: edited, metal: 'silver' }]);
+  // lists it doesn't touch come back as they were
+  assert.equal(merged[2], cloud[2]);
+});
+
 test("an edit mark takes the guest mark off, so a put back copy can't go up to another account", () => {
   const items = [{ id: 1, addedAsGuest: true }, { id: 2, supabase_id: 'r2', editPendingFor: 'a', addedAsGuest: true }];
   const marks = new Map([[1, { rowId: 'r1', userId: 'a' }], [2, { rowId: 'r2', userId: 'a' }]]);
