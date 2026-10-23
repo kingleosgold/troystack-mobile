@@ -4,19 +4,20 @@
  * A pull to refresh on My Stack syncs the stack with the account. When that
  * sync fails, as on a bad connection, the spinner just stopped and the user
  * couldn't tell their stack wasn't checked against the account. Now the pull
- * says so. Only a pull the user made shows it, never the auto sync, and only
- * while the same account is signed in. Nothing here imports React Native, so
+ * says so. It judges only the sync the pull waited on, never an auto sync that
+ * started or failed around it, and only while the same account is signed in. Nothing here imports React Native, so
  * it runs under `node --test`.
  */
 
-// Whether a pull's sync failed for the account still signed in
-export const pullFailedDue = ({ failed, userIdAtPull, userIdNow }) => (
-  !!failed && !!userIdAtPull && userIdAtPull === userIdNow
+// Whether a pull's sync failed for the account still signed in, with no
+// sign out or account change since the pull
+export const pullFailedDue = ({ signedIn, failed, sameAccount }) => (
+  !!signedIn && !!failed && !!sameAccount
 );
 
 export function pullFailedAlert() {
   return {
-    title: "Couldn't reach your account",
-    message: "Your stack on this phone is unchanged. Pull down again once you're back online to sync it.",
+    title: "Couldn't sync your stack",
+    message: "Your stack on this phone is unchanged and wasn't checked against your account. Pull down to try again.",
   };
 }
