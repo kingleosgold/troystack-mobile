@@ -70,6 +70,98 @@ export function asRestoredBy(items, userId) {
 }
 
 /**
+ * The holdings with a retry mark on each one whose cloud add failed for this
+ * account, by local id. That's the restoredFor mark a refused holding takes,
+ * so a later sync, which sends up only marked holdings, tries it again
+ * instead of replacing the stack with the cloud's copy, which lacks it. A
+ * holding with a row, or one marked for another account, isn't marked. The
+ * same array comes back when nothing changes.
+ */
+export function withRetryMarks(items, marks, userId) {
+  if (!userId || !marks?.size || !Array.isArray(items)) return items;
+  let changed = false;
+  const marked = items.map((item) => {
+    if (item.supabase_id || item.restoredFor || marks.get(item.id) !== userId) return item;
+    changed = true;
+    return { ...item, restoredFor: userId };
+  });
+  return changed ? marked : items;
+}
+
+/**
+ * The holdings with an edit mark on each one whose cloud update failed for
+ * this account, by local id. marks maps a local id to the row the update
+ * was for and its account. The mark puts the row back on the holding, since
+ * an edit's copy doesn't carry it, and editPendingFor names the account, so
+ * the next sync sends the edit before it swaps in the cloud's copy, which
+ * lacks it. The guest mark comes off, since the row is this account's. A holding with another row, or a restored one still to go up,
+ * isn't marked. The same array comes back when nothing changes.
+ */
+export function withEditMarks(items, marks, userId) {
+  if (!userId || !marks?.size || !Array.isArray(items)) return items;
+  let changed = false;
+  const marked = items.map((item) => {
+    const mark = marks.get(item.id);
+    if (!mark || mark.userId !== userId || item.restoredFor) return item;
+    if (item.supabase_id && item.supabase_id !== mark.rowId) return item;
+    if (item.supabase_id === mark.rowId && item.editPendingFor === userId && !item.addedAsGuest) return item;
+    changed = true;
+    // A holding on this account's row is never a guest's, so the guest mark
+    // comes off, or a copy put back over the row could go up to another account
+    const { addedAsGuest, ...rest } = item;
+    return { ...rest, supabase_id: mark.rowId, editPendingFor: userId };
+  });
+  return changed ? marked : items;
+}
+
+/**
+ * The edits a sync sends before it fetches the cloud's copy: each holding in
+ * lists, one array per metal in HOLDING_METALS order, that carries this
+ * account's edit mark and its row, with its metal.
+ */
+export function pendingEdits(lists, userId) {
+  if (!userId || !Array.isArray(lists)) return [];
+  return lists.flatMap((items, index) => (items || [])
+    .filter((item) => item.editPendingFor === userId && item.supabase_id && !item.restoredFor)
+    .map((item) => ({ item, metal: HOLDING_METALS[index] })));
+}
+
+/**
+ * The cloud's copy with each edit the sync couldn't send put back over its
+ * row, mark and all, so the next sync tries it again. The edit goes in its
+ * own metal's list, since an edit that moved a holding to another metal finds
+ * its row still under the old one, and the next sync reads the metal from
+ * the list. An edit whose row is gone from the cloud's copy, as when another
+ * device deleted it, is dropped. The same arrays come back when there's
+ * nothing to put back, and so does each list the edits don't touch.
+ */
+export function withPendingEdits(lists, unsent) {
+  if (!unsent?.length) return lists;
+  const inCloud = new Set(lists.flatMap((items) => items.map((row) => row.supabase_id)));
+  const back = unsent.filter(({ item }) => inCloud.has(item.supabase_id));
+  if (!back.length) return lists;
+  const byRow = new Map(back.map(({ item }) => [item.supabase_id, item]));
+  return lists.map((items, index) => {
+    const metal = HOLDING_METALS[index];
+    const here = back.filter((edit) => edit.metal === metal);
+    if (!here.length && !items.some((row) => byRow.has(row.supabase_id))) return items;
+    // Each edit takes its row's place when it stays in this metal, and joins
+    // the end when it moved here from another
+    const placed = new Set();
+    const kept = items.flatMap((row) => {
+      const edit = byRow.get(row.supabase_id);
+      if (!edit) return [row];
+      if (here.some((e) => e.item === edit)) {
+        placed.add(edit);
+        return [edit];
+      }
+      return [];
+    });
+    return [...kept, ...here.map((e) => e.item).filter((item) => !placed.has(item))];
+  });
+}
+
+/**
  * The holdings with the guest mark taken off, once an account has claimed
  * the stack they're in, so a mark only ever names a holding no account owns.
  * The same array comes back when nothing carries the mark.

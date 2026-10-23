@@ -154,7 +154,12 @@ test('the tracker keys each write by the signed in account', () => {
 });
 
 test('every holdings write to the cloud goes through the tracker', () => {
-  const calls = [...app.matchAll(/await (addHolding|updateHolding|deleteHoldingFromSupabase)\(/g)];
+  // The sync's own sends of marked edits run with the gates closed, so they
+  // aren't writes it has to wait for
+  const sync = app.indexOf('const syncHoldingsWithSupabase = async');
+  const syncEnd = app.indexOf('// A change away from a signed-in account stops', sync);
+  const calls = [...app.matchAll(/await (addHolding|updateHolding|deleteHoldingFromSupabase)\(/g)]
+    .filter((call) => call.index < sync || call.index > syncEnd);
   assert.equal(calls.length, 9);
   for (const call of calls) {
     const opener = app.lastIndexOf('async () => {', call.index);
@@ -164,7 +169,7 @@ test('every holdings write to the cloud goes through the tracker', () => {
 
 test('every cloud update and delete is pinned to the account the tracker waits on', () => {
   const calls = [...app.matchAll(/await (updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   for (const call of calls) assert.equal(call[2], 'supabaseUser.id', `${call[1]} at ${call.index}`);
   const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
   for (const name of ['updateHolding', 'deleteHolding']) {
@@ -181,8 +186,8 @@ test('a cloud update leaves a deleted row alone and the edit reads the miss', ()
   const body = service.slice(at, service.indexOf('\n}\n', at));
   assert.match(body, /\.eq\('user_id', userId\)\n(\s*\/\/.*\n)*\s*\.is\('deleted_at', null\)\n\s*\.select\(\)\n\s*\.single\(\);/);
   const calls = [...app.matchAll(/(.*)await updateHolding\(/g)];
-  assert.equal(calls.length, 2);
-  for (const call of calls) assert.match(call[1], /const \{ error \} = $/, `updateHolding at ${call.index}`);
+  assert.equal(calls.length, 3);
+  for (const call of calls) assert.match(call[1], /const \{ error(: \w+)? \} = $/, `updateHolding at ${call.index}`);
 });
 
 test('the sync closes the gates before its first wait and waits for writes before it reads', () => {
@@ -197,10 +202,13 @@ test('the sync closes the gates before its first wait and waits for writes befor
 test('the sync reads the stack as committed after its waits, not as its render saw it', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
-  const read = body.indexOf('= committedStackRef.current;');
+  const read = body.indexOf('= committedStackRef.current\n');
   assert.ok(read > body.indexOf('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged)'), 'after the wait for writes in flight');
   assert.ok(read > body.indexOf('AsyncStorage.getAllKeys()'), 'after the storage reads');
   assert.ok(read < body.indexOf('const toUpload ='), 'before it picks what goes up');
+  // with the retry marks of adds that failed put back, since a mark set by a
+  // write it waited for may not be committed yet
+  assert.ok(body.indexOf('withRetryMarks(items, retryMarksRef.current, supabaseUser.id)') > read, 'with the retry marks');
   // Neither the upload nor the claim's storage write reads the render's arrays
   assert.doesNotMatch(body, /\[silverItems, goldItems, platinumItems, palladiumItems\]/);
   assert.doesNotMatch(body, /\['stack_silver', silverItems\]/);

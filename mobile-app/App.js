@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
@@ -2453,6 +2453,13 @@ function AppContent() {
   // Every caller writes for the account signed in at the handler's render,
   // which a sync waits on and each cloud write is pinned to
   const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
+  // Local ids of holdings whose cloud add failed, each with its account. A
+  // sync that waited for the write can read the stack before React commits
+  // the holding's retry mark, so it puts these marks back on what it reads.
+  const retryMarksRef = useRef(new Map());
+  // The same for holdings with a row whose cloud update failed, each local
+  // id with its row and account
+  const editMarksRef = useRef(new Map());
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -3045,13 +3052,49 @@ function AppContent() {
   // fullReset=false: preserves theme, large text and tutorial flags (for sign-out)
   // dataLoaded stays true either way: the empty stack matches what's stored,
   // and saves and sign in's sync wait on it until the next launch otherwise
+  // A signed-in add whose cloud write failed is on this phone only, and a
+  // later sync sends up only marked holdings and then swaps in the cloud's
+  // copy, so the holding takes a retry mark for its account. The mark names
+  // that account, so it never sends the holding to another one, and it still
+  // lands after the account changed, as when the add failed because the
+  // session ended and the same account signs back in. A failure that lands
+  // after a sign out's reset, a restore or a swap to another account's stack
+  // marks nothing, since a holding with that local id now isn't the one the
+  // write was for.
+  const markForRetry = (metal, localId, userId, stackGen) => {
+    if (foreignSwapGenRef.current !== stackGen) return;
+    retryMarksRef.current.set(localId, userId);
+    const mark = new Map([[localId, userId]]);
+    const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
+  };
+
+  // An edit of a holding with a row whose cloud update failed would be undone
+  // the same way, by the cloud's copy at the next sync, so the holding takes
+  // an edit mark naming its row and account, and the sync sends the edit
+  // first. An edit that lands drops an older mark, since the cloud has it now.
+  const markEditForRetry = (metal, localId, rowId, userId, stackGen) => {
+    // Likewise a failure after a reset, a restore or another account's stack
+    // marks nothing, or the mark could send an older copy over the row
+    if (foreignSwapGenRef.current !== stackGen) return;
+    const mark = { rowId, userId };
+    editMarksRef.current.set(localId, mark);
+    // A failure that lands after its account signed out or changed leaves
+    // the stack now on the phone alone, which may be a guest's
+    if (userIdRef.current !== userId) return;
+    const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    (setters[metal] || setSilverItems)((prev) => withEditMarks(prev, new Map([[localId, mark]]), userId));
+  };
+
   const resetAllState = (fullReset = true) => {
     // Always reset user-specific data
     bumpStackGen();
+    retryMarksRef.current.clear();
     setSilverItems([]);
     setGoldItems([]);
     setPlatinumItems([]);
     setPalladiumItems([]);
+    editMarksRef.current.clear();
     setSilverSpot(77);
     setGoldSpot(4530);
     setPlatinumSpot(2100);
@@ -3979,6 +4022,10 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
+                  // A restored holding can reuse a marked local id, and a mark left on
+                  // it would send the backup's copy over the row the mark named
+                  retryMarksRef.current.clear();
+                  editMarksRef.current.clear();
                   bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
@@ -4135,7 +4182,9 @@ function AppContent() {
       // Read after the waits, so a delete whose cloud write held the sync is
       // gone from it. Adds, edits and deletes have waited since the sync began.
       // A restore doesn't wait, and restoreCountRef covers it below.
-      const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current;
+      const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current
+        .map((items) => withRetryMarks(items, retryMarksRef.current, supabaseUser.id))
+        .map((items) => withEditMarks(items, editMarksRef.current, supabaseUser.id));
       const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
       // An unowned stack is this account's from here, before anything that can
@@ -4171,9 +4220,19 @@ function AppContent() {
 
       if (__DEV__) console.log(`Starting Supabase holdings sync... (firstSync: ${isFirstSync})`);
 
+      // An edit whose cloud update failed goes up before the cloud's copy is
+      // fetched, or that copy would undo it at the swap. One that fails again
+      // is put back over its row below, still marked.
+      const unsentEdits = [];
+      for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
+        const { error: editError } = await updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal);
+        if (accountChanged()) return false;
+        if (editError) unsentEdits.push(edit);
+      }
+
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: remoteSilver, goldItems: remoteGold, platinumItems: remotePlatinum, palladiumItems: remotePalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
+      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4183,6 +4242,9 @@ function AppContent() {
       );
 
       if (accountChanged()) return false;
+      const [remoteSilver, remoteGold, remotePlatinum, remotePalladium] = error
+        ? [cloudSilver, cloudGold, cloudPlatinum, cloudPalladium]
+        : withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits);
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
         // A restore that landed while this sync ran is sent up by the next
@@ -4196,12 +4258,14 @@ function AppContent() {
         // first, would never send it. Leave this sync unmarked and the auto
         // sync tries again as a first sync.
         const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
-        if (refusedCount > 0 && restoreLanded()) return false;
+        // Edits put back are written with the stack below, which would land over
+        // the restore in storage, so they wait too. The restore dropped their marks.
+        if ((refusedCount > 0 || unsentEdits.length > 0) && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
         // effects run can't leave the phone marked synced over an unmarked one.
-        const stackWrites = refusedCount > 0
+        const stackWrites = refusedCount > 0 || unsentEdits.length > 0
           ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
             .map(([key, items]) => [key, JSON.stringify(items)])
           : [];
@@ -4230,6 +4294,10 @@ function AppContent() {
         setGoldItems(remoteGold);
         setPlatinumItems(remotePlatinum);
         setPalladiumItems(remotePalladium);
+        // What the retry marks named went up with this sync, or came back
+        // refused and marked again
+        retryMarksRef.current.clear();
+        editMarksRef.current.clear();
 
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it
@@ -7965,6 +8033,10 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
+              // A restored holding can reuse a marked local id, and a mark left on
+              // it would send the backup's copy over the row the mark named
+              retryMarksRef.current.clear();
+              editMarksRef.current.clear();
               bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
@@ -9371,15 +9443,15 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
+        const userId = supabaseUser.id;
+        // A reset, restore or another account's stack since the write began drops its mark
+        const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
-          try {
-            for (const item of newItems) {
-              await addHolding(supabaseUser.id, item, item.metal);
-            }
-            if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
-          } catch (err) {
-            if (__DEV__) console.error('Failed to sync imported items to Supabase:', err);
+          for (const item of newItems) {
+            const { error } = await addHolding(userId, item, item.metal);
+            if (error) markForRetry(item.metal, item.id, userId, stackGen);
           }
+          if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
         });
       }
 
@@ -9440,15 +9512,15 @@ function AppContent() {
 
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
+        const userId = supabaseUser.id;
+        // A reset, restore or another account's stack since the write began drops its mark
+        const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
-          try {
-            for (const item of newItems) {
-              await addHolding(supabaseUser.id, item, item.metal);
-            }
-            if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
-          } catch (err) {
-            if (__DEV__) console.error('Failed to sync scanned items to Supabase:', err);
+          for (const item of newItems) {
+            const { error } = await addHolding(userId, item, item.metal);
+            if (error) markForRetry(item.metal, item.id, userId, stackGen);
           }
+          if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
         });
       }
 
@@ -9498,13 +9570,13 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
+      const userId = supabaseUser.id;
+      // A reset, restore or another account's stack since the write began drops its mark
+      const stackGen = foreignSwapGenRef.current;
       trackHoldingWrite(async () => {
-        try {
-          await addHolding(supabaseUser.id, newItem, metalKey);
-          if (__DEV__) console.log('Synced scanned item to Supabase');
-        } catch (err) {
-          if (__DEV__) console.error('Failed to sync scanned item to Supabase:', err);
-        }
+        const { error } = await addHolding(userId, newItem, metalKey);
+        if (error) markForRetry(metalKey, newItem.id, userId, stackGen);
+        else if (__DEV__) console.log('Synced scanned item to Supabase');
       });
     }
 
@@ -9764,12 +9836,22 @@ function AppContent() {
 
     // Sync to Supabase if signed in
     if (supabaseUser) {
+      const userId = supabaseUser.id;
+      // A reset, restore or another account's stack since the write began drops its mark
+      const stackGen = foreignSwapGenRef.current;
+      // Whether the holding may go up to this account as a new row, so a
+      // failed add or lookup leaves it marked for the next sync to send
+      let addsRow = !editingItem;
       trackHoldingWrite(async () => {
         try {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
             const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
-            if (__DEV__) console.log(error ? 'Holding not updated in Supabase' : 'Updated holding in Supabase');
+            if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId, stackGen);
+            else {
+              editMarksRef.current.delete(item.id);
+              if (__DEV__) console.log('Updated holding in Supabase');
+            }
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
@@ -9778,27 +9860,34 @@ function AppContent() {
               AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
               AsyncStorage.getAllKeys(),
             ]).catch(() => null);
+            // Not in Supabase yet, it's added if it's this account's to take,
+            // never a holding of another account's stack left on the phone
+            addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
+              addsRow = false;
               const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
-              if (__DEV__) console.log(error ? 'Existing holding not updated in Supabase' : 'Updated existing holding in Supabase');
-            } else {
-              // Not in Supabase yet. Add it if it's this account's to take, never
-              // a holding of another account's stack left on the phone
-              if (ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id)) {
-                const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
+              else {
+                editMarksRef.current.delete(item.id);
+                if (__DEV__) console.log('Updated existing holding in Supabase');
               }
+            } else if (addsRow) {
+              const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
+              if (error) markForRetry(targetMetal, item.id, userId, stackGen);
+              else if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
             }
           } else {
             // New item - add to Supabase
-            const { data } = await addHolding(supabaseUser.id, item, targetMetal);
-            if (data && __DEV__) console.log('Added new holding to Supabase');
+            const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
+            if (error) markForRetry(targetMetal, item.id, userId, stackGen);
+            else if (data && __DEV__) console.log('Added new holding to Supabase');
           }
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
+          if (addsRow) markForRetry(targetMetal, item.id, userId, stackGen);
         }
       });
     }
