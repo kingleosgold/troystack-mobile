@@ -4105,8 +4105,10 @@ function AppContent() {
       // sync of a session takes the spaced out retry, which waits for it again,
       // and a pull to refresh after that is tried again by the next pull, as
       // any failed pull is. Only this account's writes, since the cloud copy
-      // it fetches holds no other account's rows.
-      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id);
+      // it fetches holds no other account's rows. A sign out or account change
+      // ends the wait at once, so this sync's gates don't hold the next
+      // account's first sync behind a hung write.
+      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged);
       if (accountChanged()) return false;
       if (!writesLanded) {
         if (restoreCountRef.current === restoresAtStart) setSyncError('A change is still saving to the cloud');

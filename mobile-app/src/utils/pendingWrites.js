@@ -9,6 +9,9 @@
 // that is tried again by the next pull
 export const HOLDING_WRITES_WAIT_MS = 30000;
 
+// How often a wait with a stop check looks at it
+export const STOP_POLL_MS = 250;
+
 export const pendingWrites = () => {
   // Each held write maps to the account it writes for
   const writes = new Map();
@@ -30,14 +33,23 @@ export const pendingWrites = () => {
     // waiter, and the gates it keeps shut, for as long as it hangs. With an
     // account it waits only for that account's writes, since another
     // account's rows aren't in what its sync fetches, so a hung write from
-    // the last account can't hold the next one's syncs.
-    settled(limitMs, account) {
+    // the last account can't hold the next one's syncs. With a stop check it
+    // answers false as soon as that turns true, so a sync the account has
+    // left behind lets go of the gates at once rather than at the limit.
+    settled(limitMs, account, stopped) {
       const waitFor = [...writes].filter(([, owner]) => account === undefined || owner === account).map(([held]) => held);
       const all = Promise.all(waitFor).then(() => true);
       if (!(limitMs > 0)) return all;
       let timer;
+      let poll;
       const late = new Promise((resolve) => { timer = setTimeout(() => resolve(false), limitMs); });
-      return Promise.race([all, late]).finally(() => clearTimeout(timer));
+      const left = typeof stopped === 'function'
+        ? new Promise((resolve) => { poll = setInterval(() => { if (stopped()) resolve(false); }, STOP_POLL_MS); })
+        : null;
+      return Promise.race(left ? [all, late, left] : [all, late]).finally(() => {
+        clearTimeout(timer);
+        clearInterval(poll);
+      });
     },
     get size() {
       return writes.size;

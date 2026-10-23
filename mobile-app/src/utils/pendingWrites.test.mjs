@@ -86,10 +86,32 @@ test('with a limit and nothing in flight it answers true at once', async () => {
   assert.equal(await pendingWrites().settled(20), true);
 });
 
+test('with a stop check it answers false as soon as the check turns true, well before the limit', async () => {
+  const writes = pendingWrites();
+  const g = gate();
+  writes.track(() => g.shut);
+  let left = false;
+  setTimeout(() => { left = true; }, 10);
+  const start = Date.now();
+  assert.equal(await writes.settled(60000, undefined, () => left), false);
+  assert.ok(Date.now() - start < 5000, 'it let go at the stop, not the limit');
+  assert.equal(writes.size, 1, 'the hung write stays tracked');
+  g.open();
+});
+
+test('with a stop check that never turns true it still answers true once the writes land', async () => {
+  const writes = pendingWrites();
+  const g = gate();
+  writes.track(() => g.shut);
+  const answer = writes.settled(60000, undefined, () => false);
+  g.open();
+  assert.equal(await answer, true);
+});
+
 test('the sync gives up with an error before it reads anything when the writes miss the limit', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
-  const wait = body.indexOf('await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id)');
+  const wait = body.indexOf('await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged)');
   assert.ok(wait > 0, 'the sync waits with the limit');
   const late = body.indexOf('if (!writesLanded)', wait);
   assert.ok(late > wait, 'and checks the answer');
@@ -169,14 +191,14 @@ test('the sync closes the gates before its first wait and waits for writes befor
   const flag = body.indexOf('isSyncingRef.current = true');
   assert.ok(flag > 0, 'the sync sets isSyncingRef itself');
   assert.ok(flag < body.indexOf('await '), 'before its first wait');
-  assert.ok(body.indexOf('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id)') > flag, 'the sync waits for writes in flight');
+  assert.ok(body.indexOf('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged)') > flag, 'the sync waits for writes in flight');
 });
 
 test('the sync reads the stack as committed after its waits, not as its render saw it', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
   const read = body.indexOf('= committedStackRef.current;');
-  assert.ok(read > body.indexOf('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id)'), 'after the wait for writes in flight');
+  assert.ok(read > body.indexOf('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged)'), 'after the wait for writes in flight');
   assert.ok(read > body.indexOf('AsyncStorage.getAllKeys()'), 'after the storage reads');
   assert.ok(read < body.indexOf('const toUpload ='), 'before it picks what goes up');
   // Neither the upload nor the claim's storage write reads the render's arrays
