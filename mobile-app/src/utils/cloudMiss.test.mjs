@@ -23,7 +23,13 @@ test('an add and an edit name what missed', () => {
 });
 
 test('the notice says how to send it', () => {
-  assert.ok(cloudMissAlert('add').message.includes('Pull down on the Dashboard'));
+  // My Stack's pull to refresh runs the holdings sync, the Dashboard's doesn't
+  assert.ok(cloudMissAlert('add').message.includes('Pull down on My Stack'));
+  assert.ok(!cloudMissAlert('add').message.includes('Dashboard'));
+});
+
+test('the notice warns that signing out clears it', () => {
+  assert.ok(cloudMissAlert('edit').message.includes('signing out clears it'));
 });
 
 test('the words carry no em dash', () => {
