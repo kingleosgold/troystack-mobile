@@ -94,7 +94,7 @@ export function withRetryMarks(items, marks, userId) {
  * was for and its account. The mark puts the row back on the holding, since
  * an edit's copy doesn't carry it, and editPendingFor names the account, so
  * the next sync sends the edit before it swaps in the cloud's copy, which
- * lacks it. A holding with another row, or a restored one still to go up,
+ * lacks it. The guest mark comes off, since the row is this account's. A holding with another row, or a restored one still to go up,
  * isn't marked. The same array comes back when nothing changes.
  */
 export function withEditMarks(items, marks, userId) {
@@ -104,9 +104,12 @@ export function withEditMarks(items, marks, userId) {
     const mark = marks.get(item.id);
     if (!mark || mark.userId !== userId || item.restoredFor) return item;
     if (item.supabase_id && item.supabase_id !== mark.rowId) return item;
-    if (item.supabase_id === mark.rowId && item.editPendingFor === userId) return item;
+    if (item.supabase_id === mark.rowId && item.editPendingFor === userId && !item.addedAsGuest) return item;
     changed = true;
-    return { ...item, supabase_id: mark.rowId, editPendingFor: userId };
+    // A holding on this account's row is never a guest's, so the guest mark
+    // comes off, or a copy put back over the row could go up to another account
+    const { addedAsGuest, ...rest } = item;
+    return { ...rest, supabase_id: mark.rowId, editPendingFor: userId };
   });
   return changed ? marked : items;
 }

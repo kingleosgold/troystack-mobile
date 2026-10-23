@@ -4010,6 +4010,10 @@ function AppContent() {
               {
                 text: 'Use iCloud',
                 onPress: () => {
+                  // A restored holding can reuse a marked local id, and a mark left on
+                  // it would send the backup's copy over the row the mark named
+                  retryMarksRef.current.clear();
+                  editMarksRef.current.clear();
                   bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
@@ -8001,6 +8005,10 @@ function AppContent() {
           {
             text: 'Restore',
             onPress: async () => {
+              // A restored holding can reuse a marked local id, and a mark left on
+              // it would send the backup's copy over the row the mark named
+              retryMarksRef.current.clear();
+              editMarksRef.current.clear();
               bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));

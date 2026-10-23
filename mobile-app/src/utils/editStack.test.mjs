@@ -183,3 +183,11 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));
   assert.match(body, /const stackWrites = refusedCount > 0 \|\| unsentEdits\.length > 0/);
 });
+
+test('a restore drops the write marks, so none lands on a restored copy', () => {
+  for (const swap of ['if (cloudData.silverItems) setSilverItems(asRestoredBy(', 'if (backup.data.silverItems) setSilverItems(asRestoredBy(']) {
+    const at = app.indexOf(swap);
+    const lead = app.slice(at - 400, at);
+    assert.ok(lead.includes('retryMarksRef.current.clear();') && lead.includes('editMarksRef.current.clear();'), swap);
+  }
+});

@@ -261,3 +261,17 @@ test("an edit the sync couldn't send goes back over its row in the cloud's copy"
   // with nothing unsent the cloud's copy comes back as is
   assert.equal(withPendingEdits(cloud, []), cloud);
 });
+
+test("an edit mark takes the guest mark off, so a put back copy can't go up to another account", () => {
+  const items = [{ id: 1, addedAsGuest: true }, { id: 2, supabase_id: 'r2', editPendingFor: 'a', addedAsGuest: true }];
+  const marks = new Map([[1, { rowId: 'r1', userId: 'a' }], [2, { rowId: 'r2', userId: 'a' }]]);
+  const marked = withEditMarks(items, marks, 'a');
+  assert.deepEqual(marked, [
+    { id: 1, supabase_id: 'r1', editPendingFor: 'a' },
+    { id: 2, supabase_id: 'r2', editPendingFor: 'a' },
+  ]);
+  const cloud = [[{ id: 1, supabase_id: 'r1' }], [], [], []];
+  const back = withPendingEdits(cloud, pendingEdits([marked, [], [], []], 'a'));
+  // nothing put back carries the mark a later sync sends to any account
+  assert.deepEqual(localHoldingsToSync(back[0], 'a', 'b', false), []);
+});
