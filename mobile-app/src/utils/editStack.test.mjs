@@ -111,7 +111,9 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   assert.match(fn, /id: base\?\.id \|\| Date\.now\(\),/);
   assert.match(fn, /setter\(prev => prev\.map\(i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\) \? item : i\)\);/);
   // Its marks and row come from that copy, not from the sheet's opening
-  assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  // the copy keeps the holding's cloud row, so a later edit updates that row
+  // and one that fails takes an edit mark rather than a lookup
+  assert.match(fn, /\.\.\.\(base\?\.supabase_id \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(supabaseUser\.id, base\.supabase_id, item, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
@@ -198,4 +200,11 @@ test("a sync with edits put back doesn't write storage over a restore that lande
   assert.ok(guard < app.indexOf('const stackWrites = refusedCount > 0 || unsentEdits.length > 0'));
   // and a late failure marks the stack in state only for its own account
   assert.match(app, /editMarksRef\.current\.set\(localId, mark\);\n(\s*\/\/.*\n)*\s*if \(userIdRef\.current !== userId\) return;/);
+});
+
+test('a failed add that lands after its account left marks nothing on the stack now on the phone', () => {
+  const fn = app.slice(app.indexOf('const markForRetry = (metal, localId, userId) => {'), app.indexOf('const markEditForRetry ='));
+  const guard = fn.indexOf('if (userIdRef.current !== userId) return;');
+  assert.ok(guard > fn.indexOf('retryMarksRef.current.set(localId, userId);'), 'the ref keeps the mark for its own account');
+  assert.ok(guard < fn.indexOf('withRetryMarks('), 'before the stack is touched');
 });
