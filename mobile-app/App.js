@@ -8709,7 +8709,7 @@ function AppContent() {
   const handleMetalTabChange = async (newMetal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     // A quick pick from the old metal would save under the new one, so it clears
-    if (!editingItem) setForm(prev => formAfterMetalChange(prev, metalTab));
+    if (!editingItem && newMetal !== metalTab) setForm(prev => formAfterMetalChange(prev, metalTab));
     setMetalTab(newMetal);
 
     // Map metal keys to current live spot prices
