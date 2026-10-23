@@ -3070,6 +3070,9 @@ function AppContent() {
   const markEditForRetry = (metal, localId, rowId, userId) => {
     const mark = { rowId, userId };
     editMarksRef.current.set(localId, mark);
+    // A failure that lands after its account signed out or changed leaves
+    // the stack now on the phone alone, which may be a guest's
+    if (userIdRef.current !== userId) return;
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withEditMarks(prev, new Map([[localId, mark]]), userId));
   };
@@ -4232,7 +4235,9 @@ function AppContent() {
         // first, would never send it. Leave this sync unmarked and the auto
         // sync tries again as a first sync.
         const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
-        if (refusedCount > 0 && restoreLanded()) return false;
+        // Edits put back are written with the stack below, which would land over
+        // the restore in storage, so they wait too. The restore dropped their marks.
+        if ((refusedCount > 0 || unsentEdits.length > 0) && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
