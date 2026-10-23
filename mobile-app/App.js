@@ -2450,7 +2450,9 @@ function AppContent() {
   const holdingWritesRef = useRef(null);
   if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
   const holdingWrites = holdingWritesRef.current;
-  const trackHoldingWrite = (run) => holdingWrites.track(run);
+  // Every caller writes for the account signed in at the handler's render,
+  // which a sync waits on and each cloud write is pinned to
+  const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -4102,8 +4104,11 @@ function AppContent() {
       // that hangs ends this sync instead of holding the gates shut. The first
       // sync of a session takes the spaced out retry, which waits for it again,
       // and a pull to refresh after that is tried again by the next pull, as
-      // any failed pull is.
-      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS);
+      // any failed pull is. Only this account's writes, since the cloud copy
+      // it fetches holds no other account's rows. A sign out or account change
+      // ends the wait at once, so this sync's gates don't hold the next
+      // account's first sync behind a hung write.
+      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged);
       if (accountChanged()) return false;
       if (!writesLanded) {
         if (restoreCountRef.current === restoresAtStart) setSyncError('A change is still saving to the cloud');
@@ -9763,8 +9768,8 @@ function AppContent() {
         try {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
-            await updateHolding(base.supabase_id, item, targetMetal);
-            if (__DEV__) console.log('Updated holding in Supabase');
+            const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
+            if (__DEV__) console.log(error ? 'Holding not updated in Supabase' : 'Updated holding in Supabase');
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
@@ -9776,8 +9781,8 @@ function AppContent() {
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
-              await updateHolding(existingHolding.id, item, targetMetal);
-              if (__DEV__) console.log('Updated existing holding in Supabase');
+              const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
+              if (__DEV__) console.log(error ? 'Existing holding not updated in Supabase' : 'Updated existing holding in Supabase');
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone
@@ -9878,13 +9883,13 @@ function AppContent() {
               await trackHoldingWrite(async () => {
                 try {
                   if (itemToDelete.supabase_id) {
-                    await deleteHoldingFromSupabase(itemToDelete.supabase_id);
+                    await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (__DEV__) console.log('Deleted holding from Supabase');
                   } else {
                     // Find in Supabase by local_id
                     const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
-                      await deleteHoldingFromSupabase(existingHolding.id);
+                      await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
                       if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
                     }
                   }
