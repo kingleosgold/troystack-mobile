@@ -54,6 +54,7 @@ import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMA
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
+import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
@@ -2460,6 +2461,8 @@ function AppContent() {
   // The same for holdings with a row whose cloud update failed, each local
   // id with its row and account
   const editMarksRef = useRef(new Map());
+  // When the app last said a save didn't reach the account
+  const cloudMissAtRef = useRef(null);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -3067,6 +3070,19 @@ function AppContent() {
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
+    noteCloudMiss('add', userId);
+  };
+
+  // The user saw the save land, so a write that didn't reach the account
+  // says so, once for a run of them. Only while that account is signed in,
+  // since after a sign out or a switch the stack on the phone isn't theirs.
+  const noteCloudMiss = (kind, userId) => {
+    if (userIdRef.current !== userId) return;
+    const now = Date.now();
+    if (!cloudMissDue(cloudMissAtRef.current, now)) return;
+    cloudMissAtRef.current = now;
+    const { title, message } = cloudMissAlert(kind);
+    Alert.alert(title, message);
   };
 
   // An edit of a holding with a row whose cloud update failed would be undone
@@ -3084,6 +3100,7 @@ function AppContent() {
     if (userIdRef.current !== userId) return;
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withEditMarks(prev, new Map([[localId, mark]]), userId));
+    noteCloudMiss('edit', userId);
   };
 
   const resetAllState = (fullReset = true) => {
