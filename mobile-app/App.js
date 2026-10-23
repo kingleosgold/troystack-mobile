@@ -9731,12 +9731,13 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
-      // A holding keeps its cloud row through an edit, so the next edit
-      // updates that row, and one that fails takes an edit mark rather than
-      // a lookup the sync's swap would undo. A restored holding keeps its
-      // restore mark too, so the next sync still sends it up to the account
-      // that restored it.
-      ...(base?.supabase_id ? { supabase_id: base.supabase_id } : {}),
+      // An account's holding keeps its cloud row through an edit, so the next
+      // edit updates that row, and one that fails takes an edit mark rather
+      // than a lookup the sync's swap would undo. A guest's holding may carry
+      // a row from a backup it restored, which needn't be this account's, so
+      // it keeps none. A restored holding keeps its restore mark and row, so
+      // the next sync still sends it up to the account that restored it.
+      ...((base?.supabase_id && !base.addedAsGuest) || base?.restoredFor ? { supabase_id: base.supabase_id } : {}),
       ...(base?.restoredFor ? { restoredFor: base.restoredFor } : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
@@ -9834,10 +9835,8 @@ function AppContent() {
       let addsRow = !editingItem;
       trackHoldingWrite(async () => {
         try {
-          if (editingItem && base.supabase_id && !base.addedAsGuest) {
-            // Update existing item in Supabase. A guest's holding may carry
-            // another account's row from a backup it restored, so it finds
-            // its row in this account by local id below, or goes up as new.
+          if (editingItem && base.supabase_id) {
+            // Update existing item in Supabase
             const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
             if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId);
             else {
