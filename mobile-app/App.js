@@ -9743,9 +9743,14 @@ function AppContent() {
       shipping: parseFloat(form.shipping) || 0, spotPrice: parseFloat(form.spotPrice) || 0,
       premium: parseFloat(form.premium) || 0,
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
-      // A restored holding keeps its restore mark and row through an edit, so
-      // the next sync still sends it up to the account that restored it
-      ...(base?.restoredFor ? { restoredFor: base.restoredFor, supabase_id: base.supabase_id } : {}),
+      // An account's holding keeps its cloud row through an edit, so the next
+      // edit updates that row, and one that fails takes an edit mark rather
+      // than a lookup the sync's swap would undo. A guest's holding may carry
+      // a row from a backup it restored, which needn't be this account's, so
+      // it keeps none. A restored holding keeps its restore mark and row, so
+      // the next sync still sends it up to the account that restored it.
+      ...((base?.supabase_id && !base.addedAsGuest) || base?.restoredFor ? { supabase_id: base.supabase_id } : {}),
+      ...(base?.restoredFor ? { restoredFor: base.restoredFor } : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item

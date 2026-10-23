@@ -91,8 +91,8 @@ export function withRetryMarks(items, marks, userId) {
 /**
  * The holdings with an edit mark on each one whose cloud update failed for
  * this account, by local id. marks maps a local id to the row the update
- * was for and its account. The mark puts the row back on the holding, since
- * an edit's copy doesn't carry it, and editPendingFor names the account, so
+ * was for and its account. The mark puts the row on the holding if it lacks
+ * it, and editPendingFor names the account, so
  * the next sync sends the edit before it swaps in the cloud's copy, which
  * lacks it. The guest mark comes off, since the row is this account's. A holding with another row, or a restored one still to go up,
  * isn't marked. The same array comes back when nothing changes.
