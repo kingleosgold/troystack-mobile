@@ -41,8 +41,9 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
+import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -53,7 +54,7 @@ import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMA
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
-import { pendingWrites } from './src/utils/pendingWrites';
+import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -2449,7 +2450,9 @@ function AppContent() {
   const holdingWritesRef = useRef(null);
   if (!holdingWritesRef.current) holdingWritesRef.current = pendingWrites();
   const holdingWrites = holdingWritesRef.current;
-  const trackHoldingWrite = (run) => holdingWrites.track(run);
+  // Every caller writes for the account signed in at the handler's render,
+  // which a sync waits on and each cloud write is pinned to
+  const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
 
   // Theme
   const systemColorScheme = useColorScheme();
@@ -4097,9 +4100,20 @@ function AppContent() {
 
     try {
       // A write that started before the gates closed may not have landed, and
-      // the cloud's copy fetched without it would drop it at the swap
-      await holdingWrites.settled();
+      // the cloud's copy fetched without it would drop it at the swap. A write
+      // that hangs ends this sync instead of holding the gates shut. The first
+      // sync of a session takes the spaced out retry, which waits for it again,
+      // and a pull to refresh after that is tried again by the next pull, as
+      // any failed pull is. Only this account's writes, since the cloud copy
+      // it fetches holds no other account's rows. A sign out or account change
+      // ends the wait at once, so this sync's gates don't hold the next
+      // account's first sync behind a hung write.
+      const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, accountChanged);
       if (accountChanged()) return false;
+      if (!writesLanded) {
+        if (restoreCountRef.current === restoresAtStart) setSyncError('A change is still saving to the cloud');
+        return false;
+      }
       // Check if this user has ever synced before (for first-time migration)
       const syncKey = `stack_synced_${supabaseUser.id}`;
       const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
@@ -4142,13 +4156,16 @@ function AppContent() {
       if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
       // The marks come off in state even if the account changed meanwhile,
       // since storage already has them off and a marked copy left in state
-      // could go up to the next account. After a sign out's reset it's a no-op.
+      // could go up to the next account. Only the holdings the claim read lose
+      // them, so one a guest added after a sign out keeps its mark.
       if (claimsStack) {
+        const claimed = new Set([localSilver, localGold, localPlatinum, localPalladium].flat());
+        const unmark = (items) => withoutGuestMarkOn(items, claimed);
         bumpStackGen(true);
-        setSilverItems(withoutGuestMark);
-        setGoldItems(withoutGuestMark);
-        setPlatinumItems(withoutGuestMark);
-        setPalladiumItems(withoutGuestMark);
+        setSilverItems(unmark);
+        setGoldItems(unmark);
+        setPlatinumItems(unmark);
+        setPalladiumItems(unmark);
       }
       if (accountChanged()) return false;
 
@@ -8707,6 +8724,8 @@ function AppContent() {
   // Handle metal tab change — auto-update spot price for the new metal
   const handleMetalTabChange = async (newMetal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // A quick pick from the old metal would save under the new one, so it clears
+    if (!editingItem && newMetal !== metalTab) setForm(prev => formAfterMetalChange(prev, metalTab));
     setMetalTab(newMetal);
 
     // Map metal keys to current live spot prices
@@ -9749,8 +9768,8 @@ function AppContent() {
         try {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
-            await updateHolding(base.supabase_id, item, targetMetal);
-            if (__DEV__) console.log('Updated holding in Supabase');
+            const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
+            if (__DEV__) console.log(error ? 'Holding not updated in Supabase' : 'Updated holding in Supabase');
           } else if (editingItem) {
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
@@ -9762,8 +9781,8 @@ function AppContent() {
             // Editing a local item that might exist in Supabase - find it first
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
             if (existingHolding) {
-              await updateHolding(existingHolding.id, item, targetMetal);
-              if (__DEV__) console.log('Updated existing holding in Supabase');
+              const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
+              if (__DEV__) console.log(error ? 'Existing holding not updated in Supabase' : 'Updated existing holding in Supabase');
             } else {
               // Not in Supabase yet. Add it if it's this account's to take, never
               // a holding of another account's stack left on the phone
@@ -9864,13 +9883,13 @@ function AppContent() {
               await trackHoldingWrite(async () => {
                 try {
                   if (itemToDelete.supabase_id) {
-                    await deleteHoldingFromSupabase(itemToDelete.supabase_id);
+                    await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (__DEV__) console.log('Deleted holding from Supabase');
                   } else {
                     // Find in Supabase by local_id
                     const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
-                      await deleteHoldingFromSupabase(existingHolding.id);
+                      await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
                       if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
                     }
                   }
@@ -14916,6 +14935,31 @@ function AppContent() {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* Quick picks fill the name, weight and a quantity of 1 on a new add, so the price is all that's left to type */}
+                  {!editingItem && (() => {
+                    const picks = quickPicksFor(metalTab);
+                    return picks.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8 }}>
+                      {picks.map(pick => {
+                        const chosen = isQuickPickChosen(form, pick);
+                        return (
+                          <TouchableOpacity
+                            key={pick.productName}
+                            onPress={() => {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              setForm(p => applyQuickPick(p, pick));
+                              setFormErrors(e => ({ ...e, productName: false, ozt: false, quantity: false }));
+                            }}
+                            style={{ borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: chosen ? colors.gold : 'rgba(212,168,67,0.3)', backgroundColor: chosen ? 'rgba(212,168,67,0.2)' : 'rgba(212,168,67,0.06)' }}
+                          >
+                            <Text style={{ color: colors.gold, fontSize: scaledFonts.small, fontWeight: chosen ? '700' : '500' }}>{pick.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                    );
+                  })()}
 
                   <FloatingInput label="Product Name" value={form.productName} onChangeText={v => { setForm(p => ({ ...p, productName: v })); if (v) setFormErrors(e => ({ ...e, productName: false })); }} placeholder={{ gold: 'e.g. American Gold Eagle', silver: 'e.g. American Silver Eagle', platinum: 'e.g. American Platinum Eagle', palladium: 'e.g. Canadian Palladium Maple Leaf' }[metalTab] || 'e.g. American Silver Eagle'} colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.productName} />
                   <FloatingInput label="Dealer" value={form.source} onChangeText={v => setForm(p => ({ ...p, source: v }))} placeholder="APMEX" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} />

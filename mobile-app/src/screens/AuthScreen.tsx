@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../contexts/AuthContext';
 import GoogleLogo from '../components/icons/GoogleLogo';
+import { signUpNextStep } from '../utils/signUpResult';
 
 // App icon
 const AppIcon = require('../../assets/icon.png');
@@ -104,9 +105,13 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
 
     try {
       if (mode === 'signUp') {
-        const { error } = await signUp(trimmedEmail, password);
-        if (error) {
-          setError(error.message);
+        const result = await signUp(trimmedEmail, password);
+        const next = signUpNextStep(result);
+        if (next === 'error') {
+          setError(result.error!.message);
+        } else if (next === 'signedIn') {
+          // Signed in already, so it goes on like a sign in, with no email to wait for
+          onAuthSuccess?.();
         } else {
           Alert.alert(
             'Check Your Email',

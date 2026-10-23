@@ -186,8 +186,10 @@ export async function addHolding(
   }
 }
 
-// Update an existing holding
+// Update an existing holding. The row must also be this account's, so a write
+// made for one account never lands on another's row
 export async function updateHolding(
+  userId: string,
   supabaseId: string,
   holding: LocalHolding,
   metal: 'silver' | 'gold' | 'platinum' | 'palladium'
@@ -220,6 +222,10 @@ export async function updateHolding(
       .from('holdings')
       .update(updateData)
       .eq('id', supabaseId)
+      .eq('user_id', userId)
+      // A row another device deleted stays as it was deleted, and the edit
+      // reads back as no row rather than as saved
+      .is('deleted_at', null)
       .select()
       .single();
 
@@ -232,15 +238,17 @@ export async function updateHolding(
   }
 }
 
-// Soft delete a holding
+// Soft delete a holding, only if it's this account's row
 export async function deleteHolding(
+  userId: string,
   supabaseId: string
 ): Promise<{ error: Error | null }> {
   try {
     const { error } = await supabase
       .from('holdings')
       .update({ deleted_at: new Date().toISOString() })
-      .eq('id', supabaseId);
+      .eq('id', supabaseId)
+      .eq('user_id', userId);
 
     if (error) throw error;
 
