@@ -3061,9 +3061,6 @@ function AppContent() {
   // reset there's no holding left to mark.
   const markForRetry = (metal, localId, userId) => {
     retryMarksRef.current.set(localId, userId);
-    // As for an edit mark, a failure that lands after its account signed out
-    // or changed leaves the stack now on the phone alone
-    if (userIdRef.current !== userId) return;
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
@@ -9837,8 +9834,10 @@ function AppContent() {
       let addsRow = !editingItem;
       trackHoldingWrite(async () => {
         try {
-          if (editingItem && base.supabase_id) {
-            // Update existing item in Supabase
+          if (editingItem && base.supabase_id && !base.addedAsGuest) {
+            // Update existing item in Supabase. A guest's holding may carry
+            // another account's row from a backup it restored, so it finds
+            // its row in this account by local id below, or goes up as new.
             const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
             if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId);
             else {

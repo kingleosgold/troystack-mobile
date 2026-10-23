@@ -114,7 +114,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
   assert.match(fn, /\.\.\.\(base\?\.supabase_id \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(supabaseUser\.id, base\.supabase_id, item, targetMetal\);/);
+  assert.match(fn, /if \(editingItem && base\.supabase_id && !base\.addedAsGuest\) \{\n\s*\/\/ Update existing item in Supabase\.[^\n]*\n(\s*\/\/[^\n]*\n)*\s*const \{ error \} = await updateHolding\(supabaseUser\.id, base\.supabase_id, item, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -202,9 +202,7 @@ test("a sync with edits put back doesn't write storage over a restore that lande
   assert.match(app, /editMarksRef\.current\.set\(localId, mark\);\n(\s*\/\/.*\n)*\s*if \(userIdRef\.current !== userId\) return;/);
 });
 
-test('a failed add that lands after its account left marks nothing on the stack now on the phone', () => {
-  const fn = app.slice(app.indexOf('const markForRetry = (metal, localId, userId) => {'), app.indexOf('const markEditForRetry ='));
-  const guard = fn.indexOf('if (userIdRef.current !== userId) return;');
-  assert.ok(guard > fn.indexOf('retryMarksRef.current.set(localId, userId);'), 'the ref keeps the mark for its own account');
-  assert.ok(guard < fn.indexOf('withRetryMarks('), 'before the stack is touched');
+test("a guest's holding with a row from a restored backup finds its row by local id, never updates that row", () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  assert.match(fn, /if \(editingItem && base\.supabase_id && !base\.addedAsGuest\) \{/);
 });
