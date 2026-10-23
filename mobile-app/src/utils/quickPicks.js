@@ -64,3 +64,13 @@ export function applyQuickPick(form, pick) {
 export function isQuickPickChosen(form, pick) {
   return form.productName === pick.productName && form.ozt === String(pick.ozt);
 }
+
+/**
+ * The add form after its metal changes from fromMetal. A pick from that metal
+ * no longer names what's being added, so its name and ozt are cleared and the
+ * new metal's picks start fresh. A name or weight the user typed stays.
+ */
+export function formAfterMetalChange(form, fromMetal) {
+  if (!quickPicksFor(fromMetal).some(pick => isQuickPickChosen(form, pick))) return form;
+  return { ...form, productName: '', ozt: '' };
+}

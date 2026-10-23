@@ -43,7 +43,7 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
-import { quickPicksFor, applyQuickPick, isQuickPickChosen } from './src/utils/quickPicks';
+import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -8708,6 +8708,8 @@ function AppContent() {
   // Handle metal tab change — auto-update spot price for the new metal
   const handleMetalTabChange = async (newMetal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // A quick pick from the old metal would save under the new one, so it clears
+    if (!editingItem) setForm(prev => formAfterMetalChange(prev, metalTab));
     setMetalTab(newMetal);
 
     // Map metal keys to current live spot prices
@@ -14919,9 +14921,11 @@ function AppContent() {
                   </View>
 
                   {/* Quick picks fill the name, weight and a quantity of 1 on a new add, so the price is all that's left to type */}
-                  {!editingItem && quickPicksFor(metalTab).length > 0 && (
+                  {!editingItem && (() => {
+                    const picks = quickPicksFor(metalTab);
+                    return picks.length > 0 && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8 }}>
-                      {quickPicksFor(metalTab).map(pick => {
+                      {picks.map(pick => {
                         const chosen = isQuickPickChosen(form, pick);
                         return (
                           <TouchableOpacity
@@ -14938,7 +14942,8 @@ function AppContent() {
                         );
                       })}
                     </ScrollView>
-                  )}
+                    );
+                  })()}
 
                   <FloatingInput label="Product Name" value={form.productName} onChangeText={v => { setForm(p => ({ ...p, productName: v })); if (v) setFormErrors(e => ({ ...e, productName: false })); }} placeholder={{ gold: 'e.g. American Gold Eagle', silver: 'e.g. American Silver Eagle', platinum: 'e.g. American Platinum Eagle', palladium: 'e.g. Canadian Palladium Maple Leaf' }[metalTab] || 'e.g. American Silver Eagle'} colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.productName} />
                   <FloatingInput label="Dealer" value={form.source} onChangeText={v => setForm(p => ({ ...p, source: v }))} placeholder="APMEX" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} />

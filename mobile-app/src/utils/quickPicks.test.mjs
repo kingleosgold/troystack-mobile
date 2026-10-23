@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/quickPicks.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { QUICK_PICKS, quickPicksFor, applyQuickPick, isQuickPickChosen } from './quickPicks.js';
+import { QUICK_PICKS, quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './quickPicks.js';
 
 const blankForm = {
   productName: '', source: '', datePurchased: '', timePurchased: '', ozt: '',
@@ -81,4 +81,29 @@ test('the chosen pick is the one whose name and weight the form holds', () => {
   assert.equal(isQuickPickChosen(form, QUICK_PICKS.gold[1]), false);
   assert.equal(isQuickPickChosen({ ...form, ozt: '2' }, pick), false);
   assert.equal(isQuickPickChosen(blankForm, pick), false);
+});
+
+test('switching metal clears a pick from the old metal, so it never saves under the new one', () => {
+  const bar = QUICK_PICKS.silver.find(p => p.ozt === 100);
+  const picked = applyQuickPick({ ...blankForm, unitPrice: '3500' }, bar);
+  const after = formAfterMetalChange(picked, 'silver');
+  assert.equal(after.productName, '');
+  assert.equal(after.ozt, '');
+  assert.equal(after.quantity, '1');
+  assert.equal(after.unitPrice, '3500');
+});
+
+test('switching metal keeps a name and weight the user typed', () => {
+  const typed = { ...blankForm, productName: 'Generic round', ozt: '1', quantity: '5' };
+  assert.equal(formAfterMetalChange(typed, 'silver'), typed);
+  assert.equal(formAfterMetalChange(blankForm, 'gold'), blankForm);
+});
+
+test('switching from a tab with no picks leaves the form alone', () => {
+  const picked = applyQuickPick(blankForm, QUICK_PICKS.gold[0]);
+  assert.equal(formAfterMetalChange(picked, 'all'), picked);
+});
+
+test('a typed quantity of 1.5 is kept here, and the save rounds it down as it always has', () => {
+  assert.equal(applyQuickPick({ ...blankForm, quantity: '1.5' }, QUICK_PICKS.silver[0]).quantity, '1.5');
 });
