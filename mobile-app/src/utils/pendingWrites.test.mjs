@@ -86,7 +86,7 @@ test('with a limit and nothing in flight it answers true at once', async () => {
   assert.equal(await pendingWrites().settled(20), true);
 });
 
-test('the sync gives up with an error the retry picks up when the writes miss the limit', () => {
+test('the sync gives up with an error before it reads anything when the writes miss the limit', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('const { silverItems: remoteSilver', start));
   const wait = body.indexOf('await holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id)');
