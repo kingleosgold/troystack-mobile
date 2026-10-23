@@ -140,10 +140,10 @@ test('every signed-in add whose cloud write fails leaves its holding marked for 
   }
   // A mark names the account the write began under, and lands even after a
   // session that ended mid-write, since that account signs back in to it
-  assert.match(app, /const markForRetry = \(metal, localId, userId\) => \{\s*retryMarksRef\.current\.set\(localId, userId\);/);
+  assert.match(app, /const markForRetry = \(metal, localId, userId, stackGen\) => \{\s*if \(foreignSwapGenRef\.current !== stackGen\) return;\s*retryMarksRef\.current\.set\(localId, userId\);/);
   // A failed lookup or add in an edit marks the holding only when it's this
   // account's to take
-  assert.match(app, /if \(addsRow\) markForRetry\(targetMetal, item\.id, userId\);/);
+  assert.match(app, /if \(addsRow\) markForRetry\(targetMetal, item\.id, userId, stackGen\);/);
   // and a reset drops the marks with the stack
   assert.ok(before('retryMarksRef.current.clear();', 'const resetAllState = (fullReset = true) => {', 120));
   // and a sync that clears the marks has just swapped in the cloud's copy
@@ -160,10 +160,10 @@ test('every edit whose cloud update fails leaves its holding marked for the next
     assert.match(line, /const \{ error \} = await updateHolding\(supabaseUser\.id, (\w+(\.\w+)?), item, targetMetal\);/);
     const row = line.match(/updateHolding\(supabaseUser\.id, (\w+(?:\.\w+)?),/)[1];
     // the mark names the row the update was for, and one that lands drops an older mark
-    assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId);`), row);
+    assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId, stackGen);`), row);
     assert.ok(fn.slice(at, at + 260).includes('editMarksRef.current.delete(item.id);'), row);
   }
-  assert.match(app, /const markEditForRetry = \(metal, localId, rowId, userId\) => \{\s*const mark = \{ rowId, userId \};\s*editMarksRef\.current\.set\(localId, mark\);/);
+  assert.match(app, /const markEditForRetry = \(metal, localId, rowId, userId, stackGen\) => \{\s*(\/\/.*\n\s*)*if \(foreignSwapGenRef\.current !== stackGen\) return;\s*const mark = \{ rowId, userId \};\s*editMarksRef\.current\.set\(localId, mark\);/);
   // a reset drops the marks with the stack, and so does a sync's swap
   const reset = app.slice(app.indexOf('const resetAllState = (fullReset = true) => {'));
   assert.ok(reset.indexOf('editMarksRef.current.clear();') < reset.indexOf('bumpStackGen(true)'));
@@ -205,4 +205,11 @@ test("a sync with edits put back doesn't write storage over a restore that lande
 test("a guest's holding keeps no row through an edit, since a restored backup's row needn't be this account's", () => {
   const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
   assert.ok(fn.includes('(base?.supabase_id && !base.addedAsGuest) || base?.restoredFor'));
+});
+
+test('a write takes the stack count when it begins, so a failure after a reset, restore or foreign swap marks nothing', () => {
+  const calls = [...app.matchAll(/mark(Edit)?ForRetry\([^()]*, userId, stackGen\);/g)];
+  assert.equal(calls.length, 8);
+  const takes = [...app.matchAll(/const userId = supabaseUser\.id;\n.*\n\s*const stackGen = foreignSwapGenRef\.current;/g)];
+  assert.equal(takes.length, 4);
 });
