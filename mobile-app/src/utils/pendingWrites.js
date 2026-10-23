@@ -4,8 +4,9 @@
 // add or brings a delete back. The sync waits for these before it reads.
 // Nothing here imports React Native, so it runs under `node --test`.
 
-// How long a sync waits for writes in flight before it gives up and leaves
-// the spaced out retry to try again
+// How long a sync waits for writes in flight before it gives up. A session's
+// first sync then takes the spaced out retry, and a pull to refresh after
+// that is tried again by the next pull
 export const HOLDING_WRITES_WAIT_MS = 30000;
 
 export const pendingWrites = () => {

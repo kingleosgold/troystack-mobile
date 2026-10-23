@@ -4099,8 +4099,10 @@ function AppContent() {
     try {
       // A write that started before the gates closed may not have landed, and
       // the cloud's copy fetched without it would drop it at the swap. A write
-      // that hangs ends this sync instead of holding the gates shut, and the
-      // spaced out retry waits for it again.
+      // that hangs ends this sync instead of holding the gates shut. The first
+      // sync of a session takes the spaced out retry, which waits for it again,
+      // and a pull to refresh after that is tried again by the next pull, as
+      // any failed pull is.
       const writesLanded = await holdingWrites.settled(HOLDING_WRITES_WAIT_MS);
       if (accountChanged()) return false;
       if (!writesLanded) {
