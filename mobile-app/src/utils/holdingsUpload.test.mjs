@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withRetryMarks, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, pendingEdits, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -214,4 +214,50 @@ test('a retry mark for another account, or none, changes nothing', () => {
   assert.equal(withRetryMarks(items, new Map(), 'a'), items);
   assert.equal(withRetryMarks(items, new Map([[1, 'a']]), null), items);
   assert.equal(withRetryMarks(undefined, new Map([[1, 'a']]), 'a'), undefined);
+});
+
+test('a holding whose cloud update failed takes the edit mark with its row', () => {
+  // an edit's copy has no row, so the mark puts it back
+  const items = [{ id: 1 }, { id: 2, productName: 'edited' }, { id: 3, supabase_id: 'r3' }];
+  const marks = new Map([[2, { rowId: 'r2', userId: 'a' }], [3, { rowId: 'r3', userId: 'a' }]]);
+  const marked = withEditMarks(items, marks, 'a');
+  assert.deepEqual(marked, [
+    { id: 1 },
+    { id: 2, productName: 'edited', supabase_id: 'r2', editPendingFor: 'a' },
+    { id: 3, supabase_id: 'r3', editPendingFor: 'a' },
+  ]);
+  // marked again, nothing changes
+  assert.equal(withEditMarks(marked, marks, 'a'), marked);
+  // and the sync sends both, with their metal
+  assert.deepEqual(pendingEdits([[], marked, [], []], 'a'), [
+    { item: marked[1], metal: 'gold' },
+    { item: marked[2], metal: 'gold' },
+  ]);
+  assert.deepEqual(pendingEdits([[], marked, [], []], 'b'), []);
+  // a marked edit never goes up as a new row on a later sync
+  assert.deepEqual(localHoldingsToSync(marked, 'a', 'a', false), []);
+});
+
+test('an edit mark for another account, another row or a restored holding changes nothing', () => {
+  const items = [{ id: 1 }, { id: 2, supabase_id: 'other' }, { id: 3, restoredFor: 'a' }];
+  const marks = new Map([[1, { rowId: 'r1', userId: 'b' }], [2, { rowId: 'r2', userId: 'a' }], [3, { rowId: 'r3', userId: 'a' }]]);
+  assert.equal(withEditMarks(items, marks, 'a'), items);
+  assert.equal(withEditMarks(items, new Map(), 'a'), items);
+  assert.equal(withEditMarks(items, marks, null), items);
+  assert.equal(withEditMarks(undefined, marks, 'a'), undefined);
+  // a restored holding still to go up isn't an edit to send
+  assert.deepEqual(pendingEdits([[{ id: 4, supabase_id: 'r4', editPendingFor: 'a', restoredFor: 'a' }]], 'a'), []);
+});
+
+test("an edit the sync couldn't send goes back over its row in the cloud's copy", () => {
+  const edited = { id: 2, productName: 'edited', supabase_id: 'r2', editPendingFor: 'a' };
+  const cloud = [[{ id: 1, supabase_id: 'r1' }], [{ id: 2, productName: 'old', supabase_id: 'r2' }], [], []];
+  const merged = withPendingEdits(cloud, [{ item: edited, metal: 'gold' }]);
+  assert.deepEqual(merged, [[{ id: 1, supabase_id: 'r1' }], [edited], [], []]);
+  // lists it doesn't touch come back as they were
+  assert.equal(merged[0], cloud[0]);
+  // a row another device deleted drops the edit
+  assert.deepEqual(withPendingEdits([[], [], [], []], [{ item: edited, metal: 'gold' }]), [[], [], [], []]);
+  // with nothing unsent the cloud's copy comes back as is
+  assert.equal(withPendingEdits(cloud, []), cloud);
 });

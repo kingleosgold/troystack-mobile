@@ -64,7 +64,12 @@ test('waits for every write, not just the first to settle', async () => {
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
 test('every holdings write to the cloud goes through the tracker', () => {
-  const calls = [...app.matchAll(/await (addHolding|updateHolding|deleteHoldingFromSupabase)\(/g)];
+  // The sync's own sends of marked edits run with the gates closed, so they
+  // aren't writes it has to wait for
+  const sync = app.indexOf('const syncHoldingsWithSupabase = async');
+  const syncEnd = app.indexOf('// A change away from a signed-in account stops', sync);
+  const calls = [...app.matchAll(/await (addHolding|updateHolding|deleteHoldingFromSupabase)\(/g)]
+    .filter((call) => call.index < sync || call.index > syncEnd);
   assert.equal(calls.length, 9);
   for (const call of calls) {
     const opener = app.lastIndexOf('async () => {', call.index);

@@ -89,6 +89,55 @@ export function withRetryMarks(items, marks, userId) {
 }
 
 /**
+ * The holdings with an edit mark on each one whose cloud update failed for
+ * this account, by local id. marks maps a local id to the row the update
+ * was for and its account. The mark puts the row back on the holding, since
+ * an edit's copy doesn't carry it, and editPendingFor names the account, so
+ * the next sync sends the edit before it swaps in the cloud's copy, which
+ * lacks it. A holding with another row, or a restored one still to go up,
+ * isn't marked. The same array comes back when nothing changes.
+ */
+export function withEditMarks(items, marks, userId) {
+  if (!userId || !marks?.size || !Array.isArray(items)) return items;
+  let changed = false;
+  const marked = items.map((item) => {
+    const mark = marks.get(item.id);
+    if (!mark || mark.userId !== userId || item.restoredFor) return item;
+    if (item.supabase_id && item.supabase_id !== mark.rowId) return item;
+    if (item.supabase_id === mark.rowId && item.editPendingFor === userId) return item;
+    changed = true;
+    return { ...item, supabase_id: mark.rowId, editPendingFor: userId };
+  });
+  return changed ? marked : items;
+}
+
+/**
+ * The edits a sync sends before it fetches the cloud's copy: each holding in
+ * lists, one array per metal in HOLDING_METALS order, that carries this
+ * account's edit mark and its row, with its metal.
+ */
+export function pendingEdits(lists, userId) {
+  if (!userId || !Array.isArray(lists)) return [];
+  return lists.flatMap((items, index) => (items || [])
+    .filter((item) => item.editPendingFor === userId && item.supabase_id && !item.restoredFor)
+    .map((item) => ({ item, metal: HOLDING_METALS[index] })));
+}
+
+/**
+ * The cloud's copy with each edit the sync couldn't send put back over its
+ * row, mark and all, so the next sync tries it again. An edit whose row is
+ * gone from the cloud's copy, as when another device deleted it, is dropped.
+ * The same arrays come back when there's nothing to put back.
+ */
+export function withPendingEdits(lists, unsent) {
+  if (!unsent?.length) return lists;
+  const byRow = new Map(unsent.map(({ item }) => [item.supabase_id, item]));
+  return lists.map((items) => (items.some((row) => byRow.has(row.supabase_id))
+    ? items.map((row) => byRow.get(row.supabase_id) || row)
+    : items));
+}
+
+/**
  * The holdings with the guest mark taken off, once an account has claimed
  * the stack they're in, so a mark only ever names a holding no account owns.
  * The same array comes back when nothing carries the mark.

@@ -112,7 +112,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   assert.match(fn, /setter\(prev => prev\.map\(i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\) \? item : i\)\);/);
   // Its marks and row come from that copy, not from the sheet's opening
   assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*await updateHolding\(base\.supabase_id, item, targetMetal\);/);
+  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(base\.supabase_id, item, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -146,4 +146,40 @@ test('every signed-in add whose cloud write fails leaves its holding marked for 
   assert.ok(before('retryMarksRef.current.clear();', 'const resetAllState = (fullReset = true) => {', 120));
   // and a sync that clears the marks has just swapped in the cloud's copy
   assert.match(app, /setPalladiumItems\(remotePalladium\);\n(\s*\/\/.*\n)*\s*retryMarksRef\.current\.clear\(\);/);
+});
+
+test('every edit whose cloud update fails leaves its holding marked for the next sync', () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  // updateHolding returns its error rather than throwing, so each call reads it
+  const updates = [...fn.matchAll(/await updateHolding\(/g)].map((m) => m.index);
+  assert.equal(updates.length, 2);
+  for (const at of updates) {
+    const line = fn.slice(fn.lastIndexOf('\n', at), fn.indexOf('\n', at));
+    assert.match(line, /const \{ error \} = await updateHolding\((\w+(\.\w+)?), item, targetMetal\);/);
+    const row = line.match(/updateHolding\((\w+(?:\.\w+)?),/)[1];
+    // the mark names the row the update was for, and one that lands drops an older mark
+    assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId);`), row);
+    assert.ok(fn.slice(at, at + 260).includes('editMarksRef.current.delete(item.id);'), row);
+  }
+  assert.match(app, /const markEditForRetry = \(metal, localId, rowId, userId\) => \{\s*const mark = \{ rowId, userId \};\s*editMarksRef\.current\.set\(localId, mark\);/);
+  // a reset drops the marks with the stack, and so does a sync's swap
+  const reset = app.slice(app.indexOf('const resetAllState = (fullReset = true) => {'));
+  assert.ok(reset.indexOf('editMarksRef.current.clear();') < reset.indexOf('bumpStackGen(true)'));
+  assert.ok(reset.indexOf('editMarksRef.current.clear();') < reset.indexOf('if (fullReset)'));
+  assert.match(app, /setPalladiumItems\(remotePalladium\);\n(\s*\/\/.*\n)*\s*retryMarksRef\.current\.clear\(\);\n\s*editMarksRef\.current\.clear\(\);/);
+});
+
+test('a sync sends the marked edits before it fetches the cloud copy, and puts back any that fail', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  const read = body.indexOf('withEditMarks(items, editMarksRef.current, supabaseUser.id)');
+  const send = body.indexOf('for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id))');
+  const fetch = body.indexOf('await fullSync(');
+  assert.ok(read > 0 && send > read && fetch > send);
+  // each edit stops at an account change, and a failed one is kept
+  assert.match(body, /await updateHolding\(edit\.item\.supabase_id, edit\.item, edit\.metal\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(editError\) unsentEdits\.push\(edit\);/);
+  // the swap and its stored copy carry the edits put back
+  const merge = body.indexOf('withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits)');
+  assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));
+  assert.match(body, /const stackWrites = refusedCount > 0 \|\| unsentEdits\.length > 0/);
 });
