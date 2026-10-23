@@ -24,9 +24,9 @@ test('every whole stack swap counts', () => {
   for (const swap of swaps) assert.ok(before(swap, 'bumpStackGen();', 80), swap);
   // A sync's swaps count as the same stack only when it is: the claim of an
   // unowned or own stack, and the cloud's copy of one
-  assert.ok(before('setSilverItems(withoutGuestMark);', 'bumpStackGen(true);', 80));
+  assert.ok(before('setSilverItems(unmark);', 'bumpStackGen(true);', 80));
   assert.ok(before('setSilverItems(remoteSilver);', 'bumpStackGen(mayUploadLocalStack(stackOwner, supabaseUser.id));', 80));
-  assert.ok(before('bumpStackGen(true);', 'if (claimsStack) {', 40));
+  assert.ok(before('bumpStackGen(true);', 'if (claimsStack) {', 250));
   assert.equal((app.match(/bumpStackGen\(true\)/g) || []).length, 1);
   // The count only moves through the helper, which closes the detail view,
   // and any swap not marked same-stack moves the foreign count with it

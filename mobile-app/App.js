@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, syncedKeys, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
@@ -4143,13 +4143,16 @@ function AppContent() {
       if (claimWrites.length) await AsyncStorage.multiSet(claimWrites);
       // The marks come off in state even if the account changed meanwhile,
       // since storage already has them off and a marked copy left in state
-      // could go up to the next account. After a sign out's reset it's a no-op.
+      // could go up to the next account. Only the holdings the claim read lose
+      // them, so one a guest added after a sign out keeps its mark.
       if (claimsStack) {
+        const claimed = new Set([localSilver, localGold, localPlatinum, localPalladium].flat());
+        const unmark = (items) => withoutGuestMarkOn(items, claimed);
         bumpStackGen(true);
-        setSilverItems(withoutGuestMark);
-        setGoldItems(withoutGuestMark);
-        setPlatinumItems(withoutGuestMark);
-        setPalladiumItems(withoutGuestMark);
+        setSilverItems(unmark);
+        setGoldItems(unmark);
+        setPlatinumItems(unmark);
+        setPalladiumItems(unmark);
       }
       if (accountChanged()) return false;
 
