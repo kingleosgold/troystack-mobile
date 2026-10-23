@@ -259,7 +259,9 @@ export async function deleteHolding(
   }
 }
 
-// Find holding by local_id in notes JSON
+// Find holding by local_id in notes JSON. A failed read throws rather than
+// return null, since null means not in the cloud: an edit would add the
+// holding a second time, and a delete would skip a row that's there.
 export async function findHoldingByLocalId(
   userId: string,
   localId: number,
@@ -296,7 +298,7 @@ export async function findHoldingByLocalId(
     return match || null;
   } catch (err) {
     console.error('Error finding holding by local ID:', err);
-    return null;
+    throw err;
   }
 }
 
