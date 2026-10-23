@@ -21,6 +21,6 @@ export function cloudMissAlert(kind) {
   const what = kind === 'edit' ? 'Your change' : 'This holding';
   return {
     title: "Saved on this phone only",
-    message: `${what} didn't reach your account yet. Pull down on My Stack to send it now, or TroyStack sends it the next time it opens. Stay signed in until then, since signing out clears it.`,
+    message: `${what} didn't reach your account yet. Pull down on My Stack to send it now, or TroyStack sends it the next time it starts. Stay signed in until then, since signing out clears it.`,
   };
 }
