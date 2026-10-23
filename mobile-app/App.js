@@ -3057,9 +3057,12 @@ function AppContent() {
   // copy, so the holding takes a retry mark for its account. The mark names
   // that account, so it never sends the holding to another one, and it still
   // lands after the account changed, as when the add failed because the
-  // session ended and the same account signs back in. After a sign out's
-  // reset there's no holding left to mark.
-  const markForRetry = (metal, localId, userId) => {
+  // session ended and the same account signs back in. A failure that lands
+  // after a sign out's reset, a restore or a swap to another account's stack
+  // marks nothing, since a holding with that local id now isn't the one the
+  // write was for.
+  const markForRetry = (metal, localId, userId, stackGen) => {
+    if (foreignSwapGenRef.current !== stackGen) return;
     retryMarksRef.current.set(localId, userId);
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
@@ -3070,7 +3073,10 @@ function AppContent() {
   // the same way, by the cloud's copy at the next sync, so the holding takes
   // an edit mark naming its row and account, and the sync sends the edit
   // first. An edit that lands drops an older mark, since the cloud has it now.
-  const markEditForRetry = (metal, localId, rowId, userId) => {
+  const markEditForRetry = (metal, localId, rowId, userId, stackGen) => {
+    // Likewise a failure after a reset, a restore or another account's stack
+    // marks nothing, or the mark could send an older copy over the row
+    if (foreignSwapGenRef.current !== stackGen) return;
     const mark = { rowId, userId };
     editMarksRef.current.set(localId, mark);
     // A failure that lands after its account signed out or changed leaves
@@ -9438,10 +9444,12 @@ function AppContent() {
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         const userId = supabaseUser.id;
+        // A reset, restore or another account's stack since the write began drops its mark
+        const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
             const { error } = await addHolding(userId, item, item.metal);
-            if (error) markForRetry(item.metal, item.id, userId);
+            if (error) markForRetry(item.metal, item.id, userId, stackGen);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
         });
@@ -9505,10 +9513,12 @@ function AppContent() {
       // Sync to Supabase if signed in
       if (supabaseUser && newItems.length > 0) {
         const userId = supabaseUser.id;
+        // A reset, restore or another account's stack since the write began drops its mark
+        const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
             const { error } = await addHolding(userId, item, item.metal);
-            if (error) markForRetry(item.metal, item.id, userId);
+            if (error) markForRetry(item.metal, item.id, userId, stackGen);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
         });
@@ -9561,9 +9571,11 @@ function AppContent() {
     // Sync to Supabase if signed in
     if (supabaseUser) {
       const userId = supabaseUser.id;
+      // A reset, restore or another account's stack since the write began drops its mark
+      const stackGen = foreignSwapGenRef.current;
       trackHoldingWrite(async () => {
         const { error } = await addHolding(userId, newItem, metalKey);
-        if (error) markForRetry(metalKey, newItem.id, userId);
+        if (error) markForRetry(metalKey, newItem.id, userId, stackGen);
         else if (__DEV__) console.log('Synced scanned item to Supabase');
       });
     }
@@ -9825,6 +9837,8 @@ function AppContent() {
     // Sync to Supabase if signed in
     if (supabaseUser) {
       const userId = supabaseUser.id;
+      // A reset, restore or another account's stack since the write began drops its mark
+      const stackGen = foreignSwapGenRef.current;
       // Whether the holding may go up to this account as a new row, so a
       // failed add or lookup leaves it marked for the next sync to send
       let addsRow = !editingItem;
@@ -9833,7 +9847,7 @@ function AppContent() {
           if (editingItem && base.supabase_id) {
             // Update existing item in Supabase
             const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
-            if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId);
+            if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId, stackGen);
             else {
               editMarksRef.current.delete(item.id);
               if (__DEV__) console.log('Updated holding in Supabase');
@@ -9854,26 +9868,26 @@ function AppContent() {
             if (existingHolding) {
               addsRow = false;
               const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
-              if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId);
+              if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
               else {
                 editMarksRef.current.delete(item.id);
                 if (__DEV__) console.log('Updated existing holding in Supabase');
               }
             } else if (addsRow) {
               const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
-              if (error) markForRetry(targetMetal, item.id, userId);
+              if (error) markForRetry(targetMetal, item.id, userId, stackGen);
               else if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
             }
           } else {
             // New item - add to Supabase
             const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
-            if (error) markForRetry(targetMetal, item.id, userId);
+            if (error) markForRetry(targetMetal, item.id, userId, stackGen);
             else if (data && __DEV__) console.log('Added new holding to Supabase');
           }
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
-          if (addsRow) markForRetry(targetMetal, item.id, userId);
+          if (addsRow) markForRetry(targetMetal, item.id, userId, stackGen);
         }
       });
     }
