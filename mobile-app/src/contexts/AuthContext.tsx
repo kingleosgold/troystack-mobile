@@ -33,7 +33,7 @@ interface AuthContextType {
   loading: boolean;
   busy: boolean;
   linkedProviders: LinkedProviders;
-  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUp: (email: string, password: string) => Promise<{ error: AuthError | null; session?: Session | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signInWithGoogle: () => Promise<{ error: Error | null }>;
   signInWithApple: () => Promise<{ error: Error | null }>;
@@ -127,7 +127,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       );
 
       const result = await Promise.race([signUpPromise, timeoutPromise]) as any;
-      return { error: result.error };
+      // A session here means Confirm email is off and the account is signed in now
+      return { error: result.error, session: result.data?.session ?? null };
     } catch (error: any) {
       return { error: error as AuthError };
     } finally {

@@ -24,9 +24,9 @@ test('every whole stack swap counts', () => {
   for (const swap of swaps) assert.ok(before(swap, 'bumpStackGen();', 80), swap);
   // A sync's swaps count as the same stack only when it is: the claim of an
   // unowned or own stack, and the cloud's copy of one
-  assert.ok(before('setSilverItems(withoutGuestMark);', 'bumpStackGen(true);', 80));
+  assert.ok(before('setSilverItems(unmark);', 'bumpStackGen(true);', 80));
   assert.ok(before('setSilverItems(remoteSilver);', 'bumpStackGen(mayUploadLocalStack(stackOwner, supabaseUser.id));', 80));
-  assert.ok(before('bumpStackGen(true);', 'if (claimsStack) {', 40));
+  assert.ok(before('bumpStackGen(true);', 'if (claimsStack) {', 250));
   assert.equal((app.match(/bumpStackGen\(true\)/g) || []).length, 1);
   // The count only moves through the helper, which closes the detail view,
   // and any swap not marked same-stack moves the foreign count with it
@@ -112,7 +112,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   assert.match(fn, /setter\(prev => prev\.map\(i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\) \? item : i\)\);/);
   // Its marks and row come from that copy, not from the sheet's opening
   assert.match(fn, /\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor, supabase_id: base\.supabase_id \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(base\.supabase_id, item, targetMetal\);/);
+  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(supabaseUser\.id, base\.supabase_id, item, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -155,8 +155,8 @@ test('every edit whose cloud update fails leaves its holding marked for the next
   assert.equal(updates.length, 2);
   for (const at of updates) {
     const line = fn.slice(fn.lastIndexOf('\n', at), fn.indexOf('\n', at));
-    assert.match(line, /const \{ error \} = await updateHolding\((\w+(\.\w+)?), item, targetMetal\);/);
-    const row = line.match(/updateHolding\((\w+(?:\.\w+)?),/)[1];
+    assert.match(line, /const \{ error \} = await updateHolding\(supabaseUser\.id, (\w+(\.\w+)?), item, targetMetal\);/);
+    const row = line.match(/updateHolding\(supabaseUser\.id, (\w+(?:\.\w+)?),/)[1];
     // the mark names the row the update was for, and one that lands drops an older mark
     assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId);`), row);
     assert.ok(fn.slice(at, at + 260).includes('editMarksRef.current.delete(item.id);'), row);
@@ -177,7 +177,7 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   const fetch = body.indexOf('await fullSync(');
   assert.ok(read > 0 && send > read && fetch > send);
   // each edit stops at an account change, and a failed one is kept
-  assert.match(body, /await updateHolding\(edit\.item\.supabase_id, edit\.item, edit\.metal\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(editError\) unsentEdits\.push\(edit\);/);
+  assert.match(body, /await updateHolding\(supabaseUser\.id, edit\.item\.supabase_id, edit\.item, edit\.metal\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(editError\) unsentEdits\.push\(edit\);/);
   // the swap and its stored copy carry the edits put back
   const merge = body.indexOf('withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits)');
   assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));

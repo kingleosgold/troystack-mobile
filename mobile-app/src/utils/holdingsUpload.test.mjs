@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/holdingsUpload.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, pendingEdits, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark } from './holdingsUpload.js';
+import { HOLDINGS_OWNER_KEY, HOLDING_METALS, SYNCED_KEY_PREFIX, asAddedBy, asRestoredBy, holdingMetal, holdingsToUpload, mayAddEditedHolding, localHoldingsToSync, mayUploadLocalStack, stackOwnerOf, pendingEdits, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark, withoutGuestMarkOn } from './holdingsUpload.js';
 
 test('the owner lives under a stack_ key', () => {
   assert.equal(HOLDINGS_OWNER_KEY, 'stack_holdings_owner');
@@ -113,6 +113,24 @@ test('nothing marked keeps the same array', () => {
   const items = [{ id: 1 }];
   assert.equal(withoutGuestMark(items), items);
   assert.equal(withoutGuestMark(undefined), undefined);
+});
+
+test("a claim landing after a sign out leaves the next guest's holding marked", () => {
+  const old = asAddedBy({ id: 1 }, false);
+  const plain = { id: 2 };
+  const claimed = new Set([old, plain]);
+  // Signed out mid claim, then a guest adds a holding with the same local id
+  const added = asAddedBy({ id: 1 }, false);
+  assert.deepEqual(withoutGuestMarkOn([old, plain, added], claimed), [{ id: 1 }, plain, added]);
+  assert.deepEqual(localHoldingsToSync(withoutGuestMarkOn([added], claimed), 'a', 'b'), [added]);
+});
+
+test('a claim that changes nothing keeps the same array', () => {
+  const added = asAddedBy({ id: 1 }, false);
+  const items = [{ id: 2 }, added];
+  assert.equal(withoutGuestMarkOn(items, new Set([items[0]])), items);
+  assert.equal(withoutGuestMarkOn([], new Set()).length, 0);
+  assert.equal(withoutGuestMarkOn(undefined, new Set()), undefined);
 });
 
 test("a guest's additions to an expired session's stack go up when that account signs back in", () => {
