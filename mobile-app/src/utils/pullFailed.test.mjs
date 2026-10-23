@@ -39,7 +39,7 @@ test('the My Stack pull waits for a sync already running and judges only its own
   assert.ok(first > 0 && first < fn.indexOf('syncHoldingsWithSupabase(true)'));
   const wait = fn.indexOf('await syncEndRef.current;');
   assert.ok(wait > fn.indexOf('await Promise.all(promises);') && wait < fn.indexOf('setIsRefreshing(false);'));
-  assert.ok(fn.includes('failed: outcome.seq >= firstSeq && outcome.failed'));
+  assert.ok(fn.includes('failed: outcome.seq === firstSeq && outcome.failed'));
   assert.ok(fn.includes('sameAccount: accountGenRef.current === accountGenAtPull'));
   assert.equal([...app.matchAll(/pullFailedAlert\(\)/g)].length, 1);
 });

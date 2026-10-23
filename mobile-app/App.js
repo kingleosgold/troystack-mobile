@@ -8308,7 +8308,7 @@ function AppContent() {
     // A pull whose sync failed says so, or the spinner just stops and the
     // stack reads as checked against the account when it wasn't
     const outcome = syncOutcomeRef.current;
-    if (pullFailedDue({ signedIn, failed: outcome.seq >= firstSeq && outcome.failed, sameAccount: accountGenRef.current === accountGenAtPull })) {
+    if (pullFailedDue({ signedIn, failed: outcome.seq === firstSeq && outcome.failed, sameAccount: accountGenRef.current === accountGenAtPull })) {
       const { title, message } = pullFailedAlert();
       Alert.alert(title, message);
     }
