@@ -3,6 +3,16 @@ import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
+import { HOLDING_WRITES_WAIT_MS, sendAllWithin } from '../utils/pendingWrites';
+
+// How a sync sends the edits it puts over rows: track starts a row's write
+// as one the app waits for, by is the deadline for all of them and stopped
+// says the account changed. Without them each write still has the limit.
+export interface RowEditWait {
+  track?: (rowId: string, run: () => Promise<{ error: any }>) => Promise<{ error: any }>;
+  by?: number;
+  stopped?: () => boolean;
+}
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -308,11 +318,13 @@ export async function syncLocalToSupabase(
   silverItems: LocalHolding[],
   goldItems: LocalHolding[],
   platinumItems: LocalHolding[] = [],
-  palladiumItems: LocalHolding[] = []
+  palladiumItems: LocalHolding[] = [],
+  rowEditWait: RowEditWait = {}
 ): Promise<{
   syncedCount: number;
   skippedCount: number;
   rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium'; rowId?: string }[];
+  unsentRows: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium'; rowId?: string }[];
   error: Error | null;
 }> {
   let syncedCount = 0;
@@ -363,15 +375,26 @@ export async function syncLocalToSupabase(
       { items: palladiumItems, metal: 'palladium' },
     ];
 
+    // An edit whose lookup failed goes over the row it was looking for,
+    // which the insert below skips. One that fails stays on the phone
+    // instead of its row, marked, like a refused insert, so it can't hold
+    // back every sync. The sync waits for these writes only so long, as for
+    // its other resends, and one it lets go of stays marked the same way.
+    type RowEdit = { item: LocalHolding; rowId: string; metal: 'silver' | 'gold' | 'platinum' | 'palladium' };
+    const rowEdits: RowEdit[] = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId)
+      .map(({ item, rowId }: { item: LocalHolding; rowId: string }) => ({ item, rowId, metal })));
+    const track = rowEditWait.track || ((_rowId: string, run: () => Promise<{ error: any }>) => run());
+    const unsentRowEdits: RowEdit[] = await sendAllWithin(
+      rowEdits,
+      ({ item, rowId, metal }: RowEdit) => track(rowId, () => updateHolding(userId, rowId, item, metal)),
+      rowEditWait.by ?? Date.now() + HOLDING_WRITES_WAIT_MS,
+      rowEditWait.stopped
+    );
+    // Kept apart from refusals, since a row edit that didn't land is most
+    // likely a bad connection, not numbers the database turned down
+    const unsentRows = unsentRowEdits.map(({ item, rowId, metal }) => ({ item, metal, rowId }));
+
     for (const { items, metal } of metalGroups) {
-      // An edit whose lookup failed goes over the row it was looking for,
-      // which the insert below skips. One that fails stays on the phone
-      // instead of its row, marked, like a refused insert, so it can't hold
-      // back every sync.
-      for (const { item, rowId } of rowEditsToSend(items, liveRows, userId)) {
-        const { error: updateError } = await updateHolding(userId, rowId, item, metal);
-        if (updateError) rejected.push({ item, metal, rowId });
-      }
       const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
@@ -391,10 +414,10 @@ export async function syncLocalToSupabase(
     rejectedRows.forEach((index: number) => rejected.push(sources[index]));
     if (rejected.length) console.warn(`Supabase refused ${rejected.length} holding(s); they stay on the phone`);
 
-    return { syncedCount, skippedCount, rejected, error: null };
+    return { syncedCount, skippedCount, rejected, unsentRows, error: null };
   } catch (err) {
     console.error('Error syncing local to Supabase:', err);
-    return { syncedCount, skippedCount, rejected: [], error: err as Error };
+    return { syncedCount, skippedCount, rejected: [], unsentRows: [], error: err as Error };
   }
 }
 
@@ -408,7 +431,8 @@ export async function fullSync(
   localGold: LocalHolding[],
   uploadLocal: boolean = false,
   localPlatinum: LocalHolding[] = [],
-  localPalladium: LocalHolding[] = []
+  localPalladium: LocalHolding[] = [],
+  rowEditWait: RowEditWait = {}
 ): Promise<{
   silverItems: LocalHolding[];
   goldItems: LocalHolding[];
@@ -417,6 +441,8 @@ export async function fullSync(
   syncedToCloud: number;
   refusedCount: number;
   refusedNames: string[];
+  // Row edits the sync couldn't send, put back marked like a refusal
+  unsentRowEdits: number;
   error: Error | null;
 }> {
   try {
@@ -434,12 +460,13 @@ export async function fullSync(
     let syncedCount = 0;
     if (uploadLocal && hasLocalData) {
       console.log(`Adding local holdings (cloud ${hasRemoteData ? 'has holdings' : 'empty'})...`);
-      const { syncedCount: uploaded, rejected, error: syncError } = await syncLocalToSupabase(
+      const { syncedCount: uploaded, rejected, unsentRows, error: syncError } = await syncLocalToSupabase(
         userId,
         localSilver,
         localGold,
         localPlatinum,
-        localPalladium
+        localPalladium,
+        rowEditWait
       );
 
       // A failed upload keeps the local stack on screen and this sync unmarked,
@@ -453,13 +480,15 @@ export async function fullSync(
       // A holding the database refused stays on the phone beside the cloud's
       // copy, marked for this account so the next sync tries it again
       // A failed edit of a row takes the row's place, in its own metal's list
-      const editedRows = new Set(rejected.map(({ rowId }) => rowId).filter(Boolean));
+      // and so does one that didn't land
+      const putBack = [...rejected, ...unsentRows];
+      const editedRows = new Set(putBack.map(({ rowId }) => rowId).filter(Boolean));
       const withoutEdited = (items: LocalHolding[]) => items.filter((h) => !editedRows.has((h as any).supabase_id));
       const lists = { silver: withoutEdited(newSilver), gold: withoutEdited(newGold), platinum: withoutEdited(newPlatinum), palladium: withoutEdited(newPalladium) };
       // and a failed edit keeps its lookup mark, so the next sync sends it
       // again, and the row it found, so a delete or edit before then reaches
       // that row even when the edit moved the holding to another metal
-      rejected.forEach(({ item, metal, rowId }) => lists[metal].push(...asRestoredBy([item], userId)
+      putBack.forEach(({ item, metal, rowId }) => lists[metal].push(...asRestoredBy([item], userId)
         .map((back) => (rowId ? { ...back, supabase_id: rowId, rowLookupFor: userId } : back))));
       return {
         silverItems: lists.silver,
@@ -469,6 +498,7 @@ export async function fullSync(
         syncedToCloud: syncedCount,
         refusedCount: rejected.length,
         refusedNames: rejected.map(({ item }) => item.productName),
+        unsentRowEdits: unsentRows.length,
         error: null,
       };
     }
@@ -483,6 +513,7 @@ export async function fullSync(
       syncedToCloud: syncedCount,
       refusedCount: 0,
       refusedNames: [],
+      unsentRowEdits: 0,
       error: null,
     };
   } catch (err) {
@@ -495,6 +526,7 @@ export async function fullSync(
       syncedToCloud: 0,
       refusedCount: 0,
       refusedNames: [],
+      unsentRowEdits: 0,
       error: err as Error,
     };
   }

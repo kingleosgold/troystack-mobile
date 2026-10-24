@@ -79,3 +79,23 @@ export const settleWithin = (write, limitMs, stopped) => {
     clearInterval(poll);
   });
 };
+
+// Sends each job in turn through send, which starts its write, and waits for
+// them only until by, one deadline for all of them, or until the stop check
+// turns true. A job that fails, or that the wait lets go of or never starts,
+// comes back in the list of those not sent, so the caller keeps it for the
+// next try. A write the wait let go of keeps running.
+export async function sendAllWithin(jobs, send, by, stopped) {
+  const unsent = [];
+  let late = false;
+  for (const job of jobs || []) {
+    if (late || Date.now() >= by || (typeof stopped === 'function' && stopped())) {
+      unsent.push(job);
+      continue;
+    }
+    const sent = await settleWithin(send(job), by - Date.now(), stopped);
+    if (sent.late || sent.stopped) late = true;
+    if (!sent.value || sent.value.error) unsent.push(job);
+  }
+  return unsent;
+}

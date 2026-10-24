@@ -4390,16 +4390,22 @@ function AppContent() {
       const unsentEdits = [];
       const resendsBy = Date.now() + HOLDING_WRITES_WAIT_MS;
       let resendsLate = false;
+      // A resend of a row is held where an edit of that row looks for it, so
+      // the edit waits for the resend rather than land under it
+      const trackRowResend = (rowId, run) => {
+        const resend = trackHoldingWrite(run);
+        rowResendsRef.current.set(rowId, resend);
+        const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };
+        resend.then(forget, forget);
+        return resend;
+      };
       for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
         if (resendsLate || Date.now() >= resendsBy) {
           unsentEdits.push(edit);
           continue;
         }
         const rowId = edit.item.supabase_id;
-        const resend = trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal));
-        rowResendsRef.current.set(rowId, resend);
-        const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };
-        resend.then(forget, forget);
+        const resend = trackRowResend(rowId, () => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal));
         const sent = await settleWithin(resend, resendsBy - Date.now(), accountChanged);
         if (accountChanged()) return false;
         if (sent.late) resendsLate = true;
@@ -4409,16 +4415,22 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
+      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
         uploadLocal,
         toUpload[2],
-        toUpload[3]
+        toUpload[3],
+        // An edit fullSync sends over a row found by local id is a resend
+        // too, under the same limit
+        { track: trackRowResend, by: resendsBy, stopped: accountChanged }
       );
 
       if (accountChanged()) return false;
+      // A row edit fullSync couldn't send is put back marked and counts as
+      // unsent, like a resend above, not as a refusal
+      if (!error) unsent += unsentRowEdits || 0;
       const [remoteSilver, remoteGold, remotePlatinum, remotePalladium] = error
         ? [cloudSilver, cloudGold, cloudPlatinum, cloudPalladium]
         : withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits);
@@ -4440,12 +4452,14 @@ function AppContent() {
         const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
         // Edits put back are written with the stack below, which would land over
         // the restore in storage, so they wait too. The restore dropped their marks.
-        if ((refusedCount > 0 || unsentEdits.length > 0) && restoreLanded()) return false;
+        // So are row edits fullSync couldn't send, put back marked the same way
+        const putBack = refusedCount + (unsentRowEdits || 0) + unsentEdits.length;
+        if (putBack > 0 && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
         // effects run can't leave the phone marked synced over an unmarked one.
-        const stackWrites = refusedCount > 0 || unsentEdits.length > 0
+        const stackWrites = putBack > 0
           ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
             .map(([key, items]) => [key, JSON.stringify(items)])
           : [];
@@ -4462,7 +4476,7 @@ function AppContent() {
         // hasSyncedOnce false, and the auto sync sends it up next. With refused
         // holdings the synced key comes back off, so that sync is a first one.
         if (restoreLanded()) {
-          if (refusedCount > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
+          if (putBack > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
           return false;
         }
 
