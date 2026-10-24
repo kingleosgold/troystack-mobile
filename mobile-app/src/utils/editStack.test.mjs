@@ -229,3 +229,26 @@ test('an edit that picks another metal moves the holding and looks its row up un
   assert.ok(fn.includes('setter(prev => [...prev.filter(i => !isBase(i)), item]);'));
   assert.ok(fn.includes('findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal)'));
 });
+
+test("an edit with no row waits for the writes before it, so an add still in flight isn't looked up too early and added twice", () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  // Taken before the edit's own write is tracked, so it never waits on itself
+  const taken = fn.indexOf('const earlierWrites = editingItem && !item.supabase_id');
+  const tracked = fn.indexOf('trackHoldingWrite(async () => {');
+  assert.ok(taken >= 0 && tracked > taken);
+  assert.ok(fn.includes('holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)'));
+  // Awaited on the lookup path, before the lookup
+  const lookup = fn.slice(fn.indexOf('} else if (editingItem) {'));
+  assert.ok(lookup.indexOf('await earlierWrites;') >= 0);
+  assert.ok(lookup.indexOf('await earlierWrites;') < lookup.indexOf('findHoldingByLocalId('));
+});
+
+test("an edit that waited doesn't add a row for a holding deleted on the phone meanwhile", () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  const lookup = fn.slice(fn.indexOf('} else if (editingItem) {'));
+  const skip = lookup.indexOf('} else if (addsRow && !stillOnPhone(item.id)) {');
+  const add = lookup.indexOf('} else if (addsRow) {');
+  assert.ok(skip > 0 && skip < add);
+  assert.match(lookup.slice(skip, add), /addsRow = false;/);
+  assert.ok(fn.includes('return !lists || lists.some(list => (list || []).some(i => i.id === localId));'));
+});

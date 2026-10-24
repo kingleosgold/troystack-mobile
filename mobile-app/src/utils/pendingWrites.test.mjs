@@ -215,3 +215,18 @@ test('the sync reads the stack as committed after its waits, not as its render s
   // The ref follows every commit, whatever changed
   assert.match(app, /useLayoutEffect\(\(\) => \{\s*committedStackRef\.current = \[silverItems, goldItems, platinumItems, palladiumItems\];\s*\}\);/);
 });
+
+test('a wait taken before a write is tracked settles without it, so that write can await it', async () => {
+  const writes = pendingWrites();
+  const add = gate();
+  writes.track(async () => { await add.shut; });
+  const earlier = writes.settled(1000);
+  let editLooked = false;
+  const edit = writes.track(async () => { await earlier; editLooked = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(editLooked, false);
+  add.open();
+  await edit;
+  assert.equal(editLooked, true);
+  assert.equal(await earlier, true);
+});
