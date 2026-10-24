@@ -109,12 +109,13 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   assert.match(fn, /const base = \(swappedSinceOpen && holdingNow\) \|\| editingItem;/);
   // The local id and the local update follow that copy too
   assert.match(fn, /id: base\?\.id \|\| Date\.now\(\),/);
-  assert.match(fn, /setter\(prev => prev\.map\(i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\) \? item : i\)\);/);
+  assert.match(fn, /const isBase = i => \(base\.supabase_id \? i\.supabase_id === base\.supabase_id : i\.id === base\.id\);/);
+  assert.match(fn, /setter\(prev => prev\.map\(i => isBase\(i\) \? item : i\)\);/);
   // Its marks and row come from that copy, not from the sheet's opening
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
   assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && base\.supabase_id\) \{\n\s*\/\/ Update existing item in Supabase\n\s*const \{ error \} = await updateHolding\(supabaseUser\.id, base\.supabase_id, item, targetMetal\);/);
+  assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateHolding\(supabaseUser\.id, item\.supabase_id, item, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -212,4 +213,19 @@ test('a write takes the stack count when it begins, so a failure after a reset, 
   assert.equal(calls.length, 8);
   const takes = [...app.matchAll(/const userId = supabaseUser\.id;\n.*\n\s*const stackGen = foreignSwapGenRef\.current;/g)];
   assert.equal(takes.length, 4);
+});
+
+test("an edit updates only the row the holding kept, so a guest's restored row goes down the lookup path", () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  assert.ok(fn.includes('if (editingItem && item.supabase_id) {'));
+  assert.ok(fn.includes('await updateHolding(supabaseUser.id, item.supabase_id, item, targetMetal);'));
+  assert.ok(!fn.includes('if (editingItem && base.supabase_id) {'));
+});
+
+test('an edit that picks another metal moves the holding and looks its row up under the metal it opened in', () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  assert.ok(fn.includes('const openedMetal = editsHolding ? opened?.metal : null;'));
+  assert.ok(fn.includes('settersMap[openedMetal](prev => prev.filter(i => !isBase(i)));'));
+  assert.ok(fn.includes('setter(prev => [...prev.filter(i => !isBase(i)), item]);'));
+  assert.ok(fn.includes('findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal)'));
 });
