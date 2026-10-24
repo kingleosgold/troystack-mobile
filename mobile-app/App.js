@@ -4452,12 +4452,14 @@ function AppContent() {
         const restoreLanded = () => restoreCountRef.current !== restoresAtStart;
         // Edits put back are written with the stack below, which would land over
         // the restore in storage, so they wait too. The restore dropped their marks.
-        if ((refusedCount > 0 || unsentEdits.length > 0) && restoreLanded()) return false;
+        // So are row edits fullSync couldn't send, put back marked the same way
+        const putBack = refusedCount + (unsentRowEdits || 0) + unsentEdits.length;
+        if (putBack > 0 && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
         // effects run can't leave the phone marked synced over an unmarked one.
-        const stackWrites = refusedCount > 0 || unsentEdits.length > 0
+        const stackWrites = putBack > 0
           ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
             .map(([key, items]) => [key, JSON.stringify(items)])
           : [];

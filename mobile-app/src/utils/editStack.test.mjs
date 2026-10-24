@@ -192,7 +192,7 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   // the swap and its stored copy carry the edits put back
   const merge = body.indexOf('withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits)');
   assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));
-  assert.match(body, /const stackWrites = refusedCount > 0 \|\| unsentEdits\.length > 0/);
+  assert.match(body, /const stackWrites = putBack > 0/);
 });
 
 test('a restore drops the write marks, so none lands on a restored copy', () => {
@@ -204,9 +204,9 @@ test('a restore drops the write marks, so none lands on a restored copy', () => 
 });
 
 test("a sync with edits put back doesn't write storage over a restore that landed", () => {
-  assert.match(app, /if \(\(refusedCount > 0 \|\| unsentEdits\.length > 0\) && restoreLanded\(\)\) return false;/);
-  const guard = app.indexOf('(refusedCount > 0 || unsentEdits.length > 0) && restoreLanded()');
-  assert.ok(guard < app.indexOf('const stackWrites = refusedCount > 0 || unsentEdits.length > 0'));
+  assert.match(app, /const putBack = refusedCount \+ \(unsentRowEdits \|\| 0\) \+ unsentEdits\.length;/);
+  const guard = app.indexOf('if (putBack > 0 && restoreLanded()) return false;');
+  assert.ok(guard > 0 && guard < app.indexOf('const stackWrites = putBack > 0'));
   // and a late failure marks the stack in state only for its own account
   assert.match(app, /editMarksRef\.current\.set\(localId, mark\);\n(\s*\/\/.*\n)*\s*if \(userIdRef\.current !== userId\) return;/);
 });
