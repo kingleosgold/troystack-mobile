@@ -115,7 +115,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
   assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateHolding\(supabaseUser\.id, item\.supabase_id, item, targetMetal\);/);
+  assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateAfterResend\(item\.supabase_id, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -154,12 +154,14 @@ test('every signed-in add whose cloud write fails leaves its holding marked for 
 test('every edit whose cloud update fails leaves its holding marked for the next sync', () => {
   const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
   // updateHolding returns its error rather than throwing, so each call reads it
-  const updates = [...fn.matchAll(/await updateHolding\(/g)].map((m) => m.index);
+  const updates = [...fn.matchAll(/await updateAfterResend\(/g)].map((m) => m.index);
   assert.equal(updates.length, 2);
+  // the wrapper ends in the update itself, after any resend of the row
+  assert.match(fn, /return updateHolding\(supabaseUser\.id, rowId, item, metal\);/);
   for (const at of updates) {
     const line = fn.slice(fn.lastIndexOf('\n', at), fn.indexOf('\n', at));
-    assert.match(line, /const \{ error \} = await updateHolding\(supabaseUser\.id, (\w+(\.\w+)?), item, targetMetal\);/);
-    const row = line.match(/updateHolding\(supabaseUser\.id, (\w+(?:\.\w+)?),/)[1];
+    assert.match(line, /const \{ error \} = await updateAfterResend\((\w+(\.\w+)?), targetMetal\);/);
+    const row = line.match(/updateAfterResend\((\w+(?:\.\w+)?),/)[1];
     // the mark names the row the update was for, and one that lands drops an older mark
     assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId, stackGen);`), row);
     assert.ok(fn.slice(at, at + 260).includes('editMarksRef.current.delete(item.id);'), row);
@@ -180,7 +182,10 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   const fetch = body.indexOf('await fullSync(');
   assert.ok(read > 0 && send > read && fetch > send);
   // each edit stops at an account change, and a failed one is kept
-  assert.match(body, /await updateHolding\(supabaseUser\.id, edit\.item\.supabase_id, edit\.item, edit\.metal\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(editError\) unsentEdits\.push\(edit\);/);
+  assert.match(body, /const resend = trackHoldingWrite\(\(\) => updateHolding\(supabaseUser\.id, rowId, edit\.item, edit\.metal\)\);\n[\s\S]*?const sent = await settleWithin\(resend, resendsBy - Date\.now\(\), accountChanged\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(sent\.late\) resendsLate = true;\n\s*if \(!sent\.value \|\| sent\.value\.error\) unsentEdits\.push\(edit\);/);
+  // after one resend runs late the rest stay marked for the next sync
+  assert.match(body, /const resendsBy = Date\.now\(\) \+ HOLDING_WRITES_WAIT_MS;/);
+  assert.match(body, /if \(resendsLate \|\| Date\.now\(\) >= resendsBy\) \{\n\s*unsentEdits\.push\(edit\);\n\s*continue;\n\s*\}/);
   // the swap and its stored copy carry the edits put back
   const merge = body.indexOf('withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits)');
   assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));
@@ -218,7 +223,7 @@ test('a write takes the stack count when it begins, so a failure after a reset, 
 test("an edit updates only the row the holding kept, so a guest's restored row goes down the lookup path", () => {
   const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
   assert.ok(fn.includes('if (editingItem && item.supabase_id) {'));
-  assert.ok(fn.includes('await updateHolding(supabaseUser.id, item.supabase_id, item, targetMetal);'));
+  assert.ok(fn.includes('await updateAfterResend(item.supabase_id, targetMetal);'));
   assert.ok(!fn.includes('if (editingItem && base.supabase_id) {'));
 });
 
@@ -251,4 +256,14 @@ test("an edit that waited doesn't add a row for a holding deleted on the phone m
   assert.ok(skip > 0 && skip < add);
   assert.match(lookup.slice(skip, add), /addsRow = false;/);
   assert.ok(fn.includes('return !lists || lists.some(list => (list || []).some(i => i.id === localId));'));
+});
+
+test('an edit of a row goes after a resend of it the sync let go of, or stays marked', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  assert.ok(body.includes('rowResendsRef.current.set(rowId, resend);'));
+  assert.ok(body.includes('const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };'));
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  const helper = fn.slice(fn.indexOf('const updateAfterResend = async (rowId, metal) => {'));
+  assert.match(helper.slice(0, 500), /const resend = rowResendsRef\.current\.get\(rowId\);\n\s*if \(resend\) \{\n\s*const settled = await settleWithin\(resend, HOLDING_WRITES_WAIT_MS, \(\) => userIdRef\.current !== userId\);\n\s*if \(settled\.late \|\| settled\.stopped\) return \{ error: /);
 });

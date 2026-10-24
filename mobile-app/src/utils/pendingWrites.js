@@ -56,3 +56,22 @@ export const pendingWrites = () => {
     },
   };
 };
+
+// Waits for one write the caller started, for at most limitMs, without
+// aborting it. Answers { value } when it resolves, { error } when it throws,
+// { late: true } past the limit and { stopped: true } once the stop check
+// turns true, so a stalled request can't hold its caller and the gates it
+// keeps shut for as long as it hangs.
+export const settleWithin = (write, limitMs, stopped) => {
+  let timer;
+  let poll;
+  const done = Promise.resolve(write).then((value) => ({ value }), (error) => ({ error }));
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ late: true }), limitMs); });
+  const left = typeof stopped === 'function'
+    ? new Promise((resolve) => { poll = setInterval(() => { if (stopped()) resolve({ stopped: true }); }, STOP_POLL_MS); })
+    : null;
+  return Promise.race(left ? [done, late, left] : [done, late]).finally(() => {
+    clearTimeout(timer);
+    clearInterval(poll);
+  });
+};

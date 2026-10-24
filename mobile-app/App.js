@@ -57,7 +57,7 @@ import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/b
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
-import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
+import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -2469,6 +2469,9 @@ function AppContent() {
   // The same for holdings with a row whose cloud update failed, each local
   // id with its row and account
   const editMarksRef = useRef(new Map());
+  // The sync's resends of marked edits still in flight, by row, so an edit
+  // of the same row goes after one the sync let go of, never under it
+  const rowResendsRef = useRef(new Map());
   // When the app last said a save didn't reach the account
   const cloudMissAtRef = useRef(null);
 
@@ -4259,11 +4262,27 @@ function AppContent() {
       // An edit whose cloud update failed goes up before the cloud's copy is
       // fetched, or that copy would undo it at the swap. One that fails again
       // is put back over its row below, still marked.
+      // Each resend is a tracked write, so the next sync waits for one still
+      // in flight, and the sync waits for them only so long, one limit for
+      // all of them: past it, or on an account change, it lets go and the
+      // edits left stay marked for the next sync.
       const unsentEdits = [];
+      const resendsBy = Date.now() + HOLDING_WRITES_WAIT_MS;
+      let resendsLate = false;
       for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
-        const { error: editError } = await updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal);
+        if (resendsLate || Date.now() >= resendsBy) {
+          unsentEdits.push(edit);
+          continue;
+        }
+        const rowId = edit.item.supabase_id;
+        const resend = trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal));
+        rowResendsRef.current.set(rowId, resend);
+        const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };
+        resend.then(forget, forget);
+        const sent = await settleWithin(resend, resendsBy - Date.now(), accountChanged);
         if (accountChanged()) return false;
-        if (editError) unsentEdits.push(edit);
+        if (sent.late) resendsLate = true;
+        if (!sent.value || sent.value.error) unsentEdits.push(edit);
       }
       unsent = unsentEdits.length;
 
@@ -9931,6 +9950,17 @@ function AppContent() {
         const lists = committedStackRef.current;
         return !lists || lists.some(list => (list || []).some(i => i.id === localId));
       };
+      // A resend of this row the last sync let go of may still land with the
+      // older copy, so the edit goes after it, or stays marked for the next
+      // sync, which waits for it, if it's still out
+      const updateAfterResend = async (rowId, metal) => {
+        const resend = rowResendsRef.current.get(rowId);
+        if (resend) {
+          const settled = await settleWithin(resend, HOLDING_WRITES_WAIT_MS, () => userIdRef.current !== userId);
+          if (settled.late || settled.stopped) return { error: 'An earlier change to this holding is still saving' };
+        }
+        return updateHolding(supabaseUser.id, rowId, item, metal);
+      };
       const earlierWrites = editingItem && !item.supabase_id
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
@@ -9941,7 +9971,7 @@ function AppContent() {
             // updated: a guest's holding may carry another account's row from
             // a backup it restored, so it finds its row in this account by
             // local id below, or goes up as new.
-            const { error } = await updateHolding(supabaseUser.id, item.supabase_id, item, targetMetal);
+            const { error } = await updateAfterResend(item.supabase_id, targetMetal);
             if (error) markEditForRetry(targetMetal, item.id, item.supabase_id, userId, stackGen);
             else {
               editMarksRef.current.delete(item.id);
@@ -9963,7 +9993,7 @@ function AppContent() {
             const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal);
             if (existingHolding) {
               addsRow = false;
-              const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
+              const { error } = await updateAfterResend(existingHolding.id, targetMetal);
               if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
               else {
                 editMarksRef.current.delete(item.id);
