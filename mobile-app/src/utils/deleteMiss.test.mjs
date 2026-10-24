@@ -36,24 +36,25 @@ test('the restored holding is the same object, so its marks come back with it', 
   assert.equal(withHoldingRestored([a], marked, 0)[0], marked);
 });
 
-test('the notice names the holding and says it is still in the account', () => {
+test('the notice names the holding and says the delete did not reach the account', () => {
   const { title, message } = deleteMissAlert('American Silver Eagle');
   assert.equal(title, "Couldn't delete");
-  assert.ok(message.startsWith('American Silver Eagle is still in your account'));
+  assert.ok(message.startsWith("American Silver Eagle couldn't be deleted from your account"));
+  assert.ok(!message.includes('is still in your account'));
   assert.ok(message.includes('back in your stack'));
   assert.ok(message.includes('delete it again'));
 });
 
 test('a blank or missing name reads as this holding', () => {
-  assert.ok(deleteMissAlert('').message.startsWith('This holding is still'));
-  assert.ok(deleteMissAlert('   ').message.startsWith('This holding is still'));
-  assert.ok(deleteMissAlert(null).message.startsWith('This holding is still'));
+  assert.ok(deleteMissAlert('').message.startsWith("This holding couldn't"));
+  assert.ok(deleteMissAlert('   ').message.startsWith("This holding couldn't"));
+  assert.ok(deleteMissAlert(null).message.startsWith("This holding couldn't"));
 });
 
 test('a long name is cut and a closing stop dropped', () => {
   const long = 'x'.repeat(60);
-  assert.ok(deleteMissAlert(long).message.startsWith(`${'x'.repeat(39)}… is still`));
-  assert.ok(deleteMissAlert('Generic round.').message.startsWith('Generic round is still'));
+  assert.ok(deleteMissAlert(long).message.startsWith(`${'x'.repeat(39)}… couldn't`));
+  assert.ok(deleteMissAlert('Generic round.').message.startsWith("Generic round couldn't"));
 });
 
 test('the words carry no em dash', () => {

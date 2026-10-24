@@ -28,6 +28,6 @@ function label(name) {
 export function deleteMissAlert(name) {
   return {
     title: "Couldn't delete",
-    message: `${label(name)} is still in your account, so it's back in your stack. Check your connection and delete it again.`,
+    message: `${label(name)} couldn't be deleted from your account, so it's back in your stack. Check your connection and delete it again.`,
   };
 }
