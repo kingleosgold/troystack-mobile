@@ -380,12 +380,13 @@ export async function syncLocalToSupabase(
     // instead of its row, marked, like a refused insert, so it can't hold
     // back every sync. The sync waits for these writes only so long, as for
     // its other resends, and one it lets go of stays marked the same way.
-    const rowEdits = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId)
-      .map(({ item, rowId }) => ({ item, rowId, metal })));
+    type RowEdit = { item: LocalHolding; rowId: string; metal: 'silver' | 'gold' | 'platinum' | 'palladium' };
+    const rowEdits: RowEdit[] = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId)
+      .map(({ item, rowId }: { item: LocalHolding; rowId: string }) => ({ item, rowId, metal })));
     const track = rowEditWait.track || ((_rowId: string, run: () => Promise<{ error: any }>) => run());
-    const unsentRowEdits = await sendAllWithin(
+    const unsentRowEdits: RowEdit[] = await sendAllWithin(
       rowEdits,
-      ({ item, rowId, metal }) => track(rowId, () => updateHolding(userId, rowId, item, metal)),
+      ({ item, rowId, metal }: RowEdit) => track(rowId, () => updateHolding(userId, rowId, item, metal)),
       rowEditWait.by ?? Date.now() + HOLDING_WRITES_WAIT_MS,
       rowEditWait.stopped
     );
