@@ -57,7 +57,7 @@ import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/b
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
-import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
+import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -4259,11 +4259,25 @@ function AppContent() {
       // An edit whose cloud update failed goes up before the cloud's copy is
       // fetched, or that copy would undo it at the swap. One that fails again
       // is put back over its row below, still marked.
+      // Each resend is a tracked write, so the next sync waits for one still
+      // in flight, and the sync waits for it only so long: past the limit, or
+      // on an account change, it lets go and the edit stays marked. After one
+      // runs late the rest wait for the next sync rather than stall in turn.
       const unsentEdits = [];
+      let resendsLate = false;
       for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
-        const { error: editError } = await updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal);
+        if (resendsLate) {
+          unsentEdits.push(edit);
+          continue;
+        }
+        const sent = await settleWithin(
+          trackHoldingWrite(() => updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal)),
+          HOLDING_WRITES_WAIT_MS,
+          accountChanged,
+        );
         if (accountChanged()) return false;
-        if (editError) unsentEdits.push(edit);
+        if (sent.late) resendsLate = true;
+        if (!sent.value || sent.value.error) unsentEdits.push(edit);
       }
       unsent = unsentEdits.length;
 

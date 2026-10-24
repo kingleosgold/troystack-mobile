@@ -52,7 +52,7 @@ test('a pull whose sync worked but left a resent edit off the account says so, f
   assert.equal(pullUnsentDue({ signedIn: false, unsent: 1, sameAccount: true }), false);
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.ok(body.indexOf('unsent = unsentEdits.length;') > body.indexOf('if (editError) unsentEdits.push(edit);'));
+  assert.ok(body.indexOf('unsent = unsentEdits.length;') > body.indexOf('if (!sent.value || sent.value.error) unsentEdits.push(edit);'));
   const fn = app.slice(app.indexOf('const onRefreshDashboard = async () => {'), app.indexOf('const onRefreshAnalytics = async () => {'));
   // Only when the failed notice didn't show, and through the save notice's gap
   assert.match(fn, /\} else if \(pullUnsentDue\(\{ \.\.\.judged, unsent: outcome\.unsent \}\)\) \{[\s\S]*?noteCloudMiss\('edit', userIdAtPull\);/);
