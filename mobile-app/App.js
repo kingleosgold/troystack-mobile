@@ -42,6 +42,7 @@ import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
+import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
@@ -3214,6 +3215,28 @@ function AppContent() {
     } finally {
       setSigningOut(false);
     }
+  };
+
+  // Sign out clears the phone's stack, so a change the next sync would still
+  // send to the account, an add or edit whose cloud write failed, would be
+  // gone. Sign out asks first, and Send Now runs My Stack's pull, which says
+  // if the sync failed. The marks still in the refs count too, as at a sync.
+  const confirmSignOut = () => {
+    const userId = supabaseUser?.id;
+    const lists = (committedStackRef.current || [])
+      .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
+      .map((items) => withEditMarks(items, editMarksRef.current, userId));
+    const count = unsentCount(lists, userId);
+    if (!count) {
+      performSignOut();
+      return;
+    }
+    const { title, message } = unsentSignOutAlert(count);
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Send Now', onPress: () => { onRefreshDashboard(); } },
+      { text: 'Sign Out Anyway', style: 'destructive', onPress: () => performSignOut() },
+    ]);
   };
 
   // Sign out: clear user data, logout services, navigate to auth screen
@@ -13627,8 +13650,9 @@ function AppContent() {
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       if (supabaseUser) {
-                        // Authenticated users — sign out immediately
-                        performSignOut();
+                        // Authenticated users sign out at once, unless a change
+                        // hasn't reached their account yet
+                        confirmSignOut();
                       } else {
                         // Guest users — warn about data loss
                         Alert.alert(
@@ -14993,6 +15017,7 @@ function AppContent() {
             apiBase={API_BASE_URL}
             onClose={() => setShowAccountScreen(false)}
             onSignOut={() => performSignOut()}
+            onSignOutTap={() => confirmSignOut()}
             hasGold={hasGold}
             hasLifetime={hasLifetimeAccess}
             colors={colors}
