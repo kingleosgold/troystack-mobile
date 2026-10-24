@@ -365,8 +365,8 @@ export async function syncLocalToSupabase(
 
     for (const { items, metal } of metalGroups) {
       // An edit whose lookup failed goes over the row it was looking for,
-      // which the insert below skips. One that fails stays on the phone in
-      // its row's place, marked, like a refused insert, so it can't hold
+      // which the insert below skips. One that fails stays on the phone
+      // instead of its row, marked, like a refused insert, so it can't hold
       // back every sync.
       for (const { item, rowId } of rowEditsToSend(items, liveRows, userId)) {
         const { error: updateError } = await updateHolding(userId, rowId, item, metal);
@@ -456,7 +456,9 @@ export async function fullSync(
       const editedRows = new Set(rejected.map(({ rowId }) => rowId).filter(Boolean));
       const withoutEdited = (items: LocalHolding[]) => items.filter((h) => !editedRows.has((h as any).supabase_id));
       const lists = { silver: withoutEdited(newSilver), gold: withoutEdited(newGold), platinum: withoutEdited(newPlatinum), palladium: withoutEdited(newPalladium) };
-      rejected.forEach(({ item, metal }) => lists[metal].push(...asRestoredBy([item], userId)));
+      // and a failed edit keeps its lookup mark, so the next sync sends it again
+      rejected.forEach(({ item, metal, rowId }) => lists[metal].push(...asRestoredBy([item], userId)
+        .map((back) => (rowId ? { ...back, rowLookupFor: userId } : back))));
       return {
         silverItems: lists.silver,
         goldItems: lists.gold,

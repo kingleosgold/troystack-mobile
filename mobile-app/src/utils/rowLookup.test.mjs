@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { holdingsToUpload, localHoldingsToSync, rowEditsToSend, withRetryMarks, withRowLookups } from './holdingsUpload.js';
+import { asRestoredBy, holdingsToUpload, localHoldingsToSync, rowEditsToSend, withRetryMarks, withRowLookups } from './holdingsUpload.js';
 
 const appSource = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
@@ -68,4 +68,18 @@ test('the upload sends marked edits over their rows and a failed one takes its r
   assert.match(holdingsSource, /for \(const \{ item, rowId \} of rowEditsToSend\(items, liveRows, userId\)\)/);
   assert.match(holdingsSource, /if \(updateError\) rejected\.push\(\{ item, metal, rowId \}\);/);
   assert.match(holdingsSource, /silverItems: lists\.silver,/);
+});
+
+test("a restored backup's lookup mark comes off, so the backup's copy never goes over a row", () => {
+  const backup = [{ id: 1, restoredFor: 'a', rowLookupFor: 'a' }];
+  assert.deepEqual(asRestoredBy(backup, 'a'), [{ id: 1, restoredFor: 'a' }]);
+  assert.deepEqual(asRestoredBy(backup, null), [{ id: 1, addedAsGuest: true }]);
+  assert.deepEqual(rowEditsToSend(asRestoredBy(backup, 'a'), new Map([[1, 'r1']]), 'a'), []);
+});
+
+test('a later save keeps the lookup mark, and a failed send keeps it on the copy put back', () => {
+  assert.match(appSource, /\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),/);
+  assert.match(holdingsSource, /\.map\(\(back\) => \(rowId \? \{ \.\.\.back, rowLookupFor: userId \} : back\)\)/);
+  // the notice says an edit didn't reach the account, not an add
+  assert.match(appSource, /markForRetry\(metal, localId, userId, stackGen, 'edit'\);/);
 });

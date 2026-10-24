@@ -3084,13 +3084,13 @@ function AppContent() {
   // after a sign out's reset, a restore or a swap to another account's stack
   // marks nothing, since a holding with that local id now isn't the one the
   // write was for.
-  const markForRetry = (metal, localId, userId, stackGen) => {
+  const markForRetry = (metal, localId, userId, stackGen, kind = 'add') => {
     if (foreignSwapGenRef.current !== stackGen) return;
     retryMarksRef.current.set(localId, userId);
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
-    noteCloudMiss('add', userId);
+    noteCloudMiss(kind, userId);
   };
 
   // An edit whose row lookup failed may or may not have a row, so it takes a
@@ -3098,7 +3098,7 @@ function AppContent() {
   // the sync updates that row, which a retry mark alone would skip.
   const markRowLookupForRetry = (metal, localId, userId, stackGen) => {
     if (foreignSwapGenRef.current !== stackGen) return;
-    markForRetry(metal, localId, userId, stackGen);
+    markForRetry(metal, localId, userId, stackGen, 'edit');
     rowLookupMarksRef.current.set(localId, userId);
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
@@ -9868,6 +9868,9 @@ function AppContent() {
       // the next sync still sends it up to the account that restored it.
       ...((base?.supabase_id && !base.addedAsGuest) || base?.restoredFor ? { supabase_id: base.supabase_id } : {}),
       ...(base?.restoredFor ? { restoredFor: base.restoredFor } : {}),
+      // And its lookup mark, so the sync still sends the edit over its row
+      // after a restart or a failed send cleared the marks kept in memory
+      ...(base?.restoredFor && base.rowLookupFor ? { rowLookupFor: base.rowLookupFor } : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
