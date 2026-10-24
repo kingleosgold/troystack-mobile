@@ -9830,9 +9830,19 @@ function AppContent() {
     };
     const setter = settersMap[targetMetal] || setSilverItems;
 
+    // An edit that picks another metal moves the holding out of the list it
+    // opened in, and the cloud finds its row under that metal too
+    const openedMetal = editsHolding ? opened?.metal : null;
+    const lookupMetal = openedMetal || targetMetal;
     if (editingItem) {
       // The same holding the cloud write targets, by its row if it has one
-      setter(prev => prev.map(i => (base.supabase_id ? i.supabase_id === base.supabase_id : i.id === base.id) ? item : i));
+      const isBase = i => (base.supabase_id ? i.supabase_id === base.supabase_id : i.id === base.id);
+      if (openedMetal && openedMetal !== targetMetal && settersMap[openedMetal]) {
+        settersMap[openedMetal](prev => prev.filter(i => !isBase(i)));
+        setter(prev => [...prev.filter(i => !isBase(i)), item]);
+      } else {
+        setter(prev => prev.map(i => isBase(i) ? item : i));
+      }
     } else {
       setter(prev => [...prev, item]);
       checkAndRequestReview('holdings', silverItems.length + goldItems.length + platinumItems.length + palladiumItems.length + 1);
@@ -9849,10 +9859,13 @@ function AppContent() {
       let addsRow = !editingItem;
       trackHoldingWrite(async () => {
         try {
-          if (editingItem && base.supabase_id) {
-            // Update existing item in Supabase
-            const { error } = await updateHolding(supabaseUser.id, base.supabase_id, item, targetMetal);
-            if (error) markEditForRetry(targetMetal, item.id, base.supabase_id, userId, stackGen);
+          if (editingItem && item.supabase_id) {
+            // Update existing item in Supabase. Only a row the holding kept is
+            // updated: a guest's holding may carry another account's row from
+            // a backup it restored, so it finds its row in this account by
+            // local id below, or goes up as new.
+            const { error } = await updateHolding(supabaseUser.id, item.supabase_id, item, targetMetal);
+            if (error) markEditForRetry(targetMetal, item.id, item.supabase_id, userId, stackGen);
             else {
               editMarksRef.current.delete(item.id);
               if (__DEV__) console.log('Updated holding in Supabase');
@@ -9869,7 +9882,7 @@ function AppContent() {
             // never a holding of another account's stack left on the phone
             addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
             // Editing a local item that might exist in Supabase - find it first
-            const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, targetMetal);
+            const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal);
             if (existingHolding) {
               addsRow = false;
               const { error } = await updateHolding(supabaseUser.id, existingHolding.id, item, targetMetal);
