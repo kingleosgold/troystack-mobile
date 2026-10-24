@@ -58,7 +58,7 @@ import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/b
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
-import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
+import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
@@ -4415,7 +4415,11 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = await fullSync(
+      // The upload is a tracked write, so the next sync waits for one still
+      // running, and this sync waits for it only so long or until the account
+      // changes. Past that it fails as a hung write does, keeping the stack on
+      // the phone and its marks, and the insert keeps running.
+      const syncRun = trackHoldingWrite(() => fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4425,9 +4429,17 @@ function AppContent() {
         // An edit fullSync sends over a row found by local id is a resend
         // too, under the same limit
         { track: trackRowResend, by: resendsBy, stopped: accountChanged }
-      );
-
+      ));
+      const synced = await settleWithin(syncRun, SYNC_UPLOAD_WAIT_MS, accountChanged);
       if (accountChanged()) return false;
+      if (!synced.value) {
+        if (restoreCountRef.current === restoresAtStart) {
+          failed = true;
+          setSyncError('A change is still saving to the cloud');
+        }
+        return false;
+      }
+      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = synced.value;
       // A row edit fullSync couldn't send is put back marked and counts as
       // unsent, like a resend above, not as a refusal
       if (!error) unsent += unsentRowEdits || 0;

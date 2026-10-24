@@ -24,7 +24,7 @@ test("each of the sync's failures marks its own outcome, kept by its number when
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
   const sets = [...body.matchAll(/setSyncError\((?!null)[^;]*\);/g)];
-  assert.equal(sets.length, 3);
+  assert.equal(sets.length, 4);
   for (const set of sets) {
     assert.ok(body.slice(Math.max(0, set.index - 40), set.index).includes('failed = true;'), set[0]);
   }

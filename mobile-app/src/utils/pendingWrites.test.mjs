@@ -310,3 +310,14 @@ test('sendAllWithin lets go of a write when the account changes during it', asyn
   assert.deepEqual(unsent, ['a', 'b']);
   assert.deepEqual(started, ['a']);
 });
+
+test('the sync waits for its upload as a tracked write, only so long, and fails without swapping when it runs late', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  assert.ok(body.includes('const syncRun = trackHoldingWrite(() => fullSync('));
+  assert.ok(body.includes('const synced = await settleWithin(syncRun, SYNC_UPLOAD_WAIT_MS, accountChanged);'));
+  const late = body.indexOf('if (!synced.value) {');
+  assert.ok(late > 0 && late < body.indexOf('} = synced.value;'));
+  assert.ok(body.indexOf('return false;', late) < body.indexOf('} = synced.value;'));
+  assert.ok(body.indexOf('setSilverItems(remoteSilver);') > body.indexOf('} = synced.value;'));
+});
