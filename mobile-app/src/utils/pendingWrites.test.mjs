@@ -158,7 +158,7 @@ test('every holdings write to the cloud goes through the tracker', () => {
   // aren't writes it has to wait for
   const sync = app.indexOf('const syncHoldingsWithSupabase = async');
   const syncEnd = app.indexOf('// A change away from a signed-in account stops', sync);
-  const calls = [...app.matchAll(/await (addHolding|updateHolding|deleteHoldingFromSupabase)\(/g)]
+  const calls = [...app.matchAll(/await (addHolding|updateHolding|updateAfterResend|deleteHoldingFromSupabase)\(/g)]
     .filter((call) => call.index < sync || call.index > syncEnd);
   assert.equal(calls.length, 9);
   for (const call of calls) {
@@ -168,8 +168,8 @@ test('every holdings write to the cloud goes through the tracker', () => {
 });
 
 test('every cloud update and delete is pinned to the account the tracker waits on', () => {
-  const calls = [...app.matchAll(/(?:await |=> )(updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
-  assert.equal(calls.length, 5);
+  const calls = [...app.matchAll(/(?:await |=> |return )(updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
+  assert.equal(calls.length, 4);
   for (const call of calls) assert.equal(call[2], 'supabaseUser.id', `${call[1]} at ${call.index}`);
   const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
   for (const name of ['updateHolding', 'deleteHolding']) {
@@ -185,9 +185,9 @@ test('a cloud update leaves a deleted row alone and the edit reads the miss', ()
   const at = service.indexOf('export async function updateHolding(');
   const body = service.slice(at, service.indexOf('\n}\n', at));
   assert.match(body, /\.eq\('user_id', userId\)\n(\s*\/\/.*\n)*\s*\.is\('deleted_at', null\)\n\s*\.select\(\)\n\s*\.single\(\);/);
-  const calls = [...app.matchAll(/(.*)await updateHolding\(/g)];
+  const calls = [...app.matchAll(/(.*)await updateAfterResend\(/g)];
   assert.equal(calls.length, 2);
-  for (const call of calls) assert.match(call[1], /const \{ error(: \w+)? \} = $/, `updateHolding at ${call.index}`);
+  for (const call of calls) assert.match(call[1], /const \{ error(: \w+)? \} = $/, `updateAfterResend at ${call.index}`);
   // the sync's resend reads the miss from the settled result
   assert.ok(app.includes('if (!sent.value || sent.value.error) unsentEdits.push(edit);'));
 });
@@ -254,6 +254,6 @@ test('settleWithin passes a write through, and answers late or stopped without a
 test('the sync resends each marked edit as a tracked write, bounded by the write wait', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.ok(body.includes('trackHoldingWrite(() => updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal))'));
+  assert.ok(body.includes('trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal))'));
   assert.ok(!/await updateHolding\(supabaseUser\.id, edit\.item/.test(body));
 });
