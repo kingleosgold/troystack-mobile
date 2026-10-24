@@ -58,6 +58,7 @@ import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
+import { knownRows } from './src/utils/knownRows';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -2462,6 +2463,10 @@ function AppContent() {
   // Every caller writes for the account signed in at the handler's render,
   // which a sync waits on and each cloud write is pinned to
   const trackHoldingWrite = (run) => holdingWrites.track(run, supabaseUser?.id);
+  // The row each holding added or found this session went to, so an edit or
+  // a delete before the next sync doesn't hang on a lookup
+  const knownRowsRef = useRef(null);
+  if (!knownRowsRef.current) knownRowsRef.current = knownRows();
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3123,6 +3128,7 @@ function AppContent() {
     setPlatinumItems([]);
     setPalladiumItems([]);
     editMarksRef.current.clear();
+    knownRowsRef.current.clear();
     setSilverSpot(77);
     setGoldSpot(4530);
     setPlatinumSpot(2100);
@@ -4054,6 +4060,7 @@ function AppContent() {
                   // it would send the backup's copy over the row the mark named
                   retryMarksRef.current.clear();
                   editMarksRef.current.clear();
+                  knownRowsRef.current.clear();
                   bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
                   if (cloudData.goldItems) setGoldItems(asRestoredBy(cloudData.goldItems, supabaseUser?.id || null));
@@ -8101,6 +8108,7 @@ function AppContent() {
               // it would send the backup's copy over the row the mark named
               retryMarksRef.current.clear();
               editMarksRef.current.clear();
+              knownRowsRef.current.clear();
               bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
               if (backup.data.goldItems) setGoldItems(asRestoredBy(backup.data.goldItems, supabaseUser?.id || null));
@@ -9531,8 +9539,9 @@ function AppContent() {
         const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
-            const { error } = await addHolding(userId, item, item.metal);
+            const { data, error } = await addHolding(userId, item, item.metal);
             if (error) markForRetry(item.metal, item.id, userId, stackGen);
+            else knownRowsRef.current.note(item.id, data?.id, userId);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} imported items to Supabase`);
         });
@@ -9600,8 +9609,9 @@ function AppContent() {
         const stackGen = foreignSwapGenRef.current;
         trackHoldingWrite(async () => {
           for (const item of newItems) {
-            const { error } = await addHolding(userId, item, item.metal);
+            const { data, error } = await addHolding(userId, item, item.metal);
             if (error) markForRetry(item.metal, item.id, userId, stackGen);
+            else knownRowsRef.current.note(item.id, data?.id, userId);
           }
           if (__DEV__) console.log(`Synced ${newItems.length} scanned items to Supabase`);
         });
@@ -9657,9 +9667,12 @@ function AppContent() {
       // A reset, restore or another account's stack since the write began drops its mark
       const stackGen = foreignSwapGenRef.current;
       trackHoldingWrite(async () => {
-        const { error } = await addHolding(userId, newItem, metalKey);
+        const { data, error } = await addHolding(userId, newItem, metalKey);
         if (error) markForRetry(metalKey, newItem.id, userId, stackGen);
-        else if (__DEV__) console.log('Synced scanned item to Supabase');
+        else {
+          knownRowsRef.current.note(newItem.id, data?.id, userId);
+          if (__DEV__) console.log('Synced scanned item to Supabase');
+        }
       });
     }
 
@@ -9989,10 +10002,13 @@ function AppContent() {
             // Not in Supabase yet, it's added if it's this account's to take,
             // never a holding of another account's stack left on the phone
             addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
-            // Editing a local item that might exist in Supabase - find it first
-            const existingHolding = await findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal);
+            // Editing a local item that might exist in Supabase - find it first,
+            // by the row its add went to if it landed this session
+            const knownRow = knownRowsRef.current.rowFor(item.id, userId);
+            const existingHolding = knownRow ? { id: knownRow } : await findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal);
             if (existingHolding) {
               addsRow = false;
+              knownRowsRef.current.note(item.id, existingHolding.id, userId);
               const { error } = await updateAfterResend(existingHolding.id, targetMetal);
               if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
               else {
@@ -10007,13 +10023,19 @@ function AppContent() {
             } else if (addsRow) {
               const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
               if (error) markForRetry(targetMetal, item.id, userId, stackGen);
-              else if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              else {
+                knownRowsRef.current.note(item.id, data?.id, userId);
+                if (data && __DEV__) console.log('Added holding to Supabase (was local only)');
+              }
             }
           } else {
             // New item - add to Supabase
             const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
             if (error) markForRetry(targetMetal, item.id, userId, stackGen);
-            else if (data && __DEV__) console.log('Added new holding to Supabase');
+            else {
+              knownRowsRef.current.note(item.id, data?.id, userId);
+              if (data && __DEV__) console.log('Added new holding to Supabase');
+            }
           }
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
@@ -10107,6 +10129,12 @@ function AppContent() {
 
             // Delete from Supabase if signed in
             if (supabaseUser && itemToDelete) {
+              // An add still in flight hasn't made its row, so a delete of a
+              // holding with no row waits for the writes started before it,
+              // taken here so it never waits on itself, as an edit does
+              const earlierWrites = itemToDelete.supabase_id
+                ? null
+                : holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, () => userIdRef.current !== supabaseUser.id);
               await trackHoldingWrite(async () => {
                 // deleteHolding answers its error rather than throwing, and a
                 // lookup that fails throws, since a row may still be there
@@ -10117,8 +10145,11 @@ function AppContent() {
                     if (error) reached = false;
                     else if (__DEV__) console.log('Deleted holding from Supabase');
                   } else {
-                    // Find in Supabase by local_id
-                    const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
+                    await earlierWrites;
+                    // By the row its add went to if it landed this session,
+                    // else find it in Supabase by local_id
+                    const knownRow = knownRowsRef.current.rowFor(id, supabaseUser.id);
+                    const existingHolding = knownRow ? { id: knownRow } : await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
                       const { error } = await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
                       if (error) reached = false;
