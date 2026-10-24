@@ -3218,15 +3218,37 @@ function AppContent() {
   };
 
   // Sign out clears the phone's stack, so a change the next sync would still
-  // send to the account, an add or edit whose cloud write failed, would be
-  // gone. Sign out asks first, and Send Now runs My Stack's pull, which says
-  // if the sync failed. The marks still in the refs count too, as at a sync.
-  const confirmSignOut = () => {
-    const userId = supabaseUser?.id;
+  // send to the account, an add or edit whose cloud write failed, a stack
+  // whose first sync never finished or a write still on its way, would be
+  // gone. Sign out asks first. The marks still in the refs count too, and the
+  // owner and first sync are read as the sync reads them. A failed read
+  // counts as a first sync, so it asks rather than wipes.
+  const countUnsent = async (userId) => {
     const lists = (committedStackRef.current || [])
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
-    const count = unsentCount(lists, userId);
+    let owner = null;
+    let firstSync = true;
+    try {
+      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
+        AsyncStorage.getItem(`stack_synced_${userId}`),
+        AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+        AsyncStorage.getAllKeys(),
+      ]);
+      owner = stackOwnerOf(recordedOwner, storageKeys, userId);
+      firstSync = !hasEverSynced;
+    } catch (e) {
+      if (__DEV__) console.error('Unsent count read failed:', e);
+    }
+    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) });
+  };
+
+  // Send Now runs My Stack's pull, which says if the sync failed, then says
+  // when everything reached the account
+  const confirmSignOut = async () => {
+    const userId = supabaseUser?.id;
+    const count = userId ? await countUnsent(userId) : 0;
+    if (userIdRef.current !== userId) return;
     if (!count) {
       performSignOut();
       return;
@@ -3234,7 +3256,17 @@ function AppContent() {
     const { title, message } = unsentSignOutAlert(count);
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Send Now', onPress: () => { onRefreshDashboard(); } },
+      {
+        text: 'Send Now',
+        onPress: async () => {
+          await onRefreshDashboard();
+          if (userIdRef.current !== userId || await countUnsent(userId)) return;
+          Alert.alert('Saved to your account', 'Everything on this phone is in your account now.', [
+            { text: 'Stay Signed In', style: 'cancel' },
+            { text: 'Sign Out', onPress: () => confirmSignOut() },
+          ]);
+        },
+      },
       { text: 'Sign Out Anyway', style: 'destructive', onPress: () => performSignOut() },
     ]);
   };

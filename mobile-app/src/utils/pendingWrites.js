@@ -54,6 +54,10 @@ export const pendingWrites = () => {
     get size() {
       return writes.size;
     },
+    // How many writes for this account haven't settled yet
+    countFor(account) {
+      return [...writes.values()].filter((owner) => owner === account).length;
+    },
   };
 };
 
