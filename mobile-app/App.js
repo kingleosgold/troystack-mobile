@@ -4476,7 +4476,7 @@ function AppContent() {
         // hasSyncedOnce false, and the auto sync sends it up next. With refused
         // holdings the synced key comes back off, so that sync is a first one.
         if (restoreLanded()) {
-          if (refusedCount > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
+          if (putBack > 0) await AsyncStorage.removeItem(syncKey).catch(() => {});
           return false;
         }
 
