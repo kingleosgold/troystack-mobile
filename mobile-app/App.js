@@ -3228,9 +3228,6 @@ function AppContent() {
   // owner and first sync are read as the sync reads them. A failed read
   // counts as a first sync, so it asks rather than wipes.
   const countUnsent = async (userId) => {
-    const lists = (committedStackRef.current || [])
-      .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
-      .map((items) => withEditMarks(items, editMarksRef.current, userId));
     let owner = null;
     let firstSync = true;
     try {
@@ -3244,6 +3241,12 @@ function AppContent() {
     } catch (e) {
       if (__DEV__) console.error('Unsent count read failed:', e);
     }
+    // The stack, its marks and the writes on their way are read together
+    // after the wait, since a write that fails marks its holding before it
+    // stops being on its way, so one read can't miss it
+    const lists = (committedStackRef.current || [])
+      .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
+      .map((items) => withEditMarks(items, editMarksRef.current, userId));
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) });
   };
 
@@ -3278,12 +3281,21 @@ function AppContent() {
       {
         text: 'Send Now',
         onPress: async () => {
+          if (!sameAccount() || signOutAskRef.current) return;
+          // A Sign Out tap while this sends waits for its answer
+          signOutAskRef.current = true;
+          let left;
+          try {
+            const pull = await onRefreshDashboard();
+            if (!sameAccount() || pull === 'failed') return;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (!sameAccount()) return;
+            left = await countUnsent(userId);
+          } finally {
+            signOutAskRef.current = false;
+          }
           if (!sameAccount()) return;
-          const pull = await onRefreshDashboard();
-          if (!sameAccount() || pull === 'failed') return;
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          if (!sameAccount()) return;
-          if (await countUnsent(userId)) {
+          if (left) {
             confirmSignOut();
             return;
           }

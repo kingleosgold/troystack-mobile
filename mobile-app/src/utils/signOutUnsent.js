@@ -13,13 +13,14 @@ import { localHoldingsToSync, pendingEdits } from './holdingsUpload.js';
 // How many holdings in lists, one array per metal, the next sync would still
 // send to this account, as the sync itself picks them: on its first sync the
 // whole stack if it's this account's or no one's, else adds marked for it or
-// added as a guest, then edits marked for their row. A holding already on a
-// row goes up as no new row, so it isn't counted as an add. inFlight counts
+// added as a guest, then edits marked for their row. An unmarked holding
+// already on a row goes up as no new row, so it isn't counted, but a marked
+// one is, since its row may be another account's. inFlight counts
 // writes still on their way, whose failure a sign out would drop unmarked.
 export function unsentCount(lists, userId, { owner = null, firstSync = false, inFlight = 0 } = {}) {
   if (!userId || !Array.isArray(lists)) return 0;
   const adds = lists.reduce((n, items) => n + localHoldingsToSync(items, owner, userId, firstSync)
-    .filter((item) => !item.supabase_id).length, 0);
+    .filter((item) => !item.supabase_id || item.addedAsGuest || item.restoredFor === userId).length, 0);
   return adds + pendingEdits(lists, userId).length + Math.max(0, inFlight || 0);
 }
 

@@ -38,8 +38,9 @@ test("another account's stack on a first sync counts only what goes up", () => {
   assert.equal(unsentCount(stack, 'u1', { owner: 'u2', firstSync: true }), 1);
 });
 
-test('a restored holding already on its row is not an add', () => {
-  assert.equal(unsentCount(lists([{ id: 'a', supabase_id: 'r1', restoredFor: 'u1' }]), 'u1'), 0);
+test('a marked holding on a row counts, since the row may be another account\'s', () => {
+  assert.equal(unsentCount(lists([{ id: 'a', supabase_id: 'r1', restoredFor: 'u1' }]), 'u1'), 1);
+  assert.equal(unsentCount(lists([{ id: 'a', supabase_id: 'old', addedAsGuest: true }]), 'u1', { owner: 'u1', firstSync: true }), 1);
 });
 
 test('writes still on their way count', () => {
@@ -87,7 +88,16 @@ test('a deleted account skips the ask, and Send Now never ends in silence', () =
   const body = app.slice(start, app.indexOf('const performSignOut = async () => {'));
   assert.match(body, /if \(userId && deletedAccountRef\.current === userId\) \{\s*performSignOut\(\);\s*return;\s*\}/);
   assert.match(body, /pull === 'failed'\) return;/);
-  assert.match(body, /if \(await countUnsent\(userId\)\) \{\s*confirmSignOut\(\);\s*return;\s*\}/);
+  assert.match(body, /if \(left\) \{\s*confirmSignOut\(\);\s*return;\s*\}/);
   assert.match(body, /if \(signOutAskRef\.current\) return;/);
   assert.match(app, /return 'failed';/);
+});
+
+test('the stack and the writes on their way are read together after the storage wait', () => {
+  const start = app.indexOf('const countUnsent = async (userId) => {');
+  const body = app.slice(start, app.indexOf('// Send Now runs My Stack'));
+  const wait = body.indexOf('await Promise.all');
+  assert.ok(wait > 0);
+  assert.ok(body.indexOf('committedStackRef.current') > wait);
+  assert.ok(body.indexOf('holdingWrites.countFor(userId)') > wait);
 });
