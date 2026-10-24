@@ -80,7 +80,7 @@ test("a restored backup's lookup mark comes off, so the backup's copy never goes
 
 test('a later save keeps the lookup mark, and a failed send keeps it on the copy put back', () => {
   assert.match(appSource, /\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),/);
-  assert.match(holdingsSource, /\.map\(\(back\) => \(rowId \? \{ \.\.\.back, rowLookupFor: userId \} : back\)\)/);
+  assert.match(holdingsSource, /\.map\(\(back\) => \(rowId \? \{ \.\.\.back, supabase_id: rowId, rowLookupFor: userId \} : back\)\)/);
   // the notice says an edit didn't reach the account, not an add
   assert.match(appSource, /markForRetry\(metal, localId, userId, stackGen, 'edit'\);/);
 });
@@ -90,4 +90,11 @@ test('a restored holding with a row whose update failed is sent over the row by 
   assert.deepEqual(rowEditsToSend(restored, new Map([[5, 'r5']]), 'a'), [{ item: restored[0], rowId: 'r5' }]);
   // and never inserted again, since its row is the account's
   assert.deepEqual(holdingsToUpload(restored, new Set([5]), new Set(['r5'])), []);
+});
+
+test('a failed edit put back on its row goes over that row once and never as a new row', async () => {
+  const { holdingsToUpload, rowEditsToSend: send } = await import('./holdingsUpload.js');
+  const back = { id: 7, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'r7' };
+  assert.deepEqual(holdingsToUpload([back], new Set([7]), new Set(['r7'])), []);
+  assert.deepEqual(send([back], new Map([[7, 'r7']]), 'a'), [{ item: back, rowId: 'r7' }]);
 });

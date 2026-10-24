@@ -456,9 +456,11 @@ export async function fullSync(
       const editedRows = new Set(rejected.map(({ rowId }) => rowId).filter(Boolean));
       const withoutEdited = (items: LocalHolding[]) => items.filter((h) => !editedRows.has((h as any).supabase_id));
       const lists = { silver: withoutEdited(newSilver), gold: withoutEdited(newGold), platinum: withoutEdited(newPlatinum), palladium: withoutEdited(newPalladium) };
-      // and a failed edit keeps its lookup mark, so the next sync sends it again
+      // and a failed edit keeps its lookup mark, so the next sync sends it
+      // again, and the row it found, so a delete or edit before then reaches
+      // that row even when the edit moved the holding to another metal
       rejected.forEach(({ item, metal, rowId }) => lists[metal].push(...asRestoredBy([item], userId)
-        .map((back) => (rowId ? { ...back, rowLookupFor: userId } : back))));
+        .map((back) => (rowId ? { ...back, supabase_id: rowId, rowLookupFor: userId } : back))));
       return {
         silverItems: lists.silver,
         goldItems: lists.gold,
