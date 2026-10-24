@@ -86,7 +86,7 @@ test('the count reads the marks still in the refs, as a sync does', () => {
 test('a deleted account skips the ask, and Send Now never ends in silence', () => {
   const start = app.indexOf('const confirmSignOut = async () => {');
   const body = app.slice(start, app.indexOf('const performSignOut = async () => {'));
-  assert.match(body, /if \(userId && deletedAccountRef\.current === userId\) \{\s*performSignOut\(\);\s*return;\s*\}/);
+  assert.match(body, /if \(!userId \|\| deletedAccountRef\.current === userId\) \{\s*performSignOut\(\);\s*return;\s*\}/);
   assert.match(body, /pull === 'failed'\) return;/);
   assert.match(body, /if \(left\) \{\s*confirmSignOut\(\);\s*return;\s*\}/);
   assert.match(body, /if \(signOutAskRef\.current\) return;/);

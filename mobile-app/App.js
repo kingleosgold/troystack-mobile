@@ -3257,7 +3257,9 @@ function AppContent() {
   // an ask whose account has since changed does nothing.
   const confirmSignOut = async () => {
     const userId = supabaseUser?.id;
-    if (userId && deletedAccountRef.current === userId) {
+    // A session that ended while the screen was open has no account to send
+    // to, so the tap signs out as it always did
+    if (!userId || deletedAccountRef.current === userId) {
       performSignOut();
       return;
     }
@@ -3265,7 +3267,7 @@ function AppContent() {
     signOutAskRef.current = true;
     let count = 0;
     try {
-      count = userId ? await countUnsent(userId) : 0;
+      count = await countUnsent(userId);
     } finally {
       signOutAskRef.current = false;
     }
