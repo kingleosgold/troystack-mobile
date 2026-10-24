@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
-import { asRestoredBy, holdingsToUpload } from '../utils/holdingsUpload';
+import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
 
@@ -312,12 +312,12 @@ export async function syncLocalToSupabase(
 ): Promise<{
   syncedCount: number;
   skippedCount: number;
-  rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[];
+  rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium'; rowId?: string }[];
   error: Error | null;
 }> {
   let syncedCount = 0;
   let skippedCount = 0;
-  const rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
+  const rejected: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium'; rowId?: string }[] = [];
 
   try {
     // Get existing holdings to avoid duplicates, deleted ones included so a
@@ -335,6 +335,8 @@ export async function syncLocalToSupabase(
     // deleted rows included
     const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
+    // The live rows by local_id, for edits whose lookup failed
+    const liveRows = new Map<number, string>();
     (existingHoldings || []).forEach((h: any) => {
       existingRowIds.add(h.id);
       if (h.notes) {
@@ -342,6 +344,7 @@ export async function syncLocalToSupabase(
           const notesData = JSON.parse(h.notes);
           if (notesData.local_id) {
             existingLocalIds.add(notesData.local_id);
+            if (!h.deleted_at) liveRows.set(notesData.local_id, h.id);
           }
         } catch (e) {
           // Ignore parse errors
@@ -361,6 +364,14 @@ export async function syncLocalToSupabase(
     ];
 
     for (const { items, metal } of metalGroups) {
+      // An edit whose lookup failed goes over the row it was looking for,
+      // which the insert below skips. One that fails stays on the phone in
+      // its row's place, marked, like a refused insert, so it can't hold
+      // back every sync.
+      for (const { item, rowId } of rowEditsToSend(items, liveRows, userId)) {
+        const { error: updateError } = await updateHolding(userId, rowId, item, metal);
+        if (updateError) rejected.push({ item, metal, rowId });
+      }
       const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
@@ -441,13 +452,16 @@ export async function fullSync(
       if (refetchError) throw refetchError;
       // A holding the database refused stays on the phone beside the cloud's
       // copy, marked for this account so the next sync tries it again
-      const lists = { silver: newSilver, gold: newGold, platinum: newPlatinum, palladium: newPalladium };
+      // A failed edit of a row takes the row's place, in its own metal's list
+      const editedRows = new Set(rejected.map(({ rowId }) => rowId).filter(Boolean));
+      const withoutEdited = (items: LocalHolding[]) => items.filter((h) => !editedRows.has((h as any).supabase_id));
+      const lists = { silver: withoutEdited(newSilver), gold: withoutEdited(newGold), platinum: withoutEdited(newPlatinum), palladium: withoutEdited(newPalladium) };
       rejected.forEach(({ item, metal }) => lists[metal].push(...asRestoredBy([item], userId)));
       return {
-        silverItems: newSilver,
-        goldItems: newGold,
-        platinumItems: newPlatinum,
-        palladiumItems: newPalladium,
+        silverItems: lists.silver,
+        goldItems: lists.gold,
+        platinumItems: lists.platinum,
+        palladiumItems: lists.palladium,
         syncedToCloud: syncedCount,
         refusedCount: rejected.length,
         refusedNames: rejected.map(({ item }) => item.productName),

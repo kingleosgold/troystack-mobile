@@ -214,8 +214,9 @@ test("a guest's holding keeps no row through an edit, since a restored backup's 
 });
 
 test('a write takes the stack count when it begins, so a failure after a reset, restore or foreign swap marks nothing', () => {
-  const calls = [...app.matchAll(/mark(Edit)?ForRetry\([^()]*, userId, stackGen\);/g)];
-  assert.equal(calls.length, 8);
+  const calls = [...app.matchAll(/mark(Edit|RowLookup)?ForRetry\([^()]*, userId, stackGen\);/g)];
+  // markRowLookupForRetry passes its own stackGen on to markForRetry
+  assert.equal(calls.length, 10);
   const takes = [...app.matchAll(/const userId = supabaseUser\.id;\n.*\n\s*const stackGen = foreignSwapGenRef\.current;/g)];
   assert.equal(takes.length, 4);
 });

@@ -89,6 +89,41 @@ export function withRetryMarks(items, marks, userId) {
 }
 
 /**
+ * The holdings with a lookup mark on each one whose edit couldn't find its
+ * row because the lookup failed, by local id. Such a holding takes a retry
+ * mark too, since it may have no row, but a sync skips a holding whose local
+ * id is already on a row, so the edit would be lost to the cloud's copy. The
+ * lookup mark, rowLookupFor with the account's id, has the sync send the edit
+ * over that row instead (see rowEditsToSend). Only a holding with this
+ * account's retry mark and no row takes it. The same array comes back when
+ * nothing changes.
+ */
+export function withRowLookups(items, marks, userId) {
+  if (!userId || !marks?.size || !Array.isArray(items)) return items;
+  let changed = false;
+  const marked = items.map((item) => {
+    if (marks.get(item.id) !== userId || item.restoredFor !== userId || item.supabase_id || item.rowLookupFor === userId) return item;
+    changed = true;
+    return { ...item, rowLookupFor: userId };
+  });
+  return changed ? marked : items;
+}
+
+/**
+ * The edits a sync sends over rows it found by local id: each holding with
+ * this account's lookup and retry marks whose local id is on a live row of
+ * the account, with that row's id. liveRows maps a local id to its row, and
+ * leaves out deleted rows, so an edit of a holding deleted elsewhere isn't
+ * sent and the cloud's copy drops it.
+ */
+export function rowEditsToSend(items, liveRows, userId) {
+  if (!userId || !liveRows?.size) return [];
+  return (items || [])
+    .filter((item) => item.rowLookupFor === userId && item.restoredFor === userId && liveRows.has(item.id))
+    .map((item) => ({ item, rowId: liveRows.get(item.id) }));
+}
+
+/**
  * The holdings with an edit mark on each one whose cloud update failed for
  * this account, by local id. marks maps a local id to the row the update
  * was for and its account. The mark puts the row on the holding if it lacks

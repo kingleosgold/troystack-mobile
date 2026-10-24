@@ -1,0 +1,71 @@
+// Run with: node --test mobile-app/src/utils/rowLookup.test.mjs
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { holdingsToUpload, localHoldingsToSync, rowEditsToSend, withRetryMarks, withRowLookups } from './holdingsUpload.js';
+
+const appSource = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+
+test('a lookup mark goes only on a holding with this account\'s retry mark and no row', () => {
+  const items = [
+    { id: 1, restoredFor: 'a' },
+    { id: 2, restoredFor: 'b' },
+    { id: 3, restoredFor: 'a', supabase_id: 'r3' },
+    { id: 4 },
+    { id: 5, restoredFor: 'a' },
+  ];
+  const marks = new Map([[1, 'a'], [2, 'a'], [3, 'a'], [4, 'a']]);
+  assert.deepEqual(withRowLookups(items, marks, 'a'), [
+    { id: 1, restoredFor: 'a', rowLookupFor: 'a' },
+    items[1], items[2], items[3], items[4],
+  ]);
+});
+
+test('the same array comes back when nothing changes', () => {
+  const items = [{ id: 1, restoredFor: 'a', rowLookupFor: 'a' }];
+  assert.equal(withRowLookups(items, new Map([[1, 'a']]), 'a'), items);
+  assert.equal(withRowLookups(items, new Map(), 'a'), items);
+  assert.equal(withRowLookups(items, new Map([[1, 'a']]), null), items);
+});
+
+test('a marked edit goes over its live row, which the insert skips', () => {
+  const edited = { id: 1, restoredFor: 'a', rowLookupFor: 'a' };
+  const noRow = { id: 2, restoredFor: 'a', rowLookupFor: 'a' };
+  const plainRetry = { id: 3, restoredFor: 'a' };
+  const otherAccount = { id: 4, restoredFor: 'b', rowLookupFor: 'b' };
+  const items = [edited, noRow, plainRetry, otherAccount];
+  const liveRows = new Map([[1, 'r1'], [3, 'r3'], [4, 'r4']]);
+  assert.deepEqual(rowEditsToSend(items, liveRows, 'a'), [{ item: edited, rowId: 'r1' }]);
+  // the one with no row still goes up as an add
+  assert.deepEqual(holdingsToUpload(items, new Set([1, 3, 4]), new Set()), [noRow]);
+});
+
+test('an edit of a row deleted elsewhere is not sent', () => {
+  const edited = { id: 1, restoredFor: 'a', rowLookupFor: 'a' };
+  // a deleted row is left out of the live rows, and its local id still stops the insert
+  assert.deepEqual(rowEditsToSend([edited], new Map(), 'a'), []);
+  assert.deepEqual(holdingsToUpload([edited], new Set([1]), new Set()), []);
+});
+
+test('a marked edit is among what a later sync sends', () => {
+  const marked = withRowLookups(withRetryMarks([{ id: 1 }], new Map([[1, 'a']]), 'a'), new Map([[1, 'a']]), 'a');
+  assert.deepEqual(localHoldingsToSync(marked, 'a', 'a', false), marked);
+});
+
+test('an edit whose lookup failed takes the lookup mark, and the sync reads the marks back', () => {
+  assert.match(appSource, /await findHoldingByLocalId\(supabaseUser\.id, item\.id, lookupMetal\);\n\s+lookedUp = true;/);
+  assert.match(appSource, /if \(addsRow && editingItem && !lookedUp\) markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\);\n\s+else if \(addsRow\) markForRetry\(/);
+  assert.match(appSource, /\.map\(\(items\) => withRowLookups\(items, rowLookupMarksRef\.current, supabaseUser\.id\)\)/);
+  // every place the retry marks clear, the lookup marks clear too
+  const retryClears = appSource.match(/retryMarksRef\.current\.clear\(\);/g).length;
+  const lookupClears = (appSource.match(/rowLookupMarksRef\.current\.clear\(\);/g) || []).length;
+  assert.equal(lookupClears, retryClears);
+});
+
+test('the upload sends marked edits over their rows and a failed one takes its row\'s place', () => {
+  assert.match(holdingsSource, /if \(!h\.deleted_at\) liveRows\.set\(notesData\.local_id, h\.id\);/);
+  assert.match(holdingsSource, /for \(const \{ item, rowId \} of rowEditsToSend\(items, liveRows, userId\)\)/);
+  assert.match(holdingsSource, /if \(updateError\) rejected\.push\(\{ item, metal, rowId \}\);/);
+  assert.match(holdingsSource, /silverItems: lists\.silver,/);
+});
