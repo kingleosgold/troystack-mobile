@@ -41,7 +41,7 @@ import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
-import { pullFailedAlert, pullFailedDue } from './src/utils/pullFailed';
+import { pullFailedAlert, pullFailedDue, pullUnsentDue } from './src/utils/pullFailed';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
@@ -2445,9 +2445,9 @@ function AppContent() {
   const [syncError, setSyncError] = useState(null);
   // The latest sync's number, the promise that settles when the one running
   // ends, and how the last one to end went, read by the My Stack pull
-  const syncSeqRef = useRef(0);
+  const holdingsSyncSeqRef = useRef(0);
   const syncEndRef = useRef(Promise.resolve());
-  const syncOutcomeRef = useRef({ seq: 0, failed: false });
+  const syncOutcomeRef = useRef({ seq: 0, failed: false, unsent: 0 });
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
   // Counts restores, so a sync that was already running when one landed
   // leaves the restored stack for the next sync instead of replacing it
@@ -4164,8 +4164,10 @@ function AppContent() {
     setSyncError(null);
     // Each sync's outcome is kept by its number, so a pull judges the sync it
     // waited on and not one that started or failed around it
-    const seq = ++syncSeqRef.current;
+    const seq = ++holdingsSyncSeqRef.current;
     let failed = false;
+    // Edits it resent that still didn't reach the account
+    let unsent = 0;
     let ended;
     syncEndRef.current = new Promise((resolve) => { ended = resolve; });
     const restoresAtStart = restoreCountRef.current;
@@ -4261,6 +4263,7 @@ function AppContent() {
         if (accountChanged()) return false;
         if (editError) unsentEdits.push(edit);
       }
+      unsent = unsentEdits.length;
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
@@ -4356,7 +4359,7 @@ function AppContent() {
       }
       return false;
     } finally {
-      syncOutcomeRef.current = { seq, failed };
+      syncOutcomeRef.current = { seq, failed, unsent };
       ended();
       isSyncingRef.current = false;
       setIsSyncing(false);
@@ -8313,21 +8316,27 @@ function AppContent() {
     // A sync already running stands in for the pull's, which it skips, so the
     // pull waits for it and judges it. Otherwise it judges the one it starts.
     const signedIn = !!supabaseUser;
+    const userIdAtPull = supabaseUser?.id;
     const accountGenAtPull = accountGenRef.current;
-    const firstSeq = syncSeqRef.current + (isSyncingRef.current ? 0 : 1);
+    const firstSeq = holdingsSyncSeqRef.current + (isSyncingRef.current ? 0 : 1);
     if (supabaseUser) {
       promises.push(syncHoldingsWithSupabase(true)); // force=true to re-sync
     }
 
     await Promise.all(promises);
-    if (signedIn && isSyncingRef.current && syncSeqRef.current === firstSeq) await syncEndRef.current;
+    if (signedIn && isSyncingRef.current && holdingsSyncSeqRef.current === firstSeq) await syncEndRef.current;
     setIsRefreshing(false);
     // A pull whose sync failed says so, or the spinner just stops and the
     // stack reads as checked against the account when it wasn't
     const outcome = syncOutcomeRef.current;
-    if (pullFailedDue({ signedIn, failed: outcome.seq === firstSeq && outcome.failed, sameAccount: accountGenRef.current === accountGenAtPull })) {
+    const judged = { signedIn, sameAccount: accountGenRef.current === accountGenAtPull };
+    if (pullFailedDue({ ...judged, failed: outcome.seq === firstSeq && outcome.failed })) {
       const { title, message } = pullFailedAlert();
       Alert.alert(title, message);
+    } else if (pullUnsentDue({ ...judged, unsent: outcome.seq === firstSeq ? outcome.unsent : 0 })) {
+      // The sync worked but an edit it resent still didn't land, so the
+      // save notice says so again, sharing its gap so the two never stack
+      noteCloudMiss('edit', userIdAtPull);
     }
   };
 

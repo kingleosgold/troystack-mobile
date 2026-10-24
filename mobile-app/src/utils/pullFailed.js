@@ -15,6 +15,12 @@ export const pullFailedDue = ({ signedIn, failed, sameAccount }) => (
   !!signedIn && !!failed && !!sameAccount
 );
 
+// Whether a pull's sync, which didn't fail, still left an edit it resent
+// off the account, for the account still signed in
+export const pullUnsentDue = ({ signedIn, unsent, sameAccount }) => (
+  !!signedIn && unsent > 0 && !!sameAccount
+);
+
 export function pullFailedAlert() {
   return {
     title: "Couldn't sync your stack",
