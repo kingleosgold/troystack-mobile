@@ -55,6 +55,7 @@ import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMA
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
+import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
 import PieChart from './src/components/PieChart';
@@ -10046,26 +10047,47 @@ function AppContent() {
 
             const settersMap = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
             const setter = settersMap[metal] || setSilverItems;
+            // The holding as committed and its place, to put it back if the
+            // cloud delete fails
+            const metalIndex = { silver: 0, gold: 1, platinum: 2, palladium: 3 }[metal] ?? 0;
+            const committed = committedStackRef.current?.[metalIndex] || items;
+            const removedIndex = committed.findIndex(i => i.id === id);
+            const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
+            const deleteGen = stackGenRef.current;
             setter(prev => prev.filter(i => i.id !== id));
 
             // Delete from Supabase if signed in
             if (supabaseUser && itemToDelete) {
               await trackHoldingWrite(async () => {
+                // deleteHolding answers its error rather than throwing, and a
+                // lookup that fails throws, since a row may still be there
+                let reached = true;
                 try {
                   if (itemToDelete.supabase_id) {
-                    await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
-                    if (__DEV__) console.log('Deleted holding from Supabase');
+                    const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
+                    if (error) reached = false;
+                    else if (__DEV__) console.log('Deleted holding from Supabase');
                   } else {
                     // Find in Supabase by local_id
                     const existingHolding = await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
-                      await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
-                      if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
+                      const { error } = await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
+                      if (error) reached = false;
+                      else if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
                     }
                   }
                 } catch (err) {
                   if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
-                  // Don't block - local delete already succeeded
+                  reached = false;
+                }
+                // The row is still live, so the next sync would bring the
+                // holding back unexplained. It goes back now with a notice,
+                // while the same account holds the same stack. After a swap
+                // the stack came from the cloud, which still has it.
+                if (!reached && userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
+                  setter(prev => withHoldingRestored(prev, removed, removedIndex));
+                  const { title, message } = deleteMissAlert(removed?.productName);
+                  Alert.alert(title, message);
                 }
               });
             }
