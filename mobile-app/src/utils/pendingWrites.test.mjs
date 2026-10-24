@@ -257,3 +257,17 @@ test('the sync resends each marked edit as a tracked write, bounded by the write
   assert.ok(body.includes('trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal))'));
   assert.ok(!/await updateHolding\(supabaseUser\.id, edit\.item/.test(body));
 });
+
+test('countFor counts only that account\'s unsettled writes', async () => {
+  const w = pendingWrites();
+  let done;
+  w.track(() => new Promise((r) => { done = r; }), 'u1');
+  w.track(() => new Promise(() => {}), 'u2');
+  assert.equal(w.countFor('u1'), 1);
+  assert.equal(w.countFor('u3'), 0);
+  await Promise.resolve();
+  done();
+  await w.settled(0, 'u1');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(w.countFor('u1'), 0);
+});

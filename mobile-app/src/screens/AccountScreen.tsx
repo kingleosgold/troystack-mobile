@@ -20,6 +20,9 @@ interface AccountScreenProps {
   apiBase: string;
   onClose: () => void;
   onSignOut: () => void | Promise<boolean | void>;
+  // The Sign Out button, which may ask first. onSignOut signs out at once,
+  // as after the account is deleted.
+  onSignOutTap?: () => void;
   hasGold: boolean;
   hasLifetime: boolean;
   colors: {
@@ -38,6 +41,7 @@ export default function AccountScreen({
   apiBase,
   onClose,
   onSignOut,
+  onSignOutTap,
   hasGold,
   hasLifetime,
   colors,
@@ -60,8 +64,9 @@ export default function AccountScreen({
   };
 
   const handleSignOut = () => {
-    // Authenticated users sign out immediately — no confirmation needed
-    onSignOut();
+    // Asks first only when a change hasn't reached the account yet
+    if (onSignOutTap) onSignOutTap();
+    else onSignOut();
   };
 
   // Deletes the account through DELETE /v1/account (src/utils/accountDelete.js),

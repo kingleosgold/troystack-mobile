@@ -91,7 +91,7 @@ test('a deleted account says so when the phone could not sign out', () => {
   const screen = readFileSync(new URL('../screens/AccountScreen.tsx', import.meta.url), 'utf8');
   assert.match(screen, /const signedOut = await onSignOut\(\);/);
   assert.match(screen, /signedOut === false/);
-  assert.match(app, /onSignOut=\{\(\) => performSignOut\(\)\}/);
+  assert.match(app, /onSignOut=\{\(\) => \{ deletedAccountRef\.current = supabaseUser\?\.id \|\| null; return performSignOut\(\); \}\}/);
 });
 
 test('the loading screen holds until the sign out has cleared the phone', () => {

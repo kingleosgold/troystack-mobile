@@ -42,6 +42,7 @@ import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
+import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
@@ -2471,6 +2472,10 @@ function AppContent() {
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
   const retryMarksRef = useRef(new Map());
+  // The account the Account screen just deleted, which signs out without the
+  // unsent ask, and whether that ask is being counted
+  const deletedAccountRef = useRef(null);
+  const signOutAskRef = useRef(false);
   // Local ids of those retry-marked holdings whose edit failed at the row
   // lookup, each with its account, so the sync sends the edit over the row
   // it finds by local id rather than skip the holding as already there
@@ -3231,6 +3236,96 @@ function AppContent() {
     } finally {
       setSigningOut(false);
     }
+  };
+
+  // Sign out clears the phone's stack, so a change the next sync would still
+  // send to the account, an add or edit whose cloud write failed, a stack
+  // whose first sync never finished or a write still on its way, would be
+  // gone. Sign out asks first. The marks still in the refs count too, and the
+  // owner and first sync are read as the sync reads them. A failed read
+  // counts as a first sync, so it asks rather than wipes.
+  const countUnsent = async (userId) => {
+    let owner = null;
+    let firstSync = true;
+    try {
+      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
+        AsyncStorage.getItem(`stack_synced_${userId}`),
+        AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
+        AsyncStorage.getAllKeys(),
+      ]);
+      owner = stackOwnerOf(recordedOwner, storageKeys, userId);
+      firstSync = !hasEverSynced;
+    } catch (e) {
+      if (__DEV__) console.error('Unsent count read failed:', e);
+    }
+    // The stack, its marks and the writes on their way are read together
+    // after the wait, since a write that fails marks its holding before it
+    // stops being on its way, so one read can't miss it
+    const lists = (committedStackRef.current || [])
+      .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
+      .map((items) => withEditMarks(items, editMarksRef.current, userId));
+    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) });
+  };
+
+  // Send Now runs My Stack's pull, which says if the sync failed. Otherwise,
+  // once the sync's swap has rendered, it says everything reached the account
+  // or asks again with what's left. An account just deleted signs out at once,
+  // since there's no account left to send to. One ask at a time, and a tap on
+  // an ask whose account has since changed does nothing.
+  const confirmSignOut = async () => {
+    const userId = supabaseUser?.id;
+    // A session that ended while the screen was open has no account to send
+    // to, so the tap signs out as it always did
+    if (!userId || deletedAccountRef.current === userId) {
+      performSignOut();
+      return;
+    }
+    if (signOutAskRef.current) return;
+    signOutAskRef.current = true;
+    let count = 0;
+    try {
+      count = await countUnsent(userId);
+    } finally {
+      signOutAskRef.current = false;
+    }
+    if (userIdRef.current !== userId) return;
+    if (!count) {
+      performSignOut();
+      return;
+    }
+    const sameAccount = () => userIdRef.current === userId;
+    const { title, message } = unsentSignOutAlert(count);
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Send Now',
+        onPress: async () => {
+          if (!sameAccount() || signOutAskRef.current) return;
+          // A Sign Out tap while this sends waits for its answer
+          signOutAskRef.current = true;
+          let left;
+          try {
+            const pull = await onRefreshDashboard();
+            if (!sameAccount() || pull === 'failed') return;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (!sameAccount()) return;
+            left = await countUnsent(userId);
+          } finally {
+            signOutAskRef.current = false;
+          }
+          if (!sameAccount()) return;
+          if (left) {
+            confirmSignOut();
+            return;
+          }
+          Alert.alert('Saved to your account', 'Everything on this phone is in your account now.', [
+            { text: 'Stay Signed In', style: 'cancel' },
+            { text: 'Sign Out', onPress: () => confirmSignOut() },
+          ]);
+        },
+      },
+      { text: 'Sign Out Anyway', style: 'destructive', onPress: () => { if (sameAccount()) performSignOut(); } },
+    ]);
   };
 
   // Sign out: clear user data, logout services, navigate to auth screen
@@ -8383,11 +8478,14 @@ function AppContent() {
     if (pullFailedDue({ ...judged, failed: outcome.failed })) {
       const { title, message } = pullFailedAlert();
       Alert.alert(title, message);
+      return 'failed';
     } else if (pullUnsentDue({ ...judged, unsent: outcome.unsent })) {
       // The sync worked but an edit it resent still didn't land, so the
       // save notice says so again, sharing its gap so the two never stack
       noteCloudMiss('edit', userIdAtPull);
+      return 'unsent';
     }
+    return 'ok';
   };
 
   const onRefreshAnalytics = async () => {
@@ -13663,8 +13761,9 @@ function AppContent() {
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       if (supabaseUser) {
-                        // Authenticated users — sign out immediately
-                        performSignOut();
+                        // Authenticated users sign out at once, unless a change
+                        // hasn't reached their account yet
+                        confirmSignOut();
                       } else {
                         // Guest users — warn about data loss
                         Alert.alert(
@@ -15028,7 +15127,8 @@ function AppContent() {
           <AccountScreen
             apiBase={API_BASE_URL}
             onClose={() => setShowAccountScreen(false)}
-            onSignOut={() => performSignOut()}
+            onSignOut={() => { deletedAccountRef.current = supabaseUser?.id || null; return performSignOut(); }}
+            onSignOutTap={() => confirmSignOut()}
             hasGold={hasGold}
             hasLifetime={hasLifetimeAccess}
             colors={colors}
