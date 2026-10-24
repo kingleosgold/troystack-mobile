@@ -185,7 +185,7 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   const fetch = body.indexOf('await fullSync(');
   assert.ok(read > 0 && send > read && fetch > send);
   // each edit stops at an account change, and a failed one is kept
-  assert.match(body, /const resend = trackHoldingWrite\(\(\) => updateHolding\(supabaseUser\.id, rowId, edit\.item, edit\.metal\)\);\n[\s\S]*?const sent = await settleWithin\(resend, resendsBy - Date\.now\(\), accountChanged\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(sent\.late\) resendsLate = true;\n\s*if \(!sent\.value \|\| sent\.value\.error\) unsentEdits\.push\(edit\);/);
+  assert.match(body, /const resend = trackRowResend\(rowId, \(\) => updateHolding\(supabaseUser\.id, rowId, edit\.item, edit\.metal\)\);\n[\s\S]*?const sent = await settleWithin\(resend, resendsBy - Date\.now\(\), accountChanged\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(sent\.late\) resendsLate = true;\n\s*if \(!sent\.value \|\| sent\.value\.error\) unsentEdits\.push\(edit\);/);
   // after one resend runs late the rest stay marked for the next sync
   assert.match(body, /const resendsBy = Date\.now\(\) \+ HOLDING_WRITES_WAIT_MS;/);
   assert.match(body, /if \(resendsLate \|\| Date\.now\(\) >= resendsBy\) \{\n\s*unsentEdits\.push\(edit\);\n\s*continue;\n\s*\}/);

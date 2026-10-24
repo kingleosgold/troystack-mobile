@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pendingWrites, settleWithin } from './pendingWrites.js';
+import { pendingWrites, sendAllWithin, settleWithin } from './pendingWrites.js';
 
 const gate = () => {
   let open;
@@ -254,7 +254,10 @@ test('settleWithin passes a write through, and answers late or stopped without a
 test('the sync resends each marked edit as a tracked write, bounded by the write wait', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.ok(body.includes('trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal))'));
+  assert.ok(body.includes('trackRowResend(rowId, () => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal))'));
+  assert.ok(body.includes('const resend = trackHoldingWrite(run);'));
+  // fullSync's resends over rows found by local id share the limit
+  assert.ok(body.includes('{ track: trackRowResend, by: resendsBy, stopped: accountChanged }'));
   assert.ok(!/await updateHolding\(supabaseUser\.id, edit\.item/.test(body));
 });
 
@@ -270,4 +273,27 @@ test('countFor counts only that account\'s unsettled writes', async () => {
   await w.settled(0, 'u1');
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(w.countFor('u1'), 0);
+});
+
+test('sendAllWithin keeps the jobs that fail, hang past the deadline or come after it', async () => {
+  const sent = [];
+  const send = (job) => {
+    sent.push(job);
+    if (job === 'hang') return new Promise(() => {});
+    if (job === 'bad') return Promise.resolve({ error: new Error('no') });
+    if (job === 'throw') return Promise.reject(new Error('no'));
+    return Promise.resolve({ error: null });
+  };
+  const unsent = await sendAllWithin(['ok', 'bad', 'throw', 'hang', 'after'], send, Date.now() + 60);
+  assert.deepEqual(unsent, ['bad', 'throw', 'hang', 'after']);
+  // the job after the hung one never starts
+  assert.deepEqual(sent, ['ok', 'bad', 'throw', 'hang']);
+});
+
+test('sendAllWithin starts nothing once the account changed or the deadline passed', async () => {
+  let started = 0;
+  const send = () => { started += 1; return Promise.resolve({ error: null }); };
+  assert.deepEqual(await sendAllWithin(['a', 'b'], send, Date.now() + 1000, () => true), ['a', 'b']);
+  assert.deepEqual(await sendAllWithin(['a'], send, Date.now() - 1), ['a']);
+  assert.equal(started, 0);
 });

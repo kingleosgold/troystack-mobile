@@ -66,8 +66,9 @@ test('an edit whose lookup failed takes the lookup mark, and the sync reads the 
 
 test('the upload sends marked edits over their rows and a failed one takes its row\'s place', () => {
   assert.match(holdingsSource, /if \(!h\.deleted_at\) liveRows\.set\(notesData\.local_id, h\.id\);/);
-  assert.match(holdingsSource, /for \(const \{ item, rowId \} of rowEditsToSend\(items, liveRows, userId\)\)/);
-  assert.match(holdingsSource, /if \(updateError\) rejected\.push\(\{ item, metal, rowId \}\);/);
+  assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId\)/);
+  assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
+  assert.match(holdingsSource, /unsentRowEdits\.forEach\(\(\{ item, rowId, metal \}\) => rejected\.push\(\{ item, metal, rowId \}\)\);/);
   assert.match(holdingsSource, /silverItems: lists\.silver,/);
 });
 

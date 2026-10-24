@@ -4390,16 +4390,22 @@ function AppContent() {
       const unsentEdits = [];
       const resendsBy = Date.now() + HOLDING_WRITES_WAIT_MS;
       let resendsLate = false;
+      // A resend of a row is held where an edit of that row looks for it, so
+      // the edit waits for the resend rather than land under it
+      const trackRowResend = (rowId, run) => {
+        const resend = trackHoldingWrite(run);
+        rowResendsRef.current.set(rowId, resend);
+        const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };
+        resend.then(forget, forget);
+        return resend;
+      };
       for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
         if (resendsLate || Date.now() >= resendsBy) {
           unsentEdits.push(edit);
           continue;
         }
         const rowId = edit.item.supabase_id;
-        const resend = trackHoldingWrite(() => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal));
-        rowResendsRef.current.set(rowId, resend);
-        const forget = () => { if (rowResendsRef.current.get(rowId) === resend) rowResendsRef.current.delete(rowId); };
-        resend.then(forget, forget);
+        const resend = trackRowResend(rowId, () => updateHolding(supabaseUser.id, rowId, edit.item, edit.metal));
         const sent = await settleWithin(resend, resendsBy - Date.now(), accountChanged);
         if (accountChanged()) return false;
         if (sent.late) resendsLate = true;
@@ -4415,7 +4421,10 @@ function AppContent() {
         toUpload[1],
         uploadLocal,
         toUpload[2],
-        toUpload[3]
+        toUpload[3],
+        // An edit fullSync sends over a row found by local id is a resend
+        // too, under the same limit
+        { track: trackRowResend, by: resendsBy, stopped: accountChanged }
       );
 
       if (accountChanged()) return false;

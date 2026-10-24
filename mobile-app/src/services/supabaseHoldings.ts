@@ -3,6 +3,16 @@ import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
+import { HOLDING_WRITES_WAIT_MS, sendAllWithin } from '../utils/pendingWrites';
+
+// How a sync sends the edits it puts over rows: track starts a row's write
+// as one the app waits for, by is the deadline for all of them and stopped
+// says the account changed. Without them each write still has the limit.
+export interface RowEditWait {
+  track?: (rowId: string, run: () => Promise<{ error: any }>) => Promise<{ error: any }>;
+  by?: number;
+  stopped?: () => boolean;
+}
 
 // Local holding structure (from App.js)
 export interface LocalHolding {
@@ -308,7 +318,8 @@ export async function syncLocalToSupabase(
   silverItems: LocalHolding[],
   goldItems: LocalHolding[],
   platinumItems: LocalHolding[] = [],
-  palladiumItems: LocalHolding[] = []
+  palladiumItems: LocalHolding[] = [],
+  rowEditWait: RowEditWait = {}
 ): Promise<{
   syncedCount: number;
   skippedCount: number;
@@ -363,15 +374,23 @@ export async function syncLocalToSupabase(
       { items: palladiumItems, metal: 'palladium' },
     ];
 
+    // An edit whose lookup failed goes over the row it was looking for,
+    // which the insert below skips. One that fails stays on the phone
+    // instead of its row, marked, like a refused insert, so it can't hold
+    // back every sync. The sync waits for these writes only so long, as for
+    // its other resends, and one it lets go of stays marked the same way.
+    const rowEdits = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId)
+      .map(({ item, rowId }) => ({ item, rowId, metal })));
+    const track = rowEditWait.track || ((_rowId: string, run: () => Promise<{ error: any }>) => run());
+    const unsentRowEdits = await sendAllWithin(
+      rowEdits,
+      ({ item, rowId, metal }) => track(rowId, () => updateHolding(userId, rowId, item, metal)),
+      rowEditWait.by ?? Date.now() + HOLDING_WRITES_WAIT_MS,
+      rowEditWait.stopped
+    );
+    unsentRowEdits.forEach(({ item, rowId, metal }) => rejected.push({ item, metal, rowId }));
+
     for (const { items, metal } of metalGroups) {
-      // An edit whose lookup failed goes over the row it was looking for,
-      // which the insert below skips. One that fails stays on the phone
-      // instead of its row, marked, like a refused insert, so it can't hold
-      // back every sync.
-      for (const { item, rowId } of rowEditsToSend(items, liveRows, userId)) {
-        const { error: updateError } = await updateHolding(userId, rowId, item, metal);
-        if (updateError) rejected.push({ item, metal, rowId });
-      }
       const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
@@ -408,7 +427,8 @@ export async function fullSync(
   localGold: LocalHolding[],
   uploadLocal: boolean = false,
   localPlatinum: LocalHolding[] = [],
-  localPalladium: LocalHolding[] = []
+  localPalladium: LocalHolding[] = [],
+  rowEditWait: RowEditWait = {}
 ): Promise<{
   silverItems: LocalHolding[];
   goldItems: LocalHolding[];
@@ -439,7 +459,8 @@ export async function fullSync(
         localSilver,
         localGold,
         localPlatinum,
-        localPalladium
+        localPalladium,
+        rowEditWait
       );
 
       // A failed upload keeps the local stack on screen and this sync unmarked,
