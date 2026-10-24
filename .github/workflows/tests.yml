@@ -22,7 +22,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The tests import plain JS from src/utils and need no npm install.
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      # Scripts are skipped since the tests need only the packages, among
+      # them @babel/parser to parse App.js and src.
+      - name: Install
+        working-directory: mobile-app
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run node --test
         working-directory: mobile-app
         run: npm test
