@@ -7,7 +7,7 @@ import { asRestoredBy, holdingsToUpload, localHoldingsToSync, rowEditsToSend, wi
 const appSource = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
 
-test('a lookup mark goes only on a holding with this account\'s retry mark and no row', () => {
+test('a lookup mark goes only on a holding with this account\'s retry mark', () => {
   const items = [
     { id: 1, restoredFor: 'a' },
     { id: 2, restoredFor: 'b' },
@@ -18,7 +18,8 @@ test('a lookup mark goes only on a holding with this account\'s retry mark and n
   const marks = new Map([[1, 'a'], [2, 'a'], [3, 'a'], [4, 'a']]);
   assert.deepEqual(withRowLookups(items, marks, 'a'), [
     { id: 1, restoredFor: 'a', rowLookupFor: 'a' },
-    items[1], items[2], items[3], items[4],
+    // a restored holding with a row is found by local id too
+    items[1], { id: 3, restoredFor: 'a', supabase_id: 'r3', rowLookupFor: 'a' }, items[3], items[4],
   ]);
 });
 
@@ -82,4 +83,11 @@ test('a later save keeps the lookup mark, and a failed send keeps it on the copy
   assert.match(holdingsSource, /\.map\(\(back\) => \(rowId \? \{ \.\.\.back, rowLookupFor: userId \} : back\)\)/);
   // the notice says an edit didn't reach the account, not an add
   assert.match(appSource, /markForRetry\(metal, localId, userId, stackGen, 'edit'\);/);
+});
+
+test('a restored holding with a row whose update failed is sent over the row by local id', () => {
+  const restored = withRowLookups([{ id: 5, restoredFor: 'a', supabase_id: 'r5' }], new Map([[5, 'a']]), 'a');
+  assert.deepEqual(rowEditsToSend(restored, new Map([[5, 'r5']]), 'a'), [{ item: restored[0], rowId: 'r5' }]);
+  // and never inserted again, since its row is the account's
+  assert.deepEqual(holdingsToUpload(restored, new Set([5]), new Set(['r5'])), []);
 });

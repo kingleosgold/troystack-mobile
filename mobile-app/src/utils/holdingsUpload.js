@@ -97,14 +97,16 @@ export function withRetryMarks(items, marks, userId) {
  * id is already on a row, so the edit would be lost to the cloud's copy. The
  * lookup mark, rowLookupFor with the account's id, has the sync send the edit
  * over that row instead (see rowEditsToSend). Only a holding with this
- * account's retry mark and no row takes it. The same array comes back when
+ * account's retry mark takes it. One carrying a row, as a restored holding
+ * does, is found by local id too, since rowEditsToSend reads only this
+ * account's rows. The same array comes back when
  * nothing changes.
  */
 export function withRowLookups(items, marks, userId) {
   if (!userId || !marks?.size || !Array.isArray(items)) return items;
   let changed = false;
   const marked = items.map((item) => {
-    if (marks.get(item.id) !== userId || item.restoredFor !== userId || item.supabase_id || item.rowLookupFor === userId) return item;
+    if (marks.get(item.id) !== userId || item.restoredFor !== userId || item.rowLookupFor === userId) return item;
     changed = true;
     return { ...item, rowLookupFor: userId };
   });

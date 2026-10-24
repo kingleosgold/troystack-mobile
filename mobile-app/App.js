@@ -10001,6 +10001,13 @@ function AppContent() {
       // Whether an edit's row lookup ran, so a failure before it lands is
       // one of the lookup and may leave a row the sync must update
       let lookedUp = false;
+      // A failed update takes an edit mark, which a sync never sends for a
+      // holding still marked to go up, so one restored or retried for this
+      // account takes the lookup mark instead, and the sync finds its row by
+      // local id
+      const markFailedEdit = (rowId) => (item.restoredFor === userId
+        ? markRowLookupForRetry(targetMetal, item.id, userId, stackGen)
+        : markEditForRetry(targetMetal, item.id, rowId, userId, stackGen));
       const earlierWrites = editingItem && !item.supabase_id
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
@@ -10012,7 +10019,7 @@ function AppContent() {
             // a backup it restored, so it finds its row in this account by
             // local id below, or goes up as new.
             const { error } = await updateAfterResend(item.supabase_id, targetMetal);
-            if (error) markEditForRetry(targetMetal, item.id, item.supabase_id, userId, stackGen);
+            if (error) markFailedEdit(item.supabase_id);
             else {
               editMarksRef.current.delete(item.id);
               if (__DEV__) console.log('Updated holding in Supabase');
@@ -10038,7 +10045,7 @@ function AppContent() {
               addsRow = false;
               knownRowsRef.current.note(item.id, existingHolding.id, userId);
               const { error } = await updateAfterResend(existingHolding.id, targetMetal);
-              if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
+              if (error) markFailedEdit(existingHolding.id);
               else {
                 editMarksRef.current.delete(item.id);
                 if (__DEV__) console.log('Updated existing holding in Supabase');
