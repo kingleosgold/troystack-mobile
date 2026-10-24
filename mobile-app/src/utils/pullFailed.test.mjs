@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pullFailedAlert, pullFailedDue, pullUnsentDue } from './pullFailed.js';
+import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome, SYNC_OUTCOMES_KEPT } from './pullFailed.js';
 
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -30,7 +30,7 @@ test("each of the sync's failures marks its own outcome, kept by its number when
   }
   const numbered = body.indexOf('const seq = ++holdingsSyncSeqRef.current;');
   assert.ok(numbered > body.indexOf('isSyncingRef.current = true;') && numbered < body.indexOf('holdingWrites.settled('));
-  assert.match(body, /\} finally \{\n\s*syncOutcomeRef\.current = \{ seq, failed, unsent \};\n\s*ended\(\);\n\s*isSyncingRef\.current = false;/);
+  assert.match(body, /\} finally \{\n\s*recordSyncOutcome\(syncOutcomesRef\.current, seq, \{ failed, unsent \}\);\n\s*ended\(\);\n\s*isSyncingRef\.current = false;/);
 });
 
 test('the My Stack pull waits for a sync already running and judges only its own', () => {
@@ -39,7 +39,8 @@ test('the My Stack pull waits for a sync already running and judges only its own
   assert.ok(first > 0 && first < fn.indexOf('syncHoldingsWithSupabase(true)'));
   const wait = fn.indexOf('await syncEndRef.current;');
   assert.ok(wait > fn.indexOf('await Promise.all(promises);') && wait < fn.indexOf('setIsRefreshing(false);'));
-  assert.ok(fn.includes('failed: outcome.seq === firstSeq && outcome.failed'));
+  assert.ok(fn.includes('const outcome = syncOutcomesRef.current.get(firstSeq) || { failed: false, unsent: 0 };'));
+  assert.ok(fn.includes('failed: outcome.failed'));
   assert.ok(fn.includes('const judged = { signedIn, sameAccount: accountGenRef.current === accountGenAtPull };'));
   assert.equal([...app.matchAll(/pullFailedAlert\(\)/g)].length, 1);
 });
@@ -54,7 +55,7 @@ test('a pull whose sync worked but left a resent edit off the account says so, f
   assert.ok(body.indexOf('unsent = unsentEdits.length;') > body.indexOf('if (editError) unsentEdits.push(edit);'));
   const fn = app.slice(app.indexOf('const onRefreshDashboard = async () => {'), app.indexOf('const onRefreshAnalytics = async () => {'));
   // Only when the failed notice didn't show, and through the save notice's gap
-  assert.match(fn, /\} else if \(pullUnsentDue\(\{ \.\.\.judged, unsent: outcome\.seq === firstSeq \? outcome\.unsent : 0 \}\)\) \{[\s\S]*?noteCloudMiss\('edit', userIdAtPull\);/);
+  assert.match(fn, /\} else if \(pullUnsentDue\(\{ \.\.\.judged, unsent: outcome\.unsent \}\)\) \{[\s\S]*?noteCloudMiss\('edit', userIdAtPull\);/);
 });
 
 test("the holdings sync's counter is its own, apart from the profile sync's", () => {
@@ -64,4 +65,18 @@ test("the holdings sync's counter is its own, apart from the profile sync's", ()
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
   // The profile sync's counter is never moved by a holdings sync
   assert.ok(!body.includes('syncSeqRef'));
+});
+
+test("a retry that ends while the pull waits on prices keeps its own outcome, so the pull still judges its sync", () => {
+  const outcomes = new Map();
+  recordSyncOutcome(outcomes, 4, { failed: true, unsent: 0 }); // the pull's sync
+  recordSyncOutcome(outcomes, 5, { failed: true, unsent: 0 }); // the 5s retry, ending first
+  assert.deepEqual(outcomes.get(4), { failed: true, unsent: 0 });
+  assert.equal(pullFailedDue({ signedIn: true, failed: outcomes.get(4).failed, sameAccount: true }), true);
+  // Old outcomes drop past the limit, newest kept
+  for (let seq = 6; seq < 6 + SYNC_OUTCOMES_KEPT; seq += 1) recordSyncOutcome(outcomes, seq, { failed: false, unsent: 0 });
+  assert.equal(outcomes.size, SYNC_OUTCOMES_KEPT);
+  assert.equal(outcomes.has(4), false);
+  assert.equal(outcomes.has(5 + SYNC_OUTCOMES_KEPT), true);
+  assert.equal(app.includes('syncOutcomeRef'), false);
 });

@@ -21,6 +21,21 @@ export const pullUnsentDue = ({ signedIn, unsent, sameAccount }) => (
   !!signedIn && unsent > 0 && !!sameAccount
 );
 
+// How many recent syncs' outcomes are kept. A pull judges the one it started
+// or waited on, a few numbers back at most, since an auto retry can start and
+// end while the pull still waits for spot prices
+export const SYNC_OUTCOMES_KEPT = 8;
+
+// Keeps a sync's outcome by its number and drops the oldest past the limit
+export function recordSyncOutcome(outcomes, seq, outcome, kept = SYNC_OUTCOMES_KEPT) {
+  outcomes.set(seq, outcome);
+  for (const old of outcomes.keys()) {
+    if (outcomes.size <= kept) break;
+    outcomes.delete(old);
+  }
+  return outcomes;
+}
+
 export function pullFailedAlert() {
   return {
     title: "Couldn't sync your stack",
