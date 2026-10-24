@@ -42,7 +42,7 @@ import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
@@ -2471,6 +2471,10 @@ function AppContent() {
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
   const retryMarksRef = useRef(new Map());
+  // Local ids of those retry-marked holdings whose edit failed at the row
+  // lookup, each with its account, so the sync sends the edit over the row
+  // it finds by local id rather than skip the holding as already there
+  const rowLookupMarksRef = useRef(new Map());
   // The same for holdings with a row whose cloud update failed, each local
   // id with its row and account
   const editMarksRef = useRef(new Map());
@@ -3080,13 +3084,25 @@ function AppContent() {
   // after a sign out's reset, a restore or a swap to another account's stack
   // marks nothing, since a holding with that local id now isn't the one the
   // write was for.
-  const markForRetry = (metal, localId, userId, stackGen) => {
+  const markForRetry = (metal, localId, userId, stackGen, kind = 'add') => {
     if (foreignSwapGenRef.current !== stackGen) return;
     retryMarksRef.current.set(localId, userId);
     const mark = new Map([[localId, userId]]);
     const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
     (setters[metal] || setSilverItems)((prev) => withRetryMarks(prev, mark, userId));
-    noteCloudMiss('add', userId);
+    noteCloudMiss(kind, userId);
+  };
+
+  // An edit whose row lookup failed may or may not have a row, so it takes a
+  // retry mark and a lookup mark. With no row the sync adds it, and with one
+  // the sync updates that row, which a retry mark alone would skip.
+  const markRowLookupForRetry = (metal, localId, userId, stackGen) => {
+    if (foreignSwapGenRef.current !== stackGen) return;
+    markForRetry(metal, localId, userId, stackGen, 'edit');
+    rowLookupMarksRef.current.set(localId, userId);
+    const mark = new Map([[localId, userId]]);
+    const setters = { silver: setSilverItems, gold: setGoldItems, platinum: setPlatinumItems, palladium: setPalladiumItems };
+    (setters[metal] || setSilverItems)((prev) => withRowLookups(prev, mark, userId));
   };
 
   // The user saw the save land, so a write that didn't reach the account
@@ -3128,6 +3144,7 @@ function AppContent() {
     setPlatinumItems([]);
     setPalladiumItems([]);
     editMarksRef.current.clear();
+    rowLookupMarksRef.current.clear();
     knownRowsRef.current.clear();
     setSilverSpot(77);
     setGoldSpot(4530);
@@ -4060,6 +4077,7 @@ function AppContent() {
                   // it would send the backup's copy over the row the mark named
                   retryMarksRef.current.clear();
                   editMarksRef.current.clear();
+                  rowLookupMarksRef.current.clear();
                   knownRowsRef.current.clear();
                   bumpStackGen();
                   if (cloudData.silverItems) setSilverItems(asRestoredBy(cloudData.silverItems, supabaseUser?.id || null));
@@ -4230,6 +4248,7 @@ function AppContent() {
       // A restore doesn't wait, and restoreCountRef covers it below.
       const [localSilver, localGold, localPlatinum, localPalladium] = committedStackRef.current
         .map((items) => withRetryMarks(items, retryMarksRef.current, supabaseUser.id))
+        .map((items) => withRowLookups(items, rowLookupMarksRef.current, supabaseUser.id))
         .map((items) => withEditMarks(items, editMarksRef.current, supabaseUser.id));
       const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
@@ -4364,6 +4383,7 @@ function AppContent() {
         // refused and marked again
         retryMarksRef.current.clear();
         editMarksRef.current.clear();
+        rowLookupMarksRef.current.clear();
 
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it
@@ -8108,6 +8128,7 @@ function AppContent() {
               // it would send the backup's copy over the row the mark named
               retryMarksRef.current.clear();
               editMarksRef.current.clear();
+              rowLookupMarksRef.current.clear();
               knownRowsRef.current.clear();
               bumpStackGen();
               if (backup.data.silverItems) setSilverItems(asRestoredBy(backup.data.silverItems, supabaseUser?.id || null));
@@ -9847,6 +9868,9 @@ function AppContent() {
       // the next sync still sends it up to the account that restored it.
       ...((base?.supabase_id && !base.addedAsGuest) || base?.restoredFor ? { supabase_id: base.supabase_id } : {}),
       ...(base?.restoredFor ? { restoredFor: base.restoredFor } : {}),
+      // And its lookup mark, so the sync still sends the edit over its row
+      // after a restart or a failed send cleared the marks kept in memory
+      ...(base?.restoredFor && base.rowLookupFor ? { rowLookupFor: base.rowLookupFor } : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
@@ -9974,6 +9998,16 @@ function AppContent() {
         }
         return updateHolding(supabaseUser.id, rowId, item, metal);
       };
+      // Whether an edit's row lookup ran, so a failure before it lands is
+      // one of the lookup and may leave a row the sync must update
+      let lookedUp = false;
+      // A failed update takes an edit mark, which a sync never sends for a
+      // holding still marked to go up, so one restored or retried for this
+      // account takes the lookup mark instead, and the sync finds its row by
+      // local id
+      const markFailedEdit = (rowId) => (item.restoredFor === userId
+        ? markRowLookupForRetry(targetMetal, item.id, userId, stackGen)
+        : markEditForRetry(targetMetal, item.id, rowId, userId, stackGen));
       const earlierWrites = editingItem && !item.supabase_id
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
@@ -9985,7 +10019,7 @@ function AppContent() {
             // a backup it restored, so it finds its row in this account by
             // local id below, or goes up as new.
             const { error } = await updateAfterResend(item.supabase_id, targetMetal);
-            if (error) markEditForRetry(targetMetal, item.id, item.supabase_id, userId, stackGen);
+            if (error) markFailedEdit(item.supabase_id);
             else {
               editMarksRef.current.delete(item.id);
               if (__DEV__) console.log('Updated holding in Supabase');
@@ -10006,11 +10040,12 @@ function AppContent() {
             // by the row its add went to if it landed this session
             const knownRow = knownRowsRef.current.rowFor(item.id, userId);
             const existingHolding = knownRow ? { id: knownRow } : await findHoldingByLocalId(supabaseUser.id, item.id, lookupMetal);
+            lookedUp = true;
             if (existingHolding) {
               addsRow = false;
               knownRowsRef.current.note(item.id, existingHolding.id, userId);
               const { error } = await updateAfterResend(existingHolding.id, targetMetal);
-              if (error) markEditForRetry(targetMetal, item.id, existingHolding.id, userId, stackGen);
+              if (error) markFailedEdit(existingHolding.id);
               else {
                 editMarksRef.current.delete(item.id);
                 if (__DEV__) console.log('Updated existing holding in Supabase');
@@ -10040,7 +10075,8 @@ function AppContent() {
         } catch (err) {
           if (__DEV__) console.error('Failed to sync holding to Supabase:', err);
           // Don't block the user - local save already succeeded
-          if (addsRow) markForRetry(targetMetal, item.id, userId, stackGen);
+          if (addsRow && editingItem && !lookedUp) markRowLookupForRetry(targetMetal, item.id, userId, stackGen);
+          else if (addsRow) markForRetry(targetMetal, item.id, userId, stackGen);
         }
       });
     }

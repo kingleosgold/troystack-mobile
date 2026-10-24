@@ -114,7 +114,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   // Its marks and row come from that copy, not from the sheet's opening
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
-  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateAfterResend\(item\.supabase_id, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
@@ -141,7 +141,7 @@ test('every signed-in add whose cloud write fails leaves its holding marked for 
   }
   // A mark names the account the write began under, and lands even after a
   // session that ended mid-write, since that account signs back in to it
-  assert.match(app, /const markForRetry = \(metal, localId, userId, stackGen\) => \{\s*if \(foreignSwapGenRef\.current !== stackGen\) return;\s*retryMarksRef\.current\.set\(localId, userId\);/);
+  assert.match(app, /const markForRetry = \(metal, localId, userId, stackGen, kind = 'add'\) => \{\s*if \(foreignSwapGenRef\.current !== stackGen\) return;\s*retryMarksRef\.current\.set\(localId, userId\);/);
   // A failed lookup or add in an edit marks the holding only when it's this
   // account's to take
   assert.match(app, /if \(addsRow\) markForRetry\(targetMetal, item\.id, userId, stackGen\);/);
@@ -163,9 +163,12 @@ test('every edit whose cloud update fails leaves its holding marked for the next
     assert.match(line, /const \{ error \} = await updateAfterResend\((\w+(\.\w+)?), targetMetal\);/);
     const row = line.match(/updateAfterResend\((\w+(?:\.\w+)?),/)[1];
     // the mark names the row the update was for, and one that lands drops an older mark
-    assert.ok(fn.slice(at, at + 260).includes(`if (error) markEditForRetry(targetMetal, item.id, ${row}, userId, stackGen);`), row);
+    assert.ok(fn.slice(at, at + 260).includes(`if (error) markFailedEdit(${row});`), row);
     assert.ok(fn.slice(at, at + 260).includes('editMarksRef.current.delete(item.id);'), row);
   }
+  // one restored or retried for this account takes the lookup mark, since a
+  // sync never sends an edit mark on a holding still marked to go up
+  assert.match(fn, /const markFailedEdit = \(rowId\) => \(item\.restoredFor === userId\n\s*\? markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\)\n\s*: markEditForRetry\(targetMetal, item\.id, rowId, userId, stackGen\)\);/);
   assert.match(app, /const markEditForRetry = \(metal, localId, rowId, userId, stackGen\) => \{\s*(\/\/.*\n\s*)*if \(foreignSwapGenRef\.current !== stackGen\) return;\s*const mark = \{ rowId, userId \};\s*editMarksRef\.current\.set\(localId, mark\);/);
   // a reset drops the marks with the stack, and so does a sync's swap
   const reset = app.slice(app.indexOf('const resetAllState = (fullReset = true) => {'));
@@ -214,7 +217,9 @@ test("a guest's holding keeps no row through an edit, since a restored backup's 
 });
 
 test('a write takes the stack count when it begins, so a failure after a reset, restore or foreign swap marks nothing', () => {
-  const calls = [...app.matchAll(/mark(Edit)?ForRetry\([^()]*, userId, stackGen\);/g)];
+  const calls = [...app.matchAll(/mark(Edit|RowLookup)?ForRetry\([^()]*, userId, stackGen(, '\w+')?\);/g)];
+  // markRowLookupForRetry passes its own stackGen on to markForRetry.
+  // markFailedEdit's two marks are checked with the updates.
   assert.equal(calls.length, 8);
   const takes = [...app.matchAll(/const userId = supabaseUser\.id;\n.*\n\s*const stackGen = foreignSwapGenRef\.current;/g)];
   assert.equal(takes.length, 4);
