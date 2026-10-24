@@ -4260,19 +4260,20 @@ function AppContent() {
       // fetched, or that copy would undo it at the swap. One that fails again
       // is put back over its row below, still marked.
       // Each resend is a tracked write, so the next sync waits for one still
-      // in flight, and the sync waits for it only so long: past the limit, or
-      // on an account change, it lets go and the edit stays marked. After one
-      // runs late the rest wait for the next sync rather than stall in turn.
+      // in flight, and the sync waits for them only so long, one limit for
+      // all of them: past it, or on an account change, it lets go and the
+      // edits left stay marked for the next sync.
       const unsentEdits = [];
+      const resendsBy = Date.now() + HOLDING_WRITES_WAIT_MS;
       let resendsLate = false;
       for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id)) {
-        if (resendsLate) {
+        if (resendsLate || Date.now() >= resendsBy) {
           unsentEdits.push(edit);
           continue;
         }
         const sent = await settleWithin(
           trackHoldingWrite(() => updateHolding(supabaseUser.id, edit.item.supabase_id, edit.item, edit.metal)),
-          HOLDING_WRITES_WAIT_MS,
+          resendsBy - Date.now(),
           accountChanged,
         );
         if (accountChanged()) return false;
