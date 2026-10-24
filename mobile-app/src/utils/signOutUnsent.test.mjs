@@ -67,7 +67,7 @@ const screen = readFileSync(new URL('../screens/AccountScreen.tsx', import.meta.
 
 test('both Sign Out buttons ask first, and a deleted account still signs out at once', () => {
   assert.match(app, /\/\/ hasn't reached their account yet\s*confirmSignOut\(\);/);
-  assert.match(app, /onSignOut=\{\(\) => performSignOut\(\)\}\s*onSignOutTap=\{\(\) => confirmSignOut\(\)\}/);
+  assert.match(app, /onSignOut=\{\(\) => \{ deletedAccountRef\.current = supabaseUser\?\.id \|\| null; return performSignOut\(\); \}\}\s*onSignOutTap=\{\(\) => confirmSignOut\(\)\}/);
   assert.match(screen, /if \(onSignOutTap\) onSignOutTap\(\);\s*else onSignOut\(\);/);
 });
 
@@ -80,4 +80,14 @@ test('the count reads the marks still in the refs, as a sync does', () => {
   assert.match(body, /if \(!count\) \{\s*performSignOut\(\);\s*return;\s*\}/);
   assert.match(body, /firstSync = !hasEverSynced;/);
   assert.match(body, /inFlight: holdingWrites\.countFor\(userId\)/);
+});
+
+test('a deleted account skips the ask, and Send Now never ends in silence', () => {
+  const start = app.indexOf('const confirmSignOut = async () => {');
+  const body = app.slice(start, app.indexOf('const performSignOut = async () => {'));
+  assert.match(body, /if \(userId && deletedAccountRef\.current === userId\) \{\s*performSignOut\(\);\s*return;\s*\}/);
+  assert.match(body, /pull === 'failed'\) return;/);
+  assert.match(body, /if \(await countUnsent\(userId\)\) \{\s*confirmSignOut\(\);\s*return;\s*\}/);
+  assert.match(body, /if \(signOutAskRef\.current\) return;/);
+  assert.match(app, /return 'failed';/);
 });

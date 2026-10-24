@@ -2472,6 +2472,10 @@ function AppContent() {
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
   const retryMarksRef = useRef(new Map());
+  // The account the Account screen just deleted, which signs out without the
+  // unsent ask, and whether that ask is being counted
+  const deletedAccountRef = useRef(null);
+  const signOutAskRef = useRef(false);
   // The same for holdings with a row whose cloud update failed, each local
   // id with its row and account
   const editMarksRef = useRef(new Map());
@@ -3243,31 +3247,53 @@ function AppContent() {
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) });
   };
 
-  // Send Now runs My Stack's pull, which says if the sync failed, then says
-  // when everything reached the account
+  // Send Now runs My Stack's pull, which says if the sync failed. Otherwise,
+  // once the sync's swap has rendered, it says everything reached the account
+  // or asks again with what's left. An account just deleted signs out at once,
+  // since there's no account left to send to. One ask at a time, and a tap on
+  // an ask whose account has since changed does nothing.
   const confirmSignOut = async () => {
     const userId = supabaseUser?.id;
-    const count = userId ? await countUnsent(userId) : 0;
+    if (userId && deletedAccountRef.current === userId) {
+      performSignOut();
+      return;
+    }
+    if (signOutAskRef.current) return;
+    signOutAskRef.current = true;
+    let count = 0;
+    try {
+      count = userId ? await countUnsent(userId) : 0;
+    } finally {
+      signOutAskRef.current = false;
+    }
     if (userIdRef.current !== userId) return;
     if (!count) {
       performSignOut();
       return;
     }
+    const sameAccount = () => userIdRef.current === userId;
     const { title, message } = unsentSignOutAlert(count);
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Send Now',
         onPress: async () => {
-          await onRefreshDashboard();
-          if (userIdRef.current !== userId || await countUnsent(userId)) return;
+          if (!sameAccount()) return;
+          const pull = await onRefreshDashboard();
+          if (!sameAccount() || pull === 'failed') return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          if (!sameAccount()) return;
+          if (await countUnsent(userId)) {
+            confirmSignOut();
+            return;
+          }
           Alert.alert('Saved to your account', 'Everything on this phone is in your account now.', [
             { text: 'Stay Signed In', style: 'cancel' },
             { text: 'Sign Out', onPress: () => confirmSignOut() },
           ]);
         },
       },
-      { text: 'Sign Out Anyway', style: 'destructive', onPress: () => performSignOut() },
+      { text: 'Sign Out Anyway', style: 'destructive', onPress: () => { if (sameAccount()) performSignOut(); } },
     ]);
   };
 
@@ -8417,11 +8443,14 @@ function AppContent() {
     if (pullFailedDue({ ...judged, failed: outcome.failed })) {
       const { title, message } = pullFailedAlert();
       Alert.alert(title, message);
+      return 'failed';
     } else if (pullUnsentDue({ ...judged, unsent: outcome.unsent })) {
       // The sync worked but an edit it resent still didn't land, so the
       // save notice says so again, sharing its gap so the two never stack
       noteCloudMiss('edit', userIdAtPull);
+      return 'unsent';
     }
+    return 'ok';
   };
 
   const onRefreshAnalytics = async () => {
@@ -15048,7 +15077,7 @@ function AppContent() {
           <AccountScreen
             apiBase={API_BASE_URL}
             onClose={() => setShowAccountScreen(false)}
-            onSignOut={() => performSignOut()}
+            onSignOut={() => { deletedAccountRef.current = supabaseUser?.id || null; return performSignOut(); }}
             onSignOutTap={() => confirmSignOut()}
             hasGold={hasGold}
             hasLifetime={hasLifetimeAccess}
