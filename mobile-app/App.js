@@ -4415,7 +4415,7 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, error } = await fullSync(
+      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = await fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4428,6 +4428,9 @@ function AppContent() {
       );
 
       if (accountChanged()) return false;
+      // A row edit fullSync couldn't send is put back marked and counts as
+      // unsent, like a resend above, not as a refusal
+      if (!error) unsent += unsentRowEdits || 0;
       const [remoteSilver, remoteGold, remotePlatinum, remotePalladium] = error
         ? [cloudSilver, cloudGold, cloudPlatinum, cloudPalladium]
         : withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits);

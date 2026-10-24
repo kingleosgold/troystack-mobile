@@ -297,3 +297,16 @@ test('sendAllWithin starts nothing once the account changed or the deadline pass
   assert.deepEqual(await sendAllWithin(['a'], send, Date.now() - 1), ['a']);
   assert.equal(started, 0);
 });
+
+test('sendAllWithin lets go of a write when the account changes during it', async () => {
+  let changed = false;
+  const started = [];
+  const send = (job) => {
+    started.push(job);
+    setTimeout(() => { changed = true; }, 10);
+    return new Promise(() => {});
+  };
+  const unsent = await sendAllWithin(['a', 'b'], send, Date.now() + 5000, () => changed);
+  assert.deepEqual(unsent, ['a', 'b']);
+  assert.deepEqual(started, ['a']);
+});

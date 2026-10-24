@@ -68,7 +68,12 @@ test('the upload sends marked edits over their rows and a failed one takes its r
   assert.match(holdingsSource, /if \(!h\.deleted_at\) liveRows\.set\(notesData\.local_id, h\.id\);/);
   assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId\)/);
   assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
-  assert.match(holdingsSource, /unsentRowEdits\.forEach\(\(\{ item, rowId, metal \}\) => rejected\.push\(\{ item, metal, rowId \}\)\);/);
+  assert.match(holdingsSource, /const unsentRows = unsentRowEdits\.map\(\(\{ item, rowId, metal \}\) => \(\{ item, metal, rowId \}\)\);/);
+  // put back like a refusal, but never counted or named as one
+  assert.match(holdingsSource, /const putBack = \[\.\.\.rejected, \.\.\.unsentRows\];/);
+  assert.match(holdingsSource, /refusedCount: rejected\.length,/);
+  assert.match(holdingsSource, /unsentRowEdits: unsentRows\.length,/);
+  assert.match(appSource, /if \(!error\) unsent \+= unsentRowEdits \|\| 0;/);
   assert.match(holdingsSource, /silverItems: lists\.silver,/);
 });
 
