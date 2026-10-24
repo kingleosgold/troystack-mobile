@@ -242,3 +242,13 @@ test("an edit with no row waits for the writes before it, so an add still in fli
   assert.ok(lookup.indexOf('await earlierWrites;') >= 0);
   assert.ok(lookup.indexOf('await earlierWrites;') < lookup.indexOf('findHoldingByLocalId('));
 });
+
+test("an edit that waited doesn't add a row for a holding deleted on the phone meanwhile", () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  const lookup = fn.slice(fn.indexOf('} else if (editingItem) {'));
+  const skip = lookup.indexOf('} else if (addsRow && !stillOnPhone(item.id)) {');
+  const add = lookup.indexOf('} else if (addsRow) {');
+  assert.ok(skip > 0 && skip < add);
+  assert.match(lookup.slice(skip, add), /addsRow = false;/);
+  assert.ok(fn.includes('return !lists || lists.some(list => (list || []).some(i => i.id === localId));'));
+});

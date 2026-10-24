@@ -9926,6 +9926,11 @@ function AppContent() {
       // row in the lookup below and add a second one. The lookup waits for the
       // writes started before this one, taken here before this one is tracked
       // so it never waits on itself.
+      // Any metal's list, since a metal move may not have committed yet
+      const stillOnPhone = (localId) => {
+        const lists = committedStackRef.current;
+        return !lists || lists.some(list => (list || []).some(i => i.id === localId));
+      };
       const earlierWrites = editingItem && !item.supabase_id
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
@@ -9964,6 +9969,11 @@ function AppContent() {
                 editMarksRef.current.delete(item.id);
                 if (__DEV__) console.log('Updated existing holding in Supabase');
               }
+            } else if (addsRow && !stillOnPhone(item.id)) {
+              // Deleted on the phone while the edit waited for the writes
+              // before it, so the delete's own lookup had its row. It never
+              // goes back up as a new one.
+              addsRow = false;
             } else if (addsRow) {
               const { data, error } = await addHolding(supabaseUser.id, item, targetMetal);
               if (error) markForRetry(targetMetal, item.id, userId, stackGen);
