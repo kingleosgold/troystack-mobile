@@ -9857,6 +9857,14 @@ function AppContent() {
       // Whether the holding may go up to this account as a new row, so a
       // failed add or lookup leaves it marked for the next sync to send
       let addsRow = !editingItem;
+      // An add still in flight hasn't made its row, and a successful add
+      // never writes its row id back, so an edit right after it would miss the
+      // row in the lookup below and add a second one. The lookup waits for the
+      // writes started before this one, taken here before this one is tracked
+      // so it never waits on itself.
+      const earlierWrites = editingItem && !item.supabase_id
+        ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
+        : null;
       trackHoldingWrite(async () => {
         try {
           if (editingItem && item.supabase_id) {
@@ -9871,6 +9879,7 @@ function AppContent() {
               if (__DEV__) console.log('Updated holding in Supabase');
             }
           } else if (editingItem) {
+            await earlierWrites;
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
             // A failed read only holds back the add, never the update of a row.
