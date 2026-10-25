@@ -65,10 +65,10 @@ export function asAddedBy(item, signedIn) {
  */
 export function asRestoredBy(items, userId) {
   if (!Array.isArray(items)) return items;
-  // A backup's lookup mark comes off, or the sync would send the backup's
-  // copy over a row that may have changed since
-  if (userId) return withoutGuestMark(items).map(({ rowLookupFor, ...item }) => ({ ...item, restoredFor: userId }));
-  return items.map(({ restoredFor, rowLookupFor, ...item }) => asAddedBy(item, false));
+  // A backup's lookup and edit marks come off, or the sync would send the
+  // backup's copy over a row that may have changed since
+  if (userId) return withoutGuestMark(items).map(({ rowLookupFor, editPendingFor, ...item }) => ({ ...item, restoredFor: userId }));
+  return items.map(({ restoredFor, rowLookupFor, editPendingFor, ...item }) => asAddedBy(item, false));
 }
 
 /**

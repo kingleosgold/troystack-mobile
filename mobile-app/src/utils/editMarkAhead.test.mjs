@@ -44,3 +44,13 @@ test('App.js marks the edit at the save and clears it when the update lands', ()
   const branch = app.slice(app.indexOf('const { error } = await updateAfterResend(item.supabase_id, targetMetal);'));
   assert.match(branch.slice(0, 400), /if \(error\) markFailedEdit\(item\.supabase_id\);\s*else \{\s*editMarksRef\.current\.delete\(item\.id\);\s*setter\(prev => withoutSentEditMark\(prev, item\)\);/);
 });
+
+test("a restored backup's edit marks come off, as a guest or signed in", async () => {
+  const { asRestoredBy } = await import('./holdingsUpload.js');
+  const backup = [{ id: 1, supabase_id: 'r1', editPendingFor: 'a', ozt: 1 }];
+  const asGuest = asRestoredBy(backup, null);
+  assert.equal('editPendingFor' in asGuest[0], false);
+  assert.deepEqual(pendingEdits([asGuest, [], [], []], 'a'), []);
+  const signedIn = asRestoredBy(backup, 'a');
+  assert.equal('editPendingFor' in signedIn[0], false);
+});
