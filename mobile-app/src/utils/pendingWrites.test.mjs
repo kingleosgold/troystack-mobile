@@ -326,7 +326,7 @@ test('the sync waits for its upload as a tracked write, only so long, and fails 
 
 test('an edit or delete whose wait for earlier writes runs out never trusts a lookup', () => {
   assert.ok(app.includes('const landed = await earlierWrites;'));
-  assert.match(app, /if \(!landed && !knownRowsRef\.current\.rowFor\(item\.id, userId\)\) throw new Error\('An earlier write is still saving'\);/);
+  assert.match(app, /if \(!landed && addsRow && !knownRowsRef\.current\.rowFor\(item\.id, userId\)\) throw new Error\('An earlier write is still saving'\);/);
   // the throw lands where a failed lookup does, which marks the edit for its row
   assert.match(app, /if \(addsRow && editingItem && !lookedUp\) markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\);/);
   assert.ok(app.indexOf("throw new Error('An earlier write is still saving')") < app.indexOf('lookedUp = true;'));

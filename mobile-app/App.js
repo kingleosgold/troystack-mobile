@@ -10169,7 +10169,9 @@ function AppContent() {
             // and add a second. The edit is marked as a failed lookup is, and
             // the next sync, which waits for that write, sends it over its row.
             // A holding whose add landed this session has its row already.
-            if (!landed && !knownRowsRef.current.rowFor(item.id, userId)) throw new Error('An earlier write is still saving');
+            // Only an edit that could add a row is held back, since one that
+            // can't never makes a second.
+            if (!landed && addsRow && !knownRowsRef.current.rowFor(item.id, userId)) throw new Error('An earlier write is still saving');
             // Editing a local item that might exist in Supabase - find it first,
             // by the row its add went to if it landed this session
             const knownRow = knownRowsRef.current.rowFor(item.id, userId);
