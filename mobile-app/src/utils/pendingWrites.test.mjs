@@ -169,7 +169,7 @@ test('every holdings write to the cloud goes through the tracker', () => {
 
 test('every cloud update and delete is pinned to the account the tracker waits on', () => {
   const calls = [...app.matchAll(/(?:await |=> |return )(updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   for (const call of calls) assert.equal(call[2], 'supabaseUser.id', `${call[1]} at ${call.index}`);
   const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
   for (const name of ['updateHolding', 'deleteHolding']) {

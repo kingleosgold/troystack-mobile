@@ -175,11 +175,21 @@ test('findHoldingByLocalId throws on a failed read instead of returning not foun
   assert.doesNotMatch(handler, /return null;/);
 });
 
-test('both callers of findHoldingByLocalId sit inside a try that catches', () => {
+test('every caller of findHoldingByLocalId catches its throw', () => {
   const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  // The sync's send of a queued delete runs in sendAllWithin, which settles
+  // a throw to a delete left queued
+  const queued = app.indexOf('const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(');
+  assert.ok(queued > 0);
+  const job = app.slice(app.lastIndexOf('await sendAllWithin(', queued), queued);
+  assert.match(job, /^await sendAllWithin\(toDelete, \(entry\) => trackHoldingWrite\(async \(\) => \{\n\s*$/);
   let at = app.indexOf('await findHoldingByLocalId(');
   let seen = 0;
   while (at !== -1) {
+    if (at === queued + 'const row = entry.rowId ? { id: entry.rowId } : '.length) {
+      at = app.indexOf('await findHoldingByLocalId(', at + 1);
+      continue;
+    }
     seen += 1;
     const before = app.slice(Math.max(0, at - 3000), at);
     const after = app.slice(at, at + 2500);

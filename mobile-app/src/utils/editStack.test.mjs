@@ -190,7 +190,7 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   assert.match(body, /const resendsBy = Date\.now\(\) \+ HOLDING_WRITES_WAIT_MS;/);
   assert.match(body, /if \(resendsLate \|\| Date\.now\(\) >= resendsBy\) \{\n\s*unsentEdits\.push\(edit\);\n\s*continue;\n\s*\}/);
   // the swap and its stored copy carry the edits put back
-  const merge = body.indexOf('withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits)');
+  const merge = body.indexOf('withPendingEdits(withoutQueuedDeletes([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], stillQueued, supabaseUser.id), unsentEdits)');
   assert.ok(merge > fetch && merge < body.indexOf('setSilverItems(remoteSilver);'));
   assert.match(body, /const stackWrites = putBack > 0/);
 });
