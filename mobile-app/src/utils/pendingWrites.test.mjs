@@ -323,3 +323,12 @@ test('the sync waits for its upload as a tracked write, only so long, and fails 
   assert.ok(body.indexOf('return false;', late) < body.indexOf('} = synced.value;'));
   assert.ok(body.indexOf('setSilverItems(remoteSilver);') > body.indexOf('} = synced.value;'));
 });
+
+test('an edit or delete whose wait for earlier writes runs out never trusts a lookup', () => {
+  assert.ok(app.includes('const landed = await earlierWrites;'));
+  assert.match(app, /if \(!landed\) throw new Error\('An earlier write is still saving'\);/);
+  // the throw lands where a failed lookup does, which marks the edit for its row
+  assert.match(app, /if \(addsRow && editingItem && !lookedUp\) markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\);/);
+  assert.ok(app.indexOf("throw new Error('An earlier write is still saving')") < app.indexOf('lookedUp = true;'));
+  assert.match(app, /\} else if \(!\(await earlierWrites\)\) \{\n(\s*\/\/.*\n)*\s*reached = false;/);
+});

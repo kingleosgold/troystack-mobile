@@ -10153,7 +10153,7 @@ function AppContent() {
               if (__DEV__) console.log('Updated holding in Supabase');
             }
           } else if (editingItem) {
-            await earlierWrites;
+            const landed = await earlierWrites;
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
             // A failed read only holds back the add, never the update of a row.
@@ -10164,6 +10164,11 @@ function AppContent() {
             // Not in Supabase yet, it's added if it's this account's to take,
             // never a holding of another account's stack left on the phone
             addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
+            // A write before it still out, an upload the sync let go of say,
+            // may yet make this holding's row, so a lookup now could miss it
+            // and add a second. The edit is marked as a failed lookup is, and
+            // the next sync, which waits for that write, sends it over its row.
+            if (!landed) throw new Error('An earlier write is still saving');
             // Editing a local item that might exist in Supabase - find it first,
             // by the row its add went to if it landed this session
             const knownRow = knownRowsRef.current.rowFor(item.id, userId);
@@ -10308,8 +10313,12 @@ function AppContent() {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (error) reached = false;
                     else if (__DEV__) console.log('Deleted holding from Supabase');
+                  } else if (!(await earlierWrites)) {
+                    // A write before it still out may yet make this holding's
+                    // row, so a lookup now could miss it and the row would
+                    // come back. The holding goes back with the notice.
+                    reached = false;
                   } else {
-                    await earlierWrites;
                     // By the row its add went to if it landed this session,
                     // else find it in Supabase by local_id
                     const knownRow = knownRowsRef.current.rowFor(id, supabaseUser.id);
