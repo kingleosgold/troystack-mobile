@@ -10238,11 +10238,16 @@ function AppContent() {
         }
       });
       if (editingItem) {
-        holdingEditsRef.current.set(chainKey, write);
+        // An edit that gave up on the one before it settles first, so the
+        // chain holds both until each has, and the next edit waits for them
+        const entry = priorEdit
+          ? Promise.all([priorEdit, write].map(p => p.then(() => {}, () => {})))
+          : write;
+        holdingEditsRef.current.set(chainKey, entry);
         const clear = () => {
-          if (holdingEditsRef.current.get(chainKey) === write) holdingEditsRef.current.delete(chainKey);
+          if (holdingEditsRef.current.get(chainKey) === entry) holdingEditsRef.current.delete(chainKey);
         };
-        write.then(clear, clear);
+        entry.then(clear, clear);
       }
     }
 

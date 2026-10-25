@@ -258,15 +258,17 @@ test('an edit over a row goes after the last edit of the same holding still out'
   // Taken before this edit is chained, so it never waits on itself
   const taken = fn.indexOf('const priorEdit = editingItem ? holdingEditsRef.current.get(chainKey) : null;');
   const tracked = fn.indexOf('const write = trackHoldingWrite(async () => {');
-  const chained = fn.indexOf('holdingEditsRef.current.set(chainKey, write);');
+  const chained = fn.indexOf('holdingEditsRef.current.set(chainKey, entry);');
   assert.ok(taken >= 0 && tracked > taken && chained > tracked);
   assert.ok(fn.includes('const chainKey = `${userId}:${item.id}`;'));
   // Awaited on the row branch before the update, and one still out leaves it marked
   const onRow = fn.slice(fn.indexOf('if (editingItem && item.supabase_id) {'), fn.indexOf('} else if (editingItem) {'));
   assert.match(onRow, /if \(priorEdit\) \{\n\s*const settled = await settleWithin\(priorEdit, HOLDING_WRITES_WAIT_MS, \(\) => userIdRef\.current !== userId\);\n\s*if \(settled\.late \|\| settled\.stopped\) \{\n\s*markFailedEdit\(item\.supabase_id\);\n\s*return;/);
   assert.ok(onRow.indexOf('settleWithin(priorEdit') < onRow.indexOf('updateAfterResend('));
-  // The chain lets go of an edit once it settles, unless a later one took its place
-  assert.match(fn, /if \(holdingEditsRef\.current\.get\(chainKey\) === write\) holdingEditsRef\.current\.delete\(chainKey\);\n\s*\};\n\s*write\.then\(clear, clear\);/);
+  // The chain holds an edit that gave up together with the one it gave up on
+  assert.match(fn, /const entry = priorEdit\n\s*\? Promise\.all\(\[priorEdit, write\]\.map\(p => p\.then\(\(\) => \{\}, \(\) => \{\}\)\)\)\n\s*: write;/);
+  // And lets go once all have settled, unless a later edit took its place
+  assert.match(fn, /if \(holdingEditsRef\.current\.get\(chainKey\) === entry\) holdingEditsRef\.current\.delete\(chainKey\);\n\s*\};\n\s*entry\.then\(clear, clear\);/);
 });
 
 test("an edit that waited doesn't add a row for a holding deleted on the phone meanwhile", () => {
