@@ -7,6 +7,7 @@ import {
   withQueuedDelete,
   deletesFor,
   withoutDeletes,
+  withoutDeleteOf,
   withoutQueuedDeletes,
   deleteQueueStore,
 } from './deleteQueue.js';
@@ -71,6 +72,21 @@ test('sent deletes come off the queue and the rest stay', () => {
 test('a delete that took a row after it was read for sending stays queued', () => {
   const q = [{ ...byLocal, rowId: 'row-2' }];
   assert.deepEqual(withoutDeletes(q, [byLocal]), q);
+});
+
+test('a delete that landed comes off by account, local id and metal, whatever row it took', () => {
+  const tookRow = { ...byLocal, rowId: 'row-2' };
+  const queue = [byRow, tookRow, other];
+  assert.deepEqual(withoutDeleteOf(queue, byLocal), [byRow, other]);
+  assert.deepEqual(withoutDeleteOf(queue, { ...byRow, rowId: null }), [tookRow, other]);
+});
+
+test('taking off a delete that is not queued leaves the queue as it was', () => {
+  const queue = [byRow, other];
+  assert.equal(withoutDeleteOf(queue, byLocal), queue);
+  assert.equal(withoutDeleteOf(queue, { ...byRow, userId: 'u2' }), queue);
+  assert.equal(withoutDeleteOf(queue, { ...byRow, metal: 'gold' }), queue);
+  assert.equal(withoutDeleteOf(queue, {}), queue);
 });
 
 test('the cloud copy drops rows with a delete still queued', () => {
@@ -148,11 +164,25 @@ test('a failed write rejects to its caller and the next change still runs', asyn
 import { readFileSync } from 'node:fs';
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
+test('a signed-in delete is queued before it is sent and taken off once it lands', () => {
+  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
+  assert.ok(start > 0);
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  const queued = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
+  const sent = body.indexOf('await deleteHoldingFromSupabase(');
+  const unqueued = body.indexOf('await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))');
+  assert.ok(queued > 0 && sent > queued && unqueued > sent);
+  // Not queued under an account that has left, and counted once by a sign out
+  assert.match(body, /if \(userIdRef\.current === supabaseUser\.id\) \{\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, entry\)\);\n\s*queuedFirst = true;/);
+  assert.match(body, /if \(queuedFirst\) sending\.set\(supabaseUser\.id,/);
+  assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) \{\n\s*const left = /);
+});
+
 test('a failed signed-in delete is queued and the holding stays off, falling back to the notice only when the queue fails', () => {
-  const at = app.indexOf('if (reached) return;');
+  const at = app.indexOf('if (reached) {', app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };'));
   assert.ok(at > 0);
   const tail = app.slice(at, app.indexOf('// Close detail view if open', at));
-  const queue = tail.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, { userId: supabaseUser.id, rowId, localId: id, metal }));');
+  const queue = tail.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));');
   const notice = tail.indexOf("noteCloudMiss('edit', supabaseUser.id);");
   const restore = tail.indexOf('setter(prev => withHoldingRestored(prev, removed, removedIndex));');
   assert.ok(queue > 0 && notice > queue && restore > notice);
@@ -172,7 +202,7 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
-  assert.match(app, /return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\) \+ queuedDeletes;/);
+  assert.match(app, /return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ Math\.max\(0, queuedDeletes - sendingDeletes\);/);
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);
@@ -181,7 +211,7 @@ test('a sign out counts queued deletes and clears them with the stack', () => {
 });
 
 test('a delete that fails after its account left is not queued under the next one', () => {
-  assert.match(app, /if \(userIdRef\.current !== supabaseUser\.id\) return;\n\s*let queued = false;/);
+  assert.match(app, /if \(userIdRef\.current !== supabaseUser\.id\) return;\n\s*let queued = queuedFirst;/);
 });
 
 test('a restore never overrides a queued delete', () => {
