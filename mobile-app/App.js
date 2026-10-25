@@ -57,8 +57,9 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, deletesRestored, withQueuedDelete, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
-import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
+import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
@@ -2468,6 +2469,11 @@ function AppContent() {
   // a delete before the next sync doesn't hang on a lookup
   const knownRowsRef = useRef(null);
   if (!knownRowsRef.current) knownRowsRef.current = knownRows();
+  // Signed-in deletes whose cloud write failed, kept on the phone until a
+  // sync sends them, so a delete offline sticks rather than pop back
+  const pendingDeletesRef = useRef(null);
+  if (!pendingDeletesRef.current) pendingDeletesRef.current = deleteQueueStore(AsyncStorage);
+  const pendingDeletes = pendingDeletesRef.current;
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3250,14 +3256,19 @@ function AppContent() {
   const countUnsent = async (userId) => {
     let owner = null;
     let firstSync = true;
+    // A delete still queued is cleared by a sign out too. A failed read
+    // counts one, so it asks rather than drop them.
+    let queuedDeletes = 1;
     try {
-      const [hasEverSynced, recordedOwner, storageKeys] = await Promise.all([
+      const [hasEverSynced, recordedOwner, storageKeys, deletes] = await Promise.all([
         AsyncStorage.getItem(`stack_synced_${userId}`),
         AsyncStorage.getItem(HOLDINGS_OWNER_KEY),
         AsyncStorage.getAllKeys(),
+        pendingDeletes.read(),
       ]);
       owner = stackOwnerOf(recordedOwner, storageKeys, userId);
       firstSync = !hasEverSynced;
+      queuedDeletes = deletesFor(deletes, userId).length;
     } catch (e) {
       if (__DEV__) console.error('Unsent count read failed:', e);
     }
@@ -3267,7 +3278,7 @@ function AppContent() {
     const lists = (committedStackRef.current || [])
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
-    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) });
+    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) }) + queuedDeletes;
   };
 
   // Send Now runs My Stack's pull, which says if the sync failed. Otherwise,
@@ -3374,6 +3385,7 @@ function AppContent() {
         'lastSnapshotDate',
         'stack_guest_mode',
         HOLDINGS_OWNER_KEY,
+        PENDING_DELETES_KEY,
       ];
       if (userId) userKeys.push(`stack_synced_${userId}`, webPlanCacheKey(userId));
       // Every account's synced key goes with the stack, a key left by a
@@ -4416,6 +4428,31 @@ function AppContent() {
       }
       unsent = unsentEdits.length;
 
+      // A delete whose cloud write failed goes up before the cloud's copy is
+      // fetched too, or that copy would bring the holding back. One with no
+      // row is found by local id, now that the writes before it have landed.
+      // A holding restored since is the stack the user chose, so its delete
+      // comes off unsent. Each send is a tracked write under the same limit
+      // as the resends, and one that fails or is let go of stays queued.
+      const queuedDeletes = await pendingDeletes.read();
+      if (accountChanged()) return false;
+      const overridden = deletesRestored(queuedDeletes, [localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id);
+      const toDelete = deletesFor(withoutDeletes(queuedDeletes, overridden), supabaseUser.id);
+      const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
+        const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
+        if (!row) return { error: null };
+        return deleteHoldingFromSupabase(supabaseUser.id, row.id);
+      }), resendsBy, accountChanged);
+      if (accountChanged()) return false;
+      const doneDeletes = [...overridden, ...toDelete.filter((entry) => !unsentDeletes.includes(entry))];
+      // The queue as it stands after, whose deletes the cloud's copy is kept
+      // clear of below
+      const stillQueued = doneDeletes.length
+        ? await pendingDeletes.update((queue) => withoutDeletes(queue, doneDeletes))
+        : queuedDeletes;
+      if (accountChanged()) return false;
+      unsent += unsentDeletes.length;
+
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
       // The upload is a tracked write, so the next sync waits for one still
@@ -4452,7 +4489,7 @@ function AppContent() {
       if (!error) unsent += unsentRowEdits || 0;
       const [remoteSilver, remoteGold, remotePlatinum, remotePalladium] = error
         ? [cloudSilver, cloudGold, cloudPlatinum, cloudPalladium]
-        : withPendingEdits([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], unsentEdits);
+        : withPendingEdits(withoutQueuedDeletes([cloudSilver, cloudGold, cloudPlatinum, cloudPalladium], stillQueued, supabaseUser.id), unsentEdits);
       if (error) {
         if (__DEV__) console.error('Supabase sync error:', error);
         // A restore that landed while this sync ran is sent up by the next
@@ -10345,6 +10382,8 @@ function AppContent() {
                 // deleteHolding answers its error rather than throwing, and a
                 // lookup that fails throws, since a row may still be there
                 let reached = true;
+                // The row the delete went to, when it's known
+                let rowId = itemToDelete.supabase_id || null;
                 try {
                   if (itemToDelete.supabase_id) {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
@@ -10353,8 +10392,8 @@ function AppContent() {
                   } else if (!(await earlierWrites) && !knownRowsRef.current.rowFor(id, supabaseUser.id)) {
                     // A write before it still out may yet make this holding's
                     // row, so a lookup now could miss it and the row would
-                    // come back. The holding goes back with the notice. One
-                    // whose add landed this session has its row already.
+                    // come back. The delete is queued below for the sync to
+                    // find. One whose add landed this session has its row.
                     reached = false;
                   } else {
                     // By the row its add went to if it landed this session,
@@ -10362,6 +10401,7 @@ function AppContent() {
                     const knownRow = knownRowsRef.current.rowFor(id, supabaseUser.id);
                     const existingHolding = knownRow ? { id: knownRow } : await findHoldingByLocalId(supabaseUser.id, id, metal);
                     if (existingHolding) {
+                      rowId = existingHolding.id;
                       const { error } = await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
                       if (error) reached = false;
                       else if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
@@ -10371,11 +10411,29 @@ function AppContent() {
                   if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
                   reached = false;
                 }
+                if (reached) return;
                 // The row is still live, so the next sync would bring the
-                // holding back unexplained. It goes back now with a notice,
-                // while the same account holds the same stack. After a swap
-                // the stack came from the cloud, which still has it.
-                if (!reached && userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
+                // holding back. The delete is queued for the next sync to
+                // send, and the holding stays off the phone, with the notice
+                // a change saved on this phone only gets. With no row known,
+                // as when a write before it was still out, the sync finds it
+                // by local id once those writes land.
+                let queued = false;
+                try {
+                  await pendingDeletes.update((queue) => withQueuedDelete(queue, { userId: supabaseUser.id, rowId, localId: id, metal }));
+                  queued = true;
+                } catch (err) {
+                  if (__DEV__) console.error('Failed to queue the delete:', err);
+                }
+                if (queued) {
+                  noteCloudMiss('edit', supabaseUser.id);
+                  return;
+                }
+                // A queue that couldn't be saved can't hold it, so the holding
+                // goes back now with a notice, while the same account holds
+                // the same stack. After a swap the stack came from the cloud,
+                // which still has it.
+                if (userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
                   setter(prev => withHoldingRestored(prev, removed, removedIndex));
                   const { title, message } = deleteMissAlert(removed?.productName);
                   Alert.alert(title, message);

@@ -1,0 +1,175 @@
+// Run with: node --test mobile-app/src/utils/deleteQueue.test.mjs
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  PENDING_DELETES_KEY,
+  parseDeleteQueue,
+  withQueuedDelete,
+  deletesFor,
+  withoutDeletes,
+  deletesRestored,
+  withoutQueuedDeletes,
+  deleteQueueStore,
+} from './deleteQueue.js';
+
+const byRow = { userId: 'u1', rowId: 'row-1', localId: 11, metal: 'silver' };
+const byLocal = { userId: 'u1', rowId: null, localId: 22, metal: 'gold' };
+const other = { userId: 'u2', rowId: 'row-9', localId: 99, metal: 'silver' };
+
+const memory = (initial = {}) => {
+  const data = { ...initial };
+  return {
+    data,
+    async getItem(key) { return key in data ? data[key] : null; },
+    async setItem(key, value) { data[key] = value; },
+    async removeItem(key) { delete data[key]; },
+  };
+};
+
+test('nothing stored, or something unreadable, reads as an empty queue', () => {
+  assert.deepEqual(parseDeleteQueue(null), []);
+  assert.deepEqual(parseDeleteQueue('not json'), []);
+  assert.deepEqual(parseDeleteQueue('{"a":1}'), []);
+});
+
+test('only well formed deletes are read back', () => {
+  const raw = JSON.stringify([byRow, { userId: 'u1', localId: 1, metal: 'copper' }, { localId: 2, metal: 'gold' }, byLocal]);
+  assert.deepEqual(parseDeleteQueue(raw), [byRow, byLocal]);
+});
+
+test('a delete is queued once', () => {
+  const q = withQueuedDelete([], byRow);
+  assert.deepEqual(q, [byRow]);
+  assert.equal(withQueuedDelete(q, { ...byRow }), q);
+});
+
+test('a delete queued with no row takes the row when it is queued again with one', () => {
+  const q = withQueuedDelete([], byLocal);
+  const withRow = withQueuedDelete(q, { ...byLocal, rowId: 'row-2' });
+  assert.deepEqual(withRow, [{ ...byLocal, rowId: 'row-2' }]);
+  // and a later one with no row leaves the row alone
+  assert.equal(withQueuedDelete(withRow, byLocal), withRow);
+});
+
+test('a malformed delete is not queued', () => {
+  const q = [byRow];
+  assert.equal(withQueuedDelete(q, { userId: '', localId: 1, metal: 'gold' }), q);
+  assert.equal(withQueuedDelete(q, null), q);
+});
+
+test('each account sees only its own deletes', () => {
+  const q = [byRow, other, byLocal];
+  assert.deepEqual(deletesFor(q, 'u1'), [byRow, byLocal]);
+  assert.deepEqual(deletesFor(q, null), []);
+});
+
+test('sent deletes come off the queue and the rest stay', () => {
+  const q = [byRow, other, byLocal];
+  assert.deepEqual(withoutDeletes(q, [byRow]), [other, byLocal]);
+  assert.equal(withoutDeletes(q, []), q);
+});
+
+test('a delete that took a row after it was read for sending stays queued', () => {
+  const q = [{ ...byLocal, rowId: 'row-2' }];
+  assert.deepEqual(withoutDeletes(q, [byLocal]), q);
+});
+
+test('a restore of the deleted holding for the account overrides its delete', () => {
+  const lists = [[{ id: 11, restoredFor: 'u1' }], [{ id: 22 }], [], []];
+  assert.deepEqual(deletesRestored([byRow, byLocal, other], lists, 'u1'), [byRow]);
+  // a holding with the same id in another metal isn't the one deleted
+  assert.deepEqual(deletesRestored([byRow], [[], [{ id: 11, restoredFor: 'u1' }], [], []], 'u1'), []);
+  // nor is one restored for another account
+  assert.deepEqual(deletesRestored([byRow], [[{ id: 11, restoredFor: 'u2' }], [], [], []], 'u1'), []);
+});
+
+test('the cloud copy drops rows with a delete still queued', () => {
+  const silver = [{ id: 11, supabase_id: 'row-1' }, { id: 12, supabase_id: 'row-3' }];
+  const gold = [{ id: 22, supabase_id: 'row-2' }, { id: 23, supabase_id: 'row-4' }];
+  const platinum = [{ id: 22, supabase_id: 'row-5' }];
+  const palladium = [];
+  const out = withoutQueuedDeletes([silver, gold, platinum, palladium], [byRow, byLocal, other], 'u1');
+  assert.deepEqual(out[0], [{ id: 12, supabase_id: 'row-3' }]);
+  assert.deepEqual(out[1], [{ id: 23, supabase_id: 'row-4' }]);
+  // the same local id in another metal stays, and untouched lists are the same arrays
+  assert.equal(out[2], platinum);
+  assert.equal(out[3], palladium);
+});
+
+test('another account\'s deletes never touch this account\'s copy', () => {
+  const lists = [[{ id: 99, supabase_id: 'row-9' }], [], [], []];
+  assert.equal(withoutQueuedDeletes(lists, [other], 'u1'), lists);
+});
+
+test('the store writes the queue and removes the key once it empties', async () => {
+  const storage = memory();
+  const store = deleteQueueStore(storage);
+  await store.update((q) => withQueuedDelete(q, byRow));
+  assert.deepEqual(JSON.parse(storage.data[PENDING_DELETES_KEY]), [byRow]);
+  assert.deepEqual(await store.read(), [byRow]);
+  await store.update((q) => withoutDeletes(q, [byRow]));
+  assert.equal(PENDING_DELETES_KEY in storage.data, false);
+});
+
+test('changes go through in turn, so none is lost between a read and a write', async () => {
+  const storage = memory();
+  let release;
+  const slow = new Promise((resolve) => { release = resolve; });
+  const realGet = storage.getItem.bind(storage);
+  let first = true;
+  storage.getItem = async (key) => {
+    if (first) { first = false; await slow; }
+    return realGet(key);
+  };
+  const store = deleteQueueStore(storage);
+  const a = store.update((q) => withQueuedDelete(q, byRow));
+  const b = store.update((q) => withQueuedDelete(q, byLocal));
+  release();
+  await Promise.all([a, b]);
+  assert.deepEqual(await store.read(), [byRow, byLocal]);
+});
+
+test('a failed write rejects to its caller and the next change still runs', async () => {
+  const storage = memory();
+  const store = deleteQueueStore(storage);
+  const realSet = storage.setItem.bind(storage);
+  storage.setItem = async () => { throw new Error('disk full'); };
+  await assert.rejects(store.update((q) => withQueuedDelete(q, byRow)));
+  storage.setItem = realSet;
+  await store.update((q) => withQueuedDelete(q, byLocal));
+  assert.deepEqual(await store.read(), [byLocal]);
+});
+
+// The wiring in App.js, read as source like the other sync tests
+import { readFileSync } from 'node:fs';
+const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+
+test('a failed signed-in delete is queued and the holding stays off, falling back to the notice only when the queue fails', () => {
+  const at = app.indexOf('if (reached) return;');
+  assert.ok(at > 0);
+  const tail = app.slice(at, app.indexOf('// Close detail view if open', at));
+  const queue = tail.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, { userId: supabaseUser.id, rowId, localId: id, metal }));');
+  const notice = tail.indexOf("noteCloudMiss('edit', supabaseUser.id);");
+  const restore = tail.indexOf('setter(prev => withHoldingRestored(prev, removed, removedIndex));');
+  assert.ok(queue > 0 && notice > queue && restore > notice);
+  assert.match(tail, /if \(queued\) \{\n\s*noteCloudMiss\('edit', supabaseUser\.id\);\n\s*return;\n\s*\}/);
+});
+
+test('the sync sends queued deletes after the edits and before it fetches, and keeps the rest out of the cloud copy', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  const edits = body.indexOf('unsent = unsentEdits.length;');
+  const send = body.indexOf('await sendAllWithin(toDelete,');
+  const fetch = body.indexOf('const runSync = () => fullSync(');
+  assert.ok(edits > 0 && send > edits && fetch > send);
+  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*if \(accountChanged\(\)\) return false;/);
+  assert.match(body, /unsent \+= unsentDeletes\.length;/);
+  assert.match(body, /withoutQueuedDeletes\(\[cloudSilver, cloudGold, cloudPlatinum, cloudPalladium\], stillQueued, supabaseUser\.id\)/);
+});
+
+test('a sign out counts queued deletes and clears them with the stack', () => {
+  assert.match(app, /return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\) \+ queuedDeletes;/);
+  const start = app.indexOf('const performSignOut = async');
+  const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
+  assert.match(userKeys, /PENDING_DELETES_KEY,/);
+});
