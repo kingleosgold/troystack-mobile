@@ -57,7 +57,7 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
-import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes, queuedNotSending } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
@@ -2475,9 +2475,11 @@ function AppContent() {
   const pendingDeletesRef = useRef(null);
   if (!pendingDeletesRef.current) pendingDeletesRef.current = deleteQueueStore(AsyncStorage);
   const pendingDeletes = pendingDeletesRef.current;
-  // How many queued deletes each account has on their way right now. Each is
+  // The queued deletes on their way right now, each with its account. Each is
   // in the queue and a write on its way at once, so a sign out counts it once.
-  const deletesSendingRef = useRef(new Map());
+  // They're kept by holding rather than counted, so one queued or sent while
+  // the count reads, or one still out after a sign out, can't offset another.
+  const deletesSendingRef = useRef(new Set());
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3263,7 +3265,7 @@ function AppContent() {
     let firstSync = true;
     // A delete still queued is cleared by a sign out too. A failed read
     // counts one, so it asks rather than drop them.
-    let queuedDeletes = 1;
+    let queuedDeletes = null;
     try {
       const [hasEverSynced, recordedOwner, storageKeys, deletes] = await Promise.all([
         AsyncStorage.getItem(`stack_synced_${userId}`),
@@ -3273,7 +3275,7 @@ function AppContent() {
       ]);
       owner = stackOwnerOf(recordedOwner, storageKeys, userId);
       firstSync = !hasEverSynced;
-      queuedDeletes = deletesFor(deletes, userId).length;
+      queuedDeletes = deletes;
     } catch (e) {
       if (__DEV__) console.error('Unsent count read failed:', e);
     }
@@ -3284,9 +3286,9 @@ function AppContent() {
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
-    const sendingDeletes = deletesSendingRef.current.get(userId) || 0;
+    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId) : 1;
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
-      + Math.max(0, queuedDeletes - sendingDeletes);
+      + deletesLeft;
   };
 
   // Send Now runs My Stack's pull, which says if the sync failed. Otherwise,
@@ -10412,7 +10414,7 @@ function AppContent() {
                   }
                 }
                 const sending = deletesSendingRef.current;
-                if (queuedFirst) sending.set(supabaseUser.id, (sending.get(supabaseUser.id) || 0) + 1);
+                if (queuedFirst) sending.add(entry);
                 try {
                   if (itemToDelete.supabase_id) {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
@@ -10481,11 +10483,7 @@ function AppContent() {
                     Alert.alert(title, message);
                   }
                 } finally {
-                  if (queuedFirst) {
-                    const left = (sending.get(supabaseUser.id) || 1) - 1;
-                    if (left > 0) sending.set(supabaseUser.id, left);
-                    else sending.delete(supabaseUser.id);
-                  }
+                  if (queuedFirst) sending.delete(entry);
                 }
               });
             }
