@@ -7,7 +7,6 @@ import {
   withQueuedDelete,
   deletesFor,
   withoutDeletes,
-  deletesRestored,
   withoutQueuedDeletes,
   deleteQueueStore,
 } from './deleteQueue.js';
@@ -74,15 +73,6 @@ test('a delete that took a row after it was read for sending stays queued', () =
   assert.deepEqual(withoutDeletes(q, [byLocal]), q);
 });
 
-test('a restore of the deleted holding for the account overrides its delete', () => {
-  const lists = [[{ id: 11, restoredFor: 'u1' }], [{ id: 22 }], [], []];
-  assert.deepEqual(deletesRestored([byRow, byLocal, other], lists, 'u1'), [byRow]);
-  // a holding with the same id in another metal isn't the one deleted
-  assert.deepEqual(deletesRestored([byRow], [[], [{ id: 11, restoredFor: 'u1' }], [], []], 'u1'), []);
-  // nor is one restored for another account
-  assert.deepEqual(deletesRestored([byRow], [[{ id: 11, restoredFor: 'u2' }], [], [], []], 'u1'), []);
-});
-
 test('the cloud copy drops rows with a delete still queued', () => {
   const silver = [{ id: 11, supabase_id: 'row-1' }, { id: 12, supabase_id: 'row-3' }];
   const gold = [{ id: 22, supabase_id: 'row-2' }, { id: 23, supabase_id: 'row-4' }];
@@ -129,6 +119,20 @@ test('changes go through in turn, so none is lost between a read and a write', a
   assert.deepEqual(await store.read(), [byRow, byLocal]);
 });
 
+test('clear waits for an update already reading, so it never writes the queue back', async () => {
+  const storage = memory({ [PENDING_DELETES_KEY]: JSON.stringify([byRow, byLocal]) });
+  let release;
+  const slow = new Promise((resolve) => { release = resolve; });
+  const realGet = storage.getItem.bind(storage);
+  storage.getItem = async (key) => { await slow; return realGet(key); };
+  const store = deleteQueueStore(storage);
+  const update = store.update((q) => withoutDeletes(q, [byRow]));
+  const cleared = store.clear();
+  release();
+  await Promise.all([update, cleared]);
+  assert.equal(PENDING_DELETES_KEY in storage.data, false);
+});
+
 test('a failed write rejects to its caller and the next change still runs', async () => {
   const storage = memory();
   const store = deleteQueueStore(storage);
@@ -172,4 +176,14 @@ test('a sign out counts queued deletes and clears them with the stack', () => {
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);
+  assert.match(app, /await AsyncStorage\.multiRemove\(\[\.\.\.userKeys, \.\.\.syncedKeys\(allKeys\)\]\);\n(\s*\/\/.*\n)*\s*await pendingDeletes\.clear\(\);/);
+  assert.match(app, /await AsyncStorage\.clear\(\);\n\s*await pendingDeletes\.clear\(\);/);
+});
+
+test('a delete that fails after its account left is not queued under the next one', () => {
+  assert.match(app, /if \(userIdRef\.current !== supabaseUser\.id\) return;\n\s*let queued = false;/);
+});
+
+test('a restore never overrides a queued delete', () => {
+  assert.doesNotMatch(app, /deletesRestored/);
 });

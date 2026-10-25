@@ -57,7 +57,7 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
-import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, deletesRestored, withQueuedDelete, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
@@ -3228,6 +3228,7 @@ function AppContent() {
       setSigningOut(true);
       accountGenRef.current += 1;
       await AsyncStorage.clear();
+      await pendingDeletes.clear();
       accountGenRef.current += 1;
       resetAllState();
       // A guest stays a guest, as on a first launch
@@ -3392,6 +3393,9 @@ function AppContent() {
       // session that ended without a sign out included
       const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
+      // In turn with the queue's other changes, so a sync's update already
+      // reading it can't write it back after the removal above
+      await pendingDeletes.clear();
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -4431,20 +4435,20 @@ function AppContent() {
       // A delete whose cloud write failed goes up before the cloud's copy is
       // fetched too, or that copy would bring the holding back. One with no
       // row is found by local id, now that the writes before it have landed.
-      // A holding restored since is the stack the user chose, so its delete
-      // comes off unsent. Each send is a tracked write under the same limit
-      // as the resends, and one that fails or is let go of stays queued.
+      // A restore since doesn't undo it, as it doesn't an online delete: the
+      // upload skips a restored copy of a deleted row. Each send is a tracked
+      // write under the same limit as the resends, and one that fails or is
+      // let go of stays queued.
       const queuedDeletes = await pendingDeletes.read();
       if (accountChanged()) return false;
-      const overridden = deletesRestored(queuedDeletes, [localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id);
-      const toDelete = deletesFor(withoutDeletes(queuedDeletes, overridden), supabaseUser.id);
+      const toDelete = deletesFor(queuedDeletes, supabaseUser.id);
       const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
         const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
         if (!row) return { error: null };
         return deleteHoldingFromSupabase(supabaseUser.id, row.id);
       }), resendsBy, accountChanged);
       if (accountChanged()) return false;
-      const doneDeletes = [...overridden, ...toDelete.filter((entry) => !unsentDeletes.includes(entry))];
+      const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
       // The queue as it stands after, whose deletes the cloud's copy is kept
       // clear of below
       const stillQueued = doneDeletes.length
@@ -10418,6 +10422,9 @@ function AppContent() {
                 // a change saved on this phone only gets. With no row known,
                 // as when a write before it was still out, the sync finds it
                 // by local id once those writes land.
+                // A sign out or account change since has cleared the queue,
+                // so the delete isn't written back under it
+                if (userIdRef.current !== supabaseUser.id) return;
                 let queued = false;
                 try {
                   await pendingDeletes.update((queue) => withQueuedDelete(queue, { userId: supabaseUser.id, rowId, localId: id, metal }));

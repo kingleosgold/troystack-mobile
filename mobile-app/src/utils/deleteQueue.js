@@ -67,18 +67,6 @@ export function withoutDeletes(queue, gone) {
     && g.localId === entry.localId && g.metal === entry.metal && (g.rowId || null) === (entry.rowId || null)));
 }
 
-// This account's deletes a restore overrode: a holding restored for the
-// account since it was deleted is the stack the user chose, so its delete
-// isn't sent. lists is one array per metal, in METALS order.
-export function deletesRestored(queue, lists, userId) {
-  const restored = new Set();
-  (lists || []).forEach((items, i) => (items || []).forEach((item) => {
-    if (item?.restoredFor === userId) restored.add(`${METALS[i]}:${item.id}`);
-  }));
-  if (!restored.size) return [];
-  return deletesFor(queue, userId).filter((entry) => restored.has(`${entry.metal}:${entry.localId}`));
-}
-
 // The cloud's copy, one array per metal in METALS order, without the
 // holdings this account still has deletes queued for: by row, or by local id
 // in its metal for a delete with no row. A list nothing is dropped from comes
@@ -98,7 +86,8 @@ export function withoutQueuedDeletes(lists, queue, userId) {
 
 // One queue in storage that every change goes through in turn, so a delete
 // queued while a sync takes its sent ones off can't be lost between a read
-// and a write. update answers the queue as written, read the queue as it is.
+// and a write. update answers the queue as written, read the queue as it is,
+// and clear empties it once the changes before it are done.
 // A failed read or write rejects to its caller and doesn't stop the next one.
 export function deleteQueueStore(storage, key = PENDING_DELETES_KEY) {
   let chain = Promise.resolve();
@@ -118,5 +107,6 @@ export function deleteQueueStore(storage, key = PENDING_DELETES_KEY) {
       }
       return next;
     }),
+    clear: () => run(() => storage.removeItem(key)),
   };
 }
