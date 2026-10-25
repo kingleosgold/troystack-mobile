@@ -10168,7 +10168,8 @@ function AppContent() {
             // may yet make this holding's row, so a lookup now could miss it
             // and add a second. The edit is marked as a failed lookup is, and
             // the next sync, which waits for that write, sends it over its row.
-            if (!landed) throw new Error('An earlier write is still saving');
+            // A holding whose add landed this session has its row already.
+            if (!landed && !knownRowsRef.current.rowFor(item.id, userId)) throw new Error('An earlier write is still saving');
             // Editing a local item that might exist in Supabase - find it first,
             // by the row its add went to if it landed this session
             const knownRow = knownRowsRef.current.rowFor(item.id, userId);
@@ -10313,10 +10314,11 @@ function AppContent() {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (error) reached = false;
                     else if (__DEV__) console.log('Deleted holding from Supabase');
-                  } else if (!(await earlierWrites)) {
+                  } else if (!(await earlierWrites) && !knownRowsRef.current.rowFor(id, supabaseUser.id)) {
                     // A write before it still out may yet make this holding's
                     // row, so a lookup now could miss it and the row would
-                    // come back. The holding goes back with the notice.
+                    // come back. The holding goes back with the notice. One
+                    // whose add landed this session has its row already.
                     reached = false;
                   } else {
                     // By the row its add went to if it landed this session,
