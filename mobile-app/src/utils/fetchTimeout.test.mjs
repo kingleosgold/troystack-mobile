@@ -181,7 +181,7 @@ test('both callers of findHoldingByLocalId sit inside a try that catches', () =>
   let seen = 0;
   while (at !== -1) {
     seen += 1;
-    const before = app.slice(Math.max(0, at - 2500), at);
+    const before = app.slice(Math.max(0, at - 3000), at);
     const after = app.slice(at, at + 2500);
     assert.ok(before.lastIndexOf('try {') > before.lastIndexOf('} catch'), 'lookup sits in a try');
     assert.match(after, /\} catch \(err\) \{/);

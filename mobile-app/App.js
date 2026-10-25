@@ -2486,6 +2486,9 @@ function AppContent() {
   // The sync's resends of marked edits still in flight, by row, so an edit
   // of the same row goes after one the sync let go of, never under it
   const rowResendsRef = useRef(new Map());
+  // The last edit of each holding still out, by account and local id, so a
+  // later edit of it waits for that one rather than race it
+  const holdingEditsRef = useRef(new Map());
   // When the app last said a save didn't reach the account
   const cloudMissAtRef = useRef(null);
 
@@ -10001,8 +10004,9 @@ function AppContent() {
       ...(base?.restoredFor && base.rowLookupFor ? { rowLookupFor: base.rowLookupFor } : {}),
       // An edit of this account's row is marked from the save on, so an app
       // killed while its update is out still sends it at the next sync. The
-      // mark comes off this copy once the update lands.
-      ...(editsHolding ? editMarkAhead(base, supabaseUser?.id) : {}),
+      // mark comes off this copy once the update lands. One whose add landed
+      // this session takes that add's row with the mark.
+      ...(editsHolding ? editMarkAhead(base, supabaseUser?.id, supabaseUser && base ? knownRowsRef.current.rowFor(base.id, supabaseUser.id) : null) : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
@@ -10143,13 +10147,26 @@ function AppContent() {
       const earlierWrites = editingItem && !item.supabase_id
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
-      trackHoldingWrite(async () => {
+      // The last edit of this holding still out, taken before this one is
+      // chained after it
+      const chainKey = `${userId}:${item.id}`;
+      const priorEdit = editingItem ? holdingEditsRef.current.get(chainKey) : null;
+      const write = trackHoldingWrite(async () => {
         try {
           if (editingItem && item.supabase_id) {
             // Update existing item in Supabase. Only a row the holding kept is
             // updated: a guest's holding may carry another account's row from
             // a backup it restored, so it finds its row in this account by
-            // local id below, or goes up as new.
+            // local id below, or goes up as new. An earlier edit of this
+            // holding still out could land after it and win, so it goes after
+            // that one, or stays marked for the next sync if it's still out.
+            if (priorEdit) {
+              const settled = await settleWithin(priorEdit, HOLDING_WRITES_WAIT_MS, () => userIdRef.current !== userId);
+              if (settled.late || settled.stopped) {
+                markFailedEdit(item.supabase_id);
+                return;
+              }
+            }
             const { error } = await updateAfterResend(item.supabase_id, targetMetal);
             if (error) markFailedEdit(item.supabase_id);
             else {
@@ -10220,6 +10237,18 @@ function AppContent() {
           else if (addsRow) markForRetry(targetMetal, item.id, userId, stackGen);
         }
       });
+      if (editingItem) {
+        // An edit that gave up on the one before it settles first, so the
+        // chain holds both until each has, and the next edit waits for them
+        const entry = priorEdit
+          ? Promise.all([priorEdit, write].map(p => p.then(() => {}, () => {})))
+          : write;
+        holdingEditsRef.current.set(chainKey, entry);
+        const clear = () => {
+          if (holdingEditsRef.current.get(chainKey) === entry) holdingEditsRef.current.delete(chainKey);
+        };
+        entry.then(clear, clear);
+      }
     }
 
     // Haptic feedback on successful add

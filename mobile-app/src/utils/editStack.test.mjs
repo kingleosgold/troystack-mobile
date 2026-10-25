@@ -114,8 +114,8 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   // Its marks and row come from that copy, not from the sheet's opening
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
-  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(editsHolding \? editMarkAhead\(base, supabaseUser\?\.id\) : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
-  assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateAfterResend\(item\.supabase_id, targetMetal\);/);
+  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(editsHolding \? editMarkAhead\(base, supabaseUser\?\.id, supabaseUser && base \? knownRowsRef\.current\.rowFor\(base\.id, supabaseUser\.id\) : null\) : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*if \(priorEdit\) \{\n[\s\S]*?\n\s*\}\n\s*const \{ error \} = await updateAfterResend\(item\.supabase_id, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
 });
@@ -251,6 +251,24 @@ test("an edit with no row waits for the writes before it, so an add still in fli
   const lookup = fn.slice(fn.indexOf('} else if (editingItem) {'));
   assert.ok(lookup.indexOf('await earlierWrites;') >= 0);
   assert.ok(lookup.indexOf('await earlierWrites;') < lookup.indexOf('findHoldingByLocalId('));
+});
+
+test('an edit over a row goes after the last edit of the same holding still out', () => {
+  const fn = app.slice(app.indexOf('const savePurchase = () => {'), app.indexOf('const resetForm = () => {'));
+  // Taken before this edit is chained, so it never waits on itself
+  const taken = fn.indexOf('const priorEdit = editingItem ? holdingEditsRef.current.get(chainKey) : null;');
+  const tracked = fn.indexOf('const write = trackHoldingWrite(async () => {');
+  const chained = fn.indexOf('holdingEditsRef.current.set(chainKey, entry);');
+  assert.ok(taken >= 0 && tracked > taken && chained > tracked);
+  assert.ok(fn.includes('const chainKey = `${userId}:${item.id}`;'));
+  // Awaited on the row branch before the update, and one still out leaves it marked
+  const onRow = fn.slice(fn.indexOf('if (editingItem && item.supabase_id) {'), fn.indexOf('} else if (editingItem) {'));
+  assert.match(onRow, /if \(priorEdit\) \{\n\s*const settled = await settleWithin\(priorEdit, HOLDING_WRITES_WAIT_MS, \(\) => userIdRef\.current !== userId\);\n\s*if \(settled\.late \|\| settled\.stopped\) \{\n\s*markFailedEdit\(item\.supabase_id\);\n\s*return;/);
+  assert.ok(onRow.indexOf('settleWithin(priorEdit') < onRow.indexOf('updateAfterResend('));
+  // The chain holds an edit that gave up together with the one it gave up on
+  assert.match(fn, /const entry = priorEdit\n\s*\? Promise\.all\(\[priorEdit, write\]\.map\(p => p\.then\(\(\) => \{\}, \(\) => \{\}\)\)\)\n\s*: write;/);
+  // And lets go once all have settled, unless a later edit took its place
+  assert.match(fn, /if \(holdingEditsRef\.current\.get\(chainKey\) === entry\) holdingEditsRef\.current\.delete\(chainKey\);\n\s*\};\n\s*entry\.then\(clear, clear\);/);
 });
 
 test("an edit that waited doesn't add a row for a holding deleted on the phone meanwhile", () => {

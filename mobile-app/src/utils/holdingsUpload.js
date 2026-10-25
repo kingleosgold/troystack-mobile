@@ -158,11 +158,14 @@ export function withEditMarks(items, marks, userId) {
  * from the moment it's saved, so the edit is marked while its update is out.
  * Unmarked, an app killed while the update waits or runs would leave the
  * edit on the phone alone, and the next sync's swap would undo it. A guest's
- * or a restored holding is sent by its own marks, so it takes none.
+ * or a restored holding is sent by its own marks, so it takes none. A holding
+ * whose add landed this session has no row on it yet, so it takes knownRowId,
+ * the row that add went to, with the mark.
  */
-export function editMarkAhead(base, userId) {
-  if (!userId || !base?.supabase_id || base.addedAsGuest || base.restoredFor) return {};
-  return { editPendingFor: userId };
+export function editMarkAhead(base, userId, knownRowId = null) {
+  if (!userId || !base || base.addedAsGuest || base.restoredFor) return {};
+  if (base.supabase_id) return { editPendingFor: userId };
+  return knownRowId ? { supabase_id: knownRowId, editPendingFor: userId } : {};
 }
 
 /**
