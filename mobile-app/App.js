@@ -10141,7 +10141,9 @@ function AppContent() {
       const markFailedEdit = (rowId) => (item.restoredFor === userId
         ? markRowLookupForRetry(targetMetal, item.id, userId, stackGen)
         : markEditForRetry(targetMetal, item.id, rowId, userId, stackGen));
-      const earlierWrites = editingItem && !item.supabase_id
+      // An edit that took its row from an add landed this session waits too,
+      // so an earlier edit of the same holding still waiting can't land last
+      const earlierWrites = editingItem && (!item.supabase_id || !base?.supabase_id)
         ? holdingWrites.settled(HOLDING_WRITES_WAIT_MS, userId, () => userIdRef.current !== userId)
         : null;
       trackHoldingWrite(async () => {
@@ -10150,7 +10152,9 @@ function AppContent() {
             // Update existing item in Supabase. Only a row the holding kept is
             // updated: a guest's holding may carry another account's row from
             // a backup it restored, so it finds its row in this account by
-            // local id below, or goes up as new.
+            // local id below, or goes up as new. Its row is known, so it goes
+            // ahead however the wait ends.
+            if (earlierWrites) await earlierWrites;
             const { error } = await updateAfterResend(item.supabase_id, targetMetal);
             if (error) markFailedEdit(item.supabase_id);
             else {
