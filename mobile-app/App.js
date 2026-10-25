@@ -4419,7 +4419,9 @@ function AppContent() {
       // running, and this sync waits for it only so long or until the account
       // changes. Past that it fails as a hung write does, keeping the stack on
       // the phone and its marks, and the insert keeps running.
-      const syncRun = trackHoldingWrite(() => fullSync(
+      // A sync that uploads nothing writes nothing, so it isn't tracked, and a
+      // sign out during it doesn't count it as a change on its way.
+      const runSync = () => fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4429,9 +4431,11 @@ function AppContent() {
         // An edit fullSync sends over a row found by local id is a resend
         // too, under the same limit
         { track: trackRowResend, by: resendsBy, stopped: accountChanged }
-      ));
+      );
+      const syncRun = uploadLocal ? trackHoldingWrite(runSync) : runSync();
       const synced = await settleWithin(syncRun, SYNC_UPLOAD_WAIT_MS, accountChanged);
       if (accountChanged()) return false;
+      if (synced.error) throw synced.error;
       if (!synced.value) {
         if (restoreCountRef.current === restoresAtStart) {
           failed = true;

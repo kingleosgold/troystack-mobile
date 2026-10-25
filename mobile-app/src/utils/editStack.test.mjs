@@ -182,7 +182,7 @@ test('a sync sends the marked edits before it fetches the cloud copy, and puts b
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
   const read = body.indexOf('withEditMarks(items, editMarksRef.current, supabaseUser.id)');
   const send = body.indexOf('for (const edit of pendingEdits([localSilver, localGold, localPlatinum, localPalladium], supabaseUser.id))');
-  const fetch = body.indexOf('trackHoldingWrite(() => fullSync(');
+  const fetch = body.indexOf('const runSync = () => fullSync(');
   assert.ok(read > 0 && send > read && fetch > send);
   // each edit stops at an account change, and a failed one is kept
   assert.match(body, /const resend = trackRowResend\(rowId, \(\) => updateHolding\(supabaseUser\.id, rowId, edit\.item, edit\.metal\)\);\n[\s\S]*?const sent = await settleWithin\(resend, resendsBy - Date\.now\(\), accountChanged\);\n\s*if \(accountChanged\(\)\) return false;\n\s*if \(sent\.late\) resendsLate = true;\n\s*if \(!sent\.value \|\| sent\.value\.error\) unsentEdits\.push\(edit\);/);
