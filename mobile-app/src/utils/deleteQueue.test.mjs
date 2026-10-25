@@ -9,6 +9,7 @@ import {
   withoutDeletes,
   withoutDeleteOf,
   withoutQueuedDeletes,
+  queuedNotSending,
   deleteQueueStore,
 } from './deleteQueue.js';
 
@@ -162,6 +163,30 @@ test('a failed write rejects to its caller and the next change still runs', asyn
 
 // The wiring in App.js, read as source like the other sync tests
 import { readFileSync } from 'node:fs';
+test('a queued delete on its way is counted once, among the writes on their way', () => {
+  const queue = [byRow, byLocal, other];
+  assert.equal(queuedNotSending(queue, new Set(), 'u1'), 2);
+  assert.equal(queuedNotSending(queue, new Set([byRow]), 'u1'), 1);
+  // Matched by holding, whatever row the sending one named
+  assert.equal(queuedNotSending(queue, new Set([{ ...byLocal, rowId: 'row-2' }]), 'u1'), 1);
+  assert.equal(queuedNotSending(queue, new Set([byRow, byLocal]), 'u1'), 0);
+  assert.equal(queuedNotSending(queue, null, 'u2'), 1);
+  assert.equal(queuedNotSending(queue, new Set([byRow]), null), 0);
+});
+
+test('a sending delete the queue read missed takes nothing off another', () => {
+  // Queued and sent after the queue was read: the queue holds byRow only
+  const late = { userId: 'u1', rowId: 'row-3', localId: 33, metal: 'gold' };
+  assert.equal(queuedNotSending([byRow], new Set([late]), 'u1'), 1);
+});
+
+test('a delete still out from before a sign out takes nothing off a new one', () => {
+  const hung = { userId: 'u1', rowId: 'row-old', localId: 44, metal: 'platinum' };
+  assert.equal(queuedNotSending([byRow, byLocal], new Set([hung]), 'u1'), 2);
+  // Nor does another account's
+  assert.equal(queuedNotSending([byRow], new Set([{ ...byRow, userId: 'u2' }]), 'u1'), 1);
+});
+
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
 test('a signed-in delete is queued before it is sent and taken off once it lands', () => {
@@ -174,8 +199,8 @@ test('a signed-in delete is queued before it is sent and taken off once it lands
   assert.ok(queued > 0 && sent > queued && unqueued > sent);
   // Not queued under an account that has left, and counted once by a sign out
   assert.match(body, /if \(userIdRef\.current === supabaseUser\.id\) \{\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, entry\)\);\n\s*queuedFirst = true;/);
-  assert.match(body, /if \(queuedFirst\) sending\.set\(supabaseUser\.id,/);
-  assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) \{\n\s*const left = /);
+  assert.match(body, /if \(queuedFirst\) sending\.add\(entry\);/);
+  assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);/);
 });
 
 test('a failed signed-in delete is queued and the holding stays off, falling back to the notice only when the queue fails', () => {
@@ -202,7 +227,7 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
-  assert.match(app, /return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ Math\.max\(0, queuedDeletes - sendingDeletes\);/);
+  assert.match(app, /const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);

@@ -78,6 +78,17 @@ export function withoutDeleteOf(queue, { userId, localId, metal } = {}) {
   return kept.length === queue.length ? queue : kept;
 }
 
+// How many of this account's queued deletes aren't on their way right now,
+// since one on its way is counted among the writes on their way. A delete is
+// matched to the one sending by account, local id and metal, so a sending one
+// the queue read missed, or one left from before a sign out, takes nothing
+// off another.
+export function queuedNotSending(queue, sending, userId) {
+  const out = [...(sending || [])].filter((entry) => entry?.userId === userId);
+  return deletesFor(queue, userId).filter((entry) => !out.some((s) => s.localId === entry.localId
+    && s.metal === entry.metal)).length;
+}
+
 // The cloud's copy, one array per metal in METALS order, without the
 // holdings this account still has deletes queued for: by row, or by local id
 // in its metal for a delete with no row. A list nothing is dropped from comes
