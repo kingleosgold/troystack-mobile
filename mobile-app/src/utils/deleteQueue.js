@@ -7,9 +7,10 @@
  * without a connection. Now the delete is kept in a queue on the phone, by
  * account, and the next sync sends it before it fetches the cloud's copy.
  * One the sync still can't send stays queued, and its row is kept out of
- * the cloud's copy so the holding doesn't come back. Like a marked edit, a
- * sign out clears the queue, and asks first. Nothing here imports React
- * Native, so it runs under `node --test`.
+ * the cloud's copy so the holding doesn't come back. The delete is queued
+ * before it's sent and taken off once it lands, so an app closed mid-request
+ * doesn't lose it. Like a marked edit, a sign out clears the queue, and asks
+ * first. Nothing here imports React Native, so it runs under `node --test`.
  */
 
 export const PENDING_DELETES_KEY = 'stack_pending_deletes';
@@ -65,6 +66,16 @@ export function withoutDeletes(queue, gone) {
   if (!gone?.length) return queue;
   return queue.filter((entry) => !gone.some((g) => g.userId === entry.userId
     && g.localId === entry.localId && g.metal === entry.metal && (g.rowId || null) === (entry.rowId || null)));
+}
+
+// The queue without this holding's queued deletes, matched by account, local
+// id and metal whatever row each names. A delete that reached the account
+// takes its entry off this way, since the entry queued before it was sent
+// may have had no row.
+export function withoutDeleteOf(queue, { userId, localId, metal } = {}) {
+  if (!userId) return queue;
+  const kept = queue.filter((entry) => !(entry.userId === userId && entry.localId === localId && entry.metal === metal));
+  return kept.length === queue.length ? queue : kept;
 }
 
 // The cloud's copy, one array per metal in METALS order, without the

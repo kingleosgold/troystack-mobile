@@ -57,7 +57,7 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
-import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
@@ -2469,11 +2469,15 @@ function AppContent() {
   // a delete before the next sync doesn't hang on a lookup
   const knownRowsRef = useRef(null);
   if (!knownRowsRef.current) knownRowsRef.current = knownRows();
-  // Signed-in deletes whose cloud write failed, kept on the phone until a
-  // sync sends them, so a delete offline sticks rather than pop back
+  // Signed-in deletes not yet known to have reached the account, kept on the
+  // phone until a sync sends them, so a delete offline or cut off by a
+  // closed app sticks rather than pop back
   const pendingDeletesRef = useRef(null);
   if (!pendingDeletesRef.current) pendingDeletesRef.current = deleteQueueStore(AsyncStorage);
   const pendingDeletes = pendingDeletesRef.current;
+  // How many queued deletes each account has on their way right now. Each is
+  // in the queue and a write on its way at once, so a sign out counts it once.
+  const deletesSendingRef = useRef(new Map());
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3279,7 +3283,10 @@ function AppContent() {
     const lists = (committedStackRef.current || [])
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
-    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) }) + queuedDeletes;
+    // A queued delete still on its way counts among the writes on their way
+    const sendingDeletes = deletesSendingRef.current.get(userId) || 0;
+    return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
+      + Math.max(0, queuedDeletes - sendingDeletes);
   };
 
   // Send Now runs My Stack's pull, which says if the sync failed. Otherwise,
@@ -10388,6 +10395,24 @@ function AppContent() {
                 let reached = true;
                 // The row the delete went to, when it's known
                 let rowId = itemToDelete.supabase_id || null;
+                const entry = { userId: supabaseUser.id, rowId, localId: id, metal };
+                // The delete is queued before it's sent, so an app closed
+                // mid-request leaves it for the next sync rather than lose
+                // it. Sending it twice is harmless, since a deleted row stays
+                // deleted and isn't found by local id. A sign out or account
+                // change since has cleared the queue, so it isn't written
+                // back under it. A queue that can't be saved still sends.
+                let queuedFirst = false;
+                if (userIdRef.current === supabaseUser.id) {
+                  try {
+                    await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));
+                    queuedFirst = true;
+                  } catch (err) {
+                    if (__DEV__) console.error('Failed to queue the delete:', err);
+                  }
+                }
+                const sending = deletesSendingRef.current;
+                if (queuedFirst) sending.set(supabaseUser.id, (sending.get(supabaseUser.id) || 0) + 1);
                 try {
                   if (itemToDelete.supabase_id) {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
@@ -10415,35 +10440,52 @@ function AppContent() {
                   if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
                   reached = false;
                 }
-                if (reached) return;
-                // The row is still live, so the next sync would bring the
-                // holding back. The delete is queued for the next sync to
-                // send, and the holding stays off the phone, with the notice
-                // a change saved on this phone only gets. With no row known,
-                // as when a write before it was still out, the sync finds it
-                // by local id once those writes land.
-                // A sign out or account change since has cleared the queue,
-                // so the delete isn't written back under it
-                if (userIdRef.current !== supabaseUser.id) return;
-                let queued = false;
                 try {
-                  await pendingDeletes.update((queue) => withQueuedDelete(queue, { userId: supabaseUser.id, rowId, localId: id, metal }));
-                  queued = true;
-                } catch (err) {
-                  if (__DEV__) console.error('Failed to queue the delete:', err);
-                }
-                if (queued) {
-                  noteCloudMiss('edit', supabaseUser.id);
-                  return;
-                }
-                // A queue that couldn't be saved can't hold it, so the holding
-                // goes back now with a notice, while the same account holds
-                // the same stack. After a swap the stack came from the cloud,
-                // which still has it.
-                if (userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
-                  setter(prev => withHoldingRestored(prev, removed, removedIndex));
-                  const { title, message } = deleteMissAlert(removed?.productName);
-                  Alert.alert(title, message);
+                  if (reached) {
+                    // Off the queue once it's landed. One that can't be taken
+                    // off is sent again by the next sync, which does no harm.
+                    if (queuedFirst) {
+                      await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
+                        .catch((err) => { if (__DEV__) console.error('Failed to unqueue the delete:', err); });
+                    }
+                    return;
+                  }
+                  // The row is still live, so the next sync would bring the
+                  // holding back. The delete stays queued for the next sync
+                  // to send, taking the row if one was found since, and the
+                  // holding stays off the phone, with the notice a change
+                  // saved on this phone only gets. With no row known, as when
+                  // a write before it was still out, the sync finds it by
+                  // local id once those writes land.
+                  // A sign out or account change since has cleared the queue,
+                  // so the delete isn't written back under it
+                  if (userIdRef.current !== supabaseUser.id) return;
+                  let queued = queuedFirst;
+                  try {
+                    await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
+                    queued = true;
+                  } catch (err) {
+                    if (__DEV__) console.error('Failed to queue the delete:', err);
+                  }
+                  if (queued) {
+                    noteCloudMiss('edit', supabaseUser.id);
+                    return;
+                  }
+                  // A queue that couldn't be saved can't hold it, so the
+                  // holding goes back now with a notice, while the same
+                  // account holds the same stack. After a swap the stack came
+                  // from the cloud, which still has it.
+                  if (userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
+                    setter(prev => withHoldingRestored(prev, removed, removedIndex));
+                    const { title, message } = deleteMissAlert(removed?.productName);
+                    Alert.alert(title, message);
+                  }
+                } finally {
+                  if (queuedFirst) {
+                    const left = (sending.get(supabaseUser.id) || 1) - 1;
+                    if (left > 0) sending.set(supabaseUser.id, left);
+                    else sending.delete(supabaseUser.id);
+                  }
                 }
               });
             }
