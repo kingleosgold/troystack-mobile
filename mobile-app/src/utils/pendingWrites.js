@@ -9,6 +9,12 @@
 // that is tried again by the next pull
 export const HOLDING_WRITES_WAIT_MS = 30000;
 
+// How long a sync waits for its upload and the cloud's copy. Longer than the
+// write wait, since a first sync can send a whole stack. Past it the sync
+// lets go, the upload keeps running, and the next sync's dedupe by local id
+// keeps a late insert from going up twice
+export const SYNC_UPLOAD_WAIT_MS = 60000;
+
 // How often a wait with a stop check looks at it
 export const STOP_POLL_MS = 250;
 

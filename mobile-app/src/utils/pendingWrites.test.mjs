@@ -310,3 +310,25 @@ test('sendAllWithin lets go of a write when the account changes during it', asyn
   assert.deepEqual(unsent, ['a', 'b']);
   assert.deepEqual(started, ['a']);
 });
+
+test('the sync waits for its upload as a tracked write, only so long, and fails without swapping when it runs late', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  assert.ok(body.includes('const runSync = () => fullSync('));
+  assert.ok(body.includes('const syncRun = uploadLocal ? trackHoldingWrite(runSync) : runSync();'));
+  assert.ok(body.includes('if (synced.error) throw synced.error;'));
+  assert.ok(body.includes('const synced = await settleWithin(syncRun, SYNC_UPLOAD_WAIT_MS, accountChanged);'));
+  const late = body.indexOf('if (!synced.value) {');
+  assert.ok(late > 0 && late < body.indexOf('} = synced.value;'));
+  assert.ok(body.indexOf('return false;', late) < body.indexOf('} = synced.value;'));
+  assert.ok(body.indexOf('setSilverItems(remoteSilver);') > body.indexOf('} = synced.value;'));
+});
+
+test('an edit or delete whose wait for earlier writes runs out never trusts a lookup', () => {
+  assert.ok(app.includes('const landed = await earlierWrites;'));
+  assert.match(app, /if \(!landed && addsRow && !knownRowsRef\.current\.rowFor\(item\.id, userId\)\) throw new Error\('An earlier write is still saving'\);/);
+  // the throw lands where a failed lookup does, which marks the edit for its row
+  assert.match(app, /if \(addsRow && editingItem && !lookedUp\) markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\);/);
+  assert.ok(app.indexOf("throw new Error('An earlier write is still saving')") < app.indexOf('lookedUp = true;'));
+  assert.match(app, /\} else if \(!\(await earlierWrites\) && !knownRowsRef\.current\.rowFor\(id, supabaseUser\.id\)\) \{\n(\s*\/\/.*\n)*\s*reached = false;/);
+});

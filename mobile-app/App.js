@@ -58,7 +58,7 @@ import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/b
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
-import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS } from './src/utils/pendingWrites';
+import { pendingWrites, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
@@ -4415,7 +4415,13 @@ function AppContent() {
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
-      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = await fullSync(
+      // The upload is a tracked write, so the next sync waits for one still
+      // running, and this sync waits for it only so long or until the account
+      // changes. Past that it fails as a hung write does, keeping the stack on
+      // the phone and its marks, and the insert keeps running.
+      // A sync that uploads nothing writes nothing, so it isn't tracked, and a
+      // sign out during it doesn't count it as a change on its way.
+      const runSync = () => fullSync(
         supabaseUser.id,
         toUpload[0],
         toUpload[1],
@@ -4426,8 +4432,18 @@ function AppContent() {
         // too, under the same limit
         { track: trackRowResend, by: resendsBy, stopped: accountChanged }
       );
-
+      const syncRun = uploadLocal ? trackHoldingWrite(runSync) : runSync();
+      const synced = await settleWithin(syncRun, SYNC_UPLOAD_WAIT_MS, accountChanged);
       if (accountChanged()) return false;
+      if (synced.error) throw synced.error;
+      if (!synced.value) {
+        if (restoreCountRef.current === restoresAtStart) {
+          failed = true;
+          setSyncError('A change is still saving to the cloud');
+        }
+        return false;
+      }
+      const { silverItems: cloudSilver, goldItems: cloudGold, platinumItems: cloudPlatinum, palladiumItems: cloudPalladium, syncedToCloud, refusedCount, refusedNames, unsentRowEdits, error } = synced.value;
       // A row edit fullSync couldn't send is put back marked and counts as
       // unsent, like a resend above, not as a refusal
       if (!error) unsent += unsentRowEdits || 0;
@@ -10137,7 +10153,7 @@ function AppContent() {
               if (__DEV__) console.log('Updated holding in Supabase');
             }
           } else if (editingItem) {
-            await earlierWrites;
+            const landed = await earlierWrites;
             // Who owns the phone's stack, read before the lookup so a sync that
             // finishes during it can't make another account's holding read as ours.
             // A failed read only holds back the add, never the update of a row.
@@ -10148,6 +10164,14 @@ function AppContent() {
             // Not in Supabase yet, it's added if it's this account's to take,
             // never a holding of another account's stack left on the phone
             addsRow = !!ownerRead && mayAddEditedHolding(item, stackOwnerOf(ownerRead[0], ownerRead[1], supabaseUser.id), supabaseUser.id);
+            // A write before it still out, an upload the sync let go of say,
+            // may yet make this holding's row, so a lookup now could miss it
+            // and add a second. The edit is marked as a failed lookup is, and
+            // the next sync, which waits for that write, sends it over its row.
+            // A holding whose add landed this session has its row already.
+            // Only an edit that could add a row is held back, since one that
+            // can't never makes a second.
+            if (!landed && addsRow && !knownRowsRef.current.rowFor(item.id, userId)) throw new Error('An earlier write is still saving');
             // Editing a local item that might exist in Supabase - find it first,
             // by the row its add went to if it landed this session
             const knownRow = knownRowsRef.current.rowFor(item.id, userId);
@@ -10292,8 +10316,13 @@ function AppContent() {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
                     if (error) reached = false;
                     else if (__DEV__) console.log('Deleted holding from Supabase');
+                  } else if (!(await earlierWrites) && !knownRowsRef.current.rowFor(id, supabaseUser.id)) {
+                    // A write before it still out may yet make this holding's
+                    // row, so a lookup now could miss it and the row would
+                    // come back. The holding goes back with the notice. One
+                    // whose add landed this session has its row already.
+                    reached = false;
                   } else {
-                    await earlierWrites;
                     // By the row its add went to if it landed this session,
                     // else find it in Supabase by local_id
                     const knownRow = knownRowsRef.current.rowFor(id, supabaseUser.id);
