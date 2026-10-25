@@ -10001,8 +10001,9 @@ function AppContent() {
       ...(base?.restoredFor && base.rowLookupFor ? { rowLookupFor: base.rowLookupFor } : {}),
       // An edit of this account's row is marked from the save on, so an app
       // killed while its update is out still sends it at the next sync. The
-      // mark comes off this copy once the update lands.
-      ...(editsHolding ? editMarkAhead(base, supabaseUser?.id) : {}),
+      // mark comes off this copy once the update lands. One whose add landed
+      // this session takes that add's row with the mark.
+      ...(editsHolding ? editMarkAhead(base, supabaseUser?.id, supabaseUser && base ? knownRowsRef.current.rowFor(base.id, supabaseUser.id) : null) : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item

@@ -21,6 +21,19 @@ test("a guest's, a restored or a rowless holding takes no mark, nor one with no 
   assert.deepEqual(editMarkAhead(null, 'a'), {});
 });
 
+test('an edit of a holding whose add landed this session takes its row with the mark', () => {
+  assert.deepEqual(editMarkAhead({ id: 1 }, 'a', 'r9'), { supabase_id: 'r9', editPendingFor: 'a' });
+  // A row on the holding wins over the known one
+  assert.deepEqual(editMarkAhead({ id: 1, supabase_id: 'r1' }, 'a', 'r9'), { editPendingFor: 'a' });
+  // A guest's or a restored holding is sent by its own marks
+  assert.deepEqual(editMarkAhead({ id: 1, addedAsGuest: true }, 'a', 'r9'), {});
+  assert.deepEqual(editMarkAhead({ id: 1, restoredFor: 'a' }, 'a', 'r9'), {});
+  assert.deepEqual(editMarkAhead({ id: 1 }, null, 'r9'), {});
+  // And the next sync sends it over that row
+  const edited = { id: 1, ozt: 2, ...editMarkAhead({ id: 1 }, 'a', 'r9') };
+  assert.deepEqual(pendingEdits([[], [edited], [], []], 'a'), [{ item: edited, metal: 'gold' }]);
+});
+
 test('a marked edit is one the next sync sends, and a failure adds nothing to it', () => {
   const edited = { id: 1, supabase_id: 'r1', ozt: 2, ...editMarkAhead({ id: 1, supabase_id: 'r1' }, 'a') };
   assert.deepEqual(pendingEdits([[edited], [], [], []], 'a'), [{ item: edited, metal: 'silver' }]);
@@ -40,7 +53,7 @@ test('the mark comes off only the copy whose update landed', () => {
 });
 
 test('App.js marks the edit at the save and clears it when the update lands', () => {
-  assert.match(app, /\.\.\.\(editsHolding \? editMarkAhead\(base, supabaseUser\?\.id\) : \{\}\),\s*\}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  assert.match(app, /\.\.\.\(editsHolding \? editMarkAhead\(base, supabaseUser\?\.id, supabaseUser && base \? knownRowsRef\.current\.rowFor\(base\.id, supabaseUser\.id\) : null\) : \{\}\),\s*\}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   const branch = app.slice(app.indexOf('const { error } = await updateAfterResend(item.supabase_id, targetMetal);'));
   assert.match(branch.slice(0, 400), /if \(error\) markFailedEdit\(item\.supabase_id\);\s*else \{\s*editMarksRef\.current\.delete\(item\.id\);\s*setter\(prev => withoutSentEditMark\(prev, item\)\);/);
 });
