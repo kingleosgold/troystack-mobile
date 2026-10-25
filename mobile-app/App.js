@@ -43,7 +43,7 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
 import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
-import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn } from './src/utils/holdingsUpload';
+import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
@@ -9999,6 +9999,10 @@ function AppContent() {
       // And its lookup mark, so the sync still sends the edit over its row
       // after a restart or a failed send cleared the marks kept in memory
       ...(base?.restoredFor && base.rowLookupFor ? { rowLookupFor: base.rowLookupFor } : {}),
+      // An edit of this account's row is marked from the save on, so an app
+      // killed while its update is out still sends it at the next sync. The
+      // mark comes off this copy once the update lands.
+      ...(editsHolding ? editMarkAhead(base, supabaseUser?.id) : {}),
     }, base ? !base.addedAsGuest : !!supabaseUser); // an edit keeps who added it
 
     // Check if editing a scanned item
@@ -10150,6 +10154,7 @@ function AppContent() {
             if (error) markFailedEdit(item.supabase_id);
             else {
               editMarksRef.current.delete(item.id);
+              setter(prev => withoutSentEditMark(prev, item));
               if (__DEV__) console.log('Updated holding in Supabase');
             }
           } else if (editingItem) {

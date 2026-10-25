@@ -154,6 +154,32 @@ export function withEditMarks(items, marks, userId) {
 }
 
 /**
+ * The edit mark a signed-in edit of a holding on this account's row carries
+ * from the moment it's saved, so the edit is marked while its update is out.
+ * Unmarked, an app killed while the update waits or runs would leave the
+ * edit on the phone alone, and the next sync's swap would undo it. A guest's
+ * or a restored holding is sent by its own marks, so it takes none.
+ */
+export function editMarkAhead(base, userId) {
+  if (!userId || !base?.supabase_id || base.addedAsGuest || base.restoredFor) return {};
+  return { editPendingFor: userId };
+}
+
+/**
+ * The holdings with the edit mark off the very copy whose update landed. A
+ * newer edit of the same holding keeps its own mark, and a copy the sync
+ * swapped in carries none. The same array comes back when nothing changes.
+ */
+export function withoutSentEditMark(items, sent) {
+  if (!sent || !Array.isArray(items) || !items.includes(sent)) return items;
+  return items.map((item) => {
+    if (item !== sent) return item;
+    const { editPendingFor, ...rest } = item;
+    return rest;
+  });
+}
+
+/**
  * The edits a sync sends before it fetches the cloud's copy: each holding in
  * lists, one array per metal in HOLDING_METALS order, that carries this
  * account's edit mark and its row, with its metal.

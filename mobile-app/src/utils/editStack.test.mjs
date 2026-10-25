@@ -114,7 +114,7 @@ test('an edit saves onto the copy of the holding in the stack now', () => {
   // Its marks and row come from that copy, not from the sheet's opening
   // the copy keeps the holding's cloud row, so a later edit updates that row
   // and one that fails takes an edit mark rather than a lookup
-  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
+  assert.match(fn, /\.\.\.\(\(base\?\.supabase_id && !base\.addedAsGuest\) \|\| base\?\.restoredFor \? \{ supabase_id: base\.supabase_id \} : \{\}\),\n\s*\.\.\.\(base\?\.restoredFor \? \{ restoredFor: base\.restoredFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(base\?\.restoredFor && base\.rowLookupFor \? \{ rowLookupFor: base\.rowLookupFor \} : \{\}\),\n(\s*\/\/.*\n)*\s*\.\.\.\(editsHolding \? editMarkAhead\(base, supabaseUser\?\.id\) : \{\}\),\n    \}, base \? !base\.addedAsGuest : !!supabaseUser\);/);
   assert.match(fn, /if \(editingItem && item\.supabase_id\) \{\n(\s*\/\/.*\n)*\s*const \{ error \} = await updateAfterResend\(item\.supabase_id, targetMetal\);/);
   // Scanned and imported items aren't holdings in the stack
   assert.match(fn, /const editsHolding = !!editingItem && editingItem\.scannedIndex === undefined && editingItem\.importIndex === undefined;/);
