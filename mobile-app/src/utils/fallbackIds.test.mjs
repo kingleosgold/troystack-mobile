@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { HASHED_ID_BASE, hashedIdFor, idsForFetch, rowForFetchId, rowsByFetchId } from './fallbackIds.js';
+import { HASHED_ID_BASE, hashedIdFor, idsForFetch, idsTakenBy, rowForFetchId, rowsByFetchId } from './fallbackIds.js';
 
 const ROW_A = '3f2b8c1e-5d4a-4b6f-9e8d-1a2b3c4d5e6f';
 const ROW_B = 'a7c9e1f3-2b4d-4f6a-8c0e-9d8c7b6a5f4e';
@@ -113,4 +113,34 @@ test('findHoldingByLocalId reads every metal and finds by the id the fetch gives
   assert.match(fn, /const rows = newestFirst\(data \|\| \[\]\);/);
   assert.match(fn, /rowForFetchId\(rows, rows\.map\(localIdOf\), localId\)/);
   assert.match(fn, /match && match\.metal === metal \? match : null/);
+});
+
+test('the ids rows take hold each local_id and each row\'s hashed id', () => {
+  const ids = idsTakenBy([11, undefined, 11], [ROW_A, ROW_B, ROW_C]);
+  assert.ok(ids.has(11));
+  assert.ok(ids.has(hashedIdFor(ROW_A)));
+  assert.ok(ids.has(hashedIdFor(ROW_B)));
+  assert.ok(ids.has(hashedIdFor(ROW_C)));
+  assert.equal(ids.size, 4);
+});
+
+test('no rows take no ids', () => {
+  assert.equal(idsTakenBy([], []).size, 0);
+  assert.equal(idsTakenBy(undefined, undefined).size, 0);
+});
+
+test('every id a fetch gives a row is one the rows take or the live map holds', () => {
+  const localIds = [5, 5, undefined];
+  const rowIds = [ROW_A, ROW_B, ROW_C];
+  const taken = idsTakenBy(localIds, rowIds);
+  for (const id of idsForFetch(localIds, rowIds)) assert.ok(taken.has(id));
+});
+
+test('the sync skips a restored holding under any id its account\'s rows take', () => {
+  const src = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  const start = src.indexOf('export async function syncLocalToSupabase(');
+  const fn = src.slice(start, src.indexOf('\n}\n', start));
+  assert.match(fn, /const existingLocalIds: Set<number> = idsTakenBy\(\n\s+\(existingHoldings \|\| \[\]\)\.map\(localIdOf\),/);
+  assert.match(fn, /liveRows\.forEach\(\(_rowId, id\) => existingLocalIds\.add\(id\)\);/);
+  assert.ok(fn.indexOf('liveRows.forEach(') < fn.indexOf('holdingsToUpload(items, existingLocalIds, existingRowIds)'));
 });

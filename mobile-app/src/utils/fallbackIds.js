@@ -76,3 +76,16 @@ export function rowForFetchId(rows, localIds, id) {
   const i = idsForFetch(localIds, list.map((row) => row.id)).indexOf(id);
   return i === -1 ? null : list[i];
 }
+
+// Every id a holding of these rows could carry: each row's local_id and each
+// row's hashed id. `localIds` holds each row's local_id, or a falsy value for
+// a row with none, and `rowIds` each row's cloud id, in the same order.
+export function idsTakenBy(localIds, rowIds) {
+  const ids = new Set();
+  (rowIds || []).forEach((rowId, i) => {
+    const localId = (localIds || [])[i];
+    if (localId) ids.add(localId);
+    ids.add(hashedIdFor(rowId));
+  });
+  return ids;
+}

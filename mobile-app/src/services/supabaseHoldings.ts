@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
-import { idsForFetch, rowForFetchId, rowsByFetchId } from '../utils/fallbackIds';
+import { idsForFetch, idsTakenBy, rowForFetchId, rowsByFetchId } from '../utils/fallbackIds';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -357,15 +357,8 @@ export async function syncLocalToSupabase(
 
     if (fetchError) throw fetchError;
 
-    // This account's row ids and their local_ids (stored in notes JSON),
-    // deleted rows included
-    const existingRowIds = new Set<string>();
-    const existingLocalIds = new Set<number>();
-    (existingHoldings || []).forEach((h: any) => {
-      existingRowIds.add(h.id);
-      const localId = localIdOf(h);
-      if (localId) existingLocalIds.add(localId);
-    });
+    // This account's row ids, deleted rows included
+    const existingRowIds = new Set<string>((existingHoldings || []).map((h: any) => h.id));
     // The live rows by the id a fetch gives each holding, for edits whose
     // lookup failed. A row with no local_id maps under its hashed id.
     const liveList = newestFirst((existingHoldings || []).filter((h: any) => !h.deleted_at));
@@ -373,6 +366,15 @@ export async function syncLocalToSupabase(
       liveList.map(localIdOf),
       liveList.map((h: any) => h.id)
     );
+    // Every id a holding of these rows could carry, deleted rows included:
+    // each local_id (stored in notes JSON), each row's hashed id and the ids
+    // a fetch gives the live rows now. A restored holding under one of them
+    // doesn't go up again, so a row deleted elsewhere stays deleted.
+    const existingLocalIds: Set<number> = idsTakenBy(
+      (existingHoldings || []).map(localIdOf),
+      (existingHoldings || []).map((h: any) => h.id)
+    );
+    liveRows.forEach((_rowId, id) => existingLocalIds.add(id));
 
     // Prepare holdings to insert, with the local holding each row came from
     const holdingsToInsert: any[] = [];
