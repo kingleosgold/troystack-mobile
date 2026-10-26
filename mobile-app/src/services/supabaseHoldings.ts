@@ -409,8 +409,11 @@ export async function syncLocalToSupabase(
     // likely a bad connection, not numbers the database turned down
     const unsentRows = unsentRowEdits.map(({ item, rowId, metal }) => ({ item, metal, rowId }));
 
+    // A holding sent over a row never goes up as a new row too
+    const sentOverRows = new Set(rowEdits.map(({ item }) => item));
     for (const { items, metal } of metalGroups) {
-      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds);
+      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds)
+        .filter((item: LocalHolding) => !sentOverRows.has(item));
       skippedCount += items.length - toUpload.length;
       for (const item of toUpload) {
         holdingsToInsert.push(localToSupabase(item, metal, userId));

@@ -69,6 +69,9 @@ test('the upload sends marked edits over their rows and a failed one takes its r
   assert.match(holdingsSource, /const liveList = newestFirst\(\(existingHoldings \|\| \[\]\)\.filter\(\(h: any\) => !h\.deleted_at\)\);/);
   assert.match(holdingsSource, /const liveRows: Map<number, string> = rowsByFetchId\(\n\s+liveList\.map\(localIdOf\),\n\s+liveList\.map\(\(h: any\) => h\.id\)\n\s+\);/);
   assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId, existingRowIds\)/);
+  // and a holding sent over a row is never inserted too
+  assert.match(holdingsSource, /const sentOverRows = new Set\(rowEdits\.map\(\(\{ item \}\) => item\)\);/);
+  assert.match(holdingsSource, /\.filter\(\(item: LocalHolding\) => !sentOverRows\.has\(item\)\);/);
   assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
   assert.match(holdingsSource, /const unsentRows = unsentRowEdits\.map\(\(\{ item, rowId, metal \}\) => \(\{ item, metal, rowId \}\)\);/);
   // put back like a refusal, but never counted or named as one
