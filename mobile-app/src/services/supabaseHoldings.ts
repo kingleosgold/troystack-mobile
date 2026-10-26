@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
 import { idsForFetch, idsTakenBy, rowForFetchId, rowsByFetchId } from '../utils/fallbackIds';
 import { asRestoredBy, holdingsToInsert, rowEditsToSend } from '../utils/holdingsUpload';
-import { insertRows } from '../utils/insertRows';
+import { insertUploads } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
 import { HOLDING_WRITES_WAIT_MS, sendAllWithin } from '../utils/pendingWrites';
 
@@ -376,10 +376,6 @@ export async function syncLocalToSupabase(
     );
     liveRows.forEach((_rowId, id) => existingLocalIds.add(id));
 
-    // Prepare holdings to insert, with the local holding each row came from
-    const rowsToInsert: any[] = [];
-    const sources: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
-
     const metalGroups: { items: LocalHolding[]; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [
       { items: silverItems, metal: 'silver' },
       { items: goldItems, metal: 'gold' },
@@ -410,20 +406,18 @@ export async function syncLocalToSupabase(
     const sentOverRows = new Set(rowEdits.map(({ item }) => item));
     const { uploads, skippedCount: skipped } = holdingsToInsert(metalGroups, existingLocalIds, existingRowIds, sentOverRows);
     skippedCount = skipped;
-    for (const { item, metal } of uploads as { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[]) {
-      rowsToInsert.push(localToSupabase(item, metal, userId));
-      sources.push({ item, metal });
-    }
 
     // Batch insert, row by row if the database refuses the batch over one
-    // row's data, so that row can't hold back every later sync
-    const { insertedCount, rejected: rejectedRows, error: insertError } = await insertRows(
-      rowsToInsert,
+    // row's data, so that row can't hold back every later sync. Each refused
+    // row comes back as the holding it came from.
+    const { insertedCount, rejected: rejectedUploads, error: insertError } = await insertUploads(
+      uploads,
+      ({ item, metal }: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }) => localToSupabase(item, metal, userId),
       async (rows: any[]) => supabase.from('holdings').insert(rows)
     );
     syncedCount = insertedCount;
     if (insertError) throw insertError;
-    rejectedRows.forEach((index: number) => rejected.push(sources[index]));
+    rejected.push(...rejectedUploads);
     if (rejected.length) console.warn(`Supabase refused ${rejected.length} holding(s); they stay on the phone`);
 
     return { syncedCount, skippedCount, rejected, unsentRows, error: null };
