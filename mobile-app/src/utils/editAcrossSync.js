@@ -14,8 +14,8 @@ export const editOutlivesSwaps = (opened, { gen, foreignGen, userId }) => (
 );
 
 // The holding in one metal's list that an edit opened on. Its cloud row
-// names it if it had one, since two holdings can share a local id (a row
-// with no local_id gets one at each fetch). Otherwise the local id does.
+// names it if it had one, since two holdings can share a local id (an old
+// build could write one row's id over another's). Otherwise the local id does.
 export const holdingInStack = (list, opened) => {
   const items = list || [];
   if (opened.supabase_id) return items.find((item) => item.supabase_id === opened.supabase_id) || null;
