@@ -175,8 +175,8 @@ test('an error that is not a refusal comes back with no holding refused', async 
 });
 
 test('the sync inserts its uploads through insertUploads, so refusals mark their holdings', () => {
-  assert.match(holdingsSource, /import \{ ?insertUploads ?\} from '\.\.\/utils\/insertRows';/);
-  assert.match(holdingsSource, /await insertUploads\( ?uploads, ?\(\{ ?item, metal ?\}[^)]*\) ?=> ?localToSupabase\( ?item, metal, userId,? ?\),/);
-  assert.match(holdingsSource, /rejected\.push\( ?\.\.\.rejectedUploads,? ?\);/);
+  assert.match(holdingsSource, /import \{ ?insertUploads,? ?\} from ['"]\.\.\/utils\/insertRows['"];?/);
+  assert.match(holdingsSource, /await insertUploads\( ?uploads, ?\(\{ ?item, metal,? ?\}[^)]*\) ?=> ?localToSupabase\( ?item, metal, userId,? ?\),/);
+  assert.match(holdingsSource, /rejected\.push\( ?\.\.\.rejectedUploads,? ?\);?/);
   assert.doesNotMatch(holdingsSource, /sources\[index\]/);
 });
