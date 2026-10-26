@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
-import { idsForFetch, rowsByFetchId } from '../utils/fallbackIds';
+import { idsForFetch, rowForFetchId, rowsByFetchId } from '../utils/fallbackIds';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -288,9 +288,11 @@ export async function deleteHolding(
   }
 }
 
-// Find holding by local_id in notes JSON. A failed read throws rather than
-// return null, since null means not in the cloud: an edit would add the
-// holding a second time, and a delete would skip a row that's there.
+// Find a holding's row by the id a fetch gives it: its local_id in notes
+// JSON, or for a row with none, or one repeating another row's, the id hashed
+// from its row id. A failed read throws rather than return null, since null
+// means not in the cloud: an edit would add the holding a second time, and a
+// delete would skip a row that's there.
 export async function findHoldingByLocalId(
   userId: string,
   localId: number,
@@ -299,13 +301,13 @@ export async function findHoldingByLocalId(
   try {
     // One read finds a row that was already there. Reading until the stack
     // settles could end in an error that reads as not found, and the edit
-    // would upload the holding again.
+    // would upload the holding again. Every metal is read, since a fetch
+    // hands out ids across the whole stack.
     const { data, error } = await fetchAllRows(() =>
       supabase
         .from('holdings')
         .select('*')
         .eq('user_id', userId)
-        .eq('metal', metal)
         .is('deleted_at', null),
       undefined,
       { settle: false }
@@ -313,18 +315,11 @@ export async function findHoldingByLocalId(
 
     if (error) throw error;
 
-    // Search for matching local_id in notes JSON
-    const match = (data || []).find((h: SupabaseHolding) => {
-      if (!h.notes) return false;
-      try {
-        const notesData = JSON.parse(h.notes);
-        return notesData.local_id === localId;
-      } catch (e) {
-        return false;
-      }
-    });
-
-    return match || null;
+    // The same order and ids the fetch gives, so a row with no local_id is
+    // found under its hashed id
+    const rows = newestFirst(data || []);
+    const match = rowForFetchId(rows, rows.map(localIdOf), localId);
+    return match && match.metal === metal ? match : null;
   } catch (err) {
     console.error('Error finding holding by local ID:', err);
     throw err;

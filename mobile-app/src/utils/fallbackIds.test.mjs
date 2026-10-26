@@ -1,7 +1,8 @@
 // Run with: node --test mobile-app/src/utils/fallbackIds.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HASHED_ID_BASE, hashedIdFor, idsForFetch, rowsByFetchId } from './fallbackIds.js';
+import { readFileSync } from 'node:fs';
+import { HASHED_ID_BASE, hashedIdFor, idsForFetch, rowForFetchId, rowsByFetchId } from './fallbackIds.js';
 
 const ROW_A = '3f2b8c1e-5d4a-4b6f-9e8d-1a2b3c4d5e6f';
 const ROW_B = 'a7c9e1f3-2b4d-4f6a-8c0e-9d8c7b6a5f4e';
@@ -81,4 +82,35 @@ test('a repeated local_id maps to the row its holding kept, the rest to their ow
 
 test('no rows map nothing', () => {
   assert.equal(rowsByFetchId([], []).size, 0);
+});
+
+test('a row with no local_id is found under the hashed id its fetch gave it', () => {
+  const rows = [{ id: ROW_A }, { id: ROW_B }, { id: ROW_C }];
+  const localIds = [11, undefined, 22];
+  const fetched = idsForFetch(localIds, rows.map((row) => row.id));
+  assert.equal(rowForFetchId(rows, localIds, fetched[1]), rows[1]);
+  assert.equal(rowForFetchId(rows, localIds, 11), rows[0]);
+  assert.equal(rowForFetchId(rows, localIds, 22), rows[2]);
+});
+
+test('a repeated local_id finds only the row its holding kept', () => {
+  const rows = [{ id: ROW_A }, { id: ROW_B }];
+  assert.equal(rowForFetchId(rows, [5, 5], 5), rows[0]);
+  assert.equal(rowForFetchId(rows, [5, 5], hashedIdFor(ROW_B)), rows[1]);
+});
+
+test('an id no row carries finds nothing', () => {
+  assert.equal(rowForFetchId([{ id: ROW_A }], [11], 12), null);
+  assert.equal(rowForFetchId([], [], 11), null);
+  assert.equal(rowForFetchId(undefined, undefined, 11), null);
+});
+
+test('findHoldingByLocalId reads every metal and finds by the id the fetch gives', () => {
+  const src = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+  const start = src.indexOf('export async function findHoldingByLocalId(');
+  const fn = src.slice(start, src.indexOf('\n}\n', start));
+  assert.doesNotMatch(fn, /\.eq\('metal'/);
+  assert.match(fn, /const rows = newestFirst\(data \|\| \[\]\);/);
+  assert.match(fn, /rowForFetchId\(rows, rows\.map\(localIdOf\), localId\)/);
+  assert.match(fn, /match && match\.metal === metal \? match : null/);
 });
