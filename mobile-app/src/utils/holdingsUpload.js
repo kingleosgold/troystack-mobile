@@ -97,9 +97,9 @@ export function withRetryMarks(items, marks, userId) {
  * id is already on a row, so the edit would be lost to the cloud's copy. The
  * lookup mark, rowLookupFor with the account's id, has the sync send the edit
  * over that row instead (see rowEditsToSend). Only a holding with this
- * account's retry mark takes it. One carrying a row, as a restored holding
- * does, is found by local id too, since rowEditsToSend reads only this
- * account's rows. The same array comes back when
+ * account's retry mark takes it. One carrying another account's row, as a
+ * backup from that account does, is found by local id too, since
+ * rowEditsToSend reads only this account's rows. The same array comes back when
  * nothing changes.
  */
 export function withRowLookups(items, marks, userId) {
@@ -114,17 +114,28 @@ export function withRowLookups(items, marks, userId) {
 }
 
 /**
- * The edits a sync sends over rows it found by local id: each holding with
- * this account's lookup and retry marks whose local id is on a live row of
- * the account, with that row's id. liveRows maps a local id to its row, and
- * leaves out deleted rows, so an edit of a holding deleted elsewhere isn't
- * sent and the cloud's copy drops it.
+ * The edits a sync sends over rows: each holding with this account's lookup
+ * and retry marks that carries a live row of the account goes over that row.
+ * One carrying no row of the account, as a backup from another account
+ * does, goes over the live row its id maps to. liveRows maps the id a fetch
+ * gives each live row to that row, a hashed id for a row with no local_id
+ * or one repeating another row's. accountRowIds holds every row of the
+ * account, deleted ones included. An edit of a holding deleted elsewhere
+ * isn't sent and the cloud's copy drops it.
  */
-export function rowEditsToSend(items, liveRows, userId) {
+export function rowEditsToSend(items, liveRows, userId, accountRowIds = new Set()) {
   if (!userId || !liveRows?.size) return [];
+  const live = new Set(liveRows.values());
   return (items || [])
-    .filter((item) => item.rowLookupFor === userId && item.restoredFor === userId && liveRows.has(item.id))
-    .map((item) => ({ item, rowId: liveRows.get(item.id) }));
+    .filter((item) => item.rowLookupFor === userId && item.restoredFor === userId)
+    .flatMap((item) => {
+      // A holding on one of this account's rows goes over that row while it's
+      // live, whatever row its id maps to now, and nowhere once it's deleted
+      if (accountRowIds.has(item.supabase_id)) {
+        return live.has(item.supabase_id) ? [{ item, rowId: item.supabase_id }] : [];
+      }
+      return liveRows.has(item.id) ? [{ item, rowId: liveRows.get(item.id) }] : [];
+    });
 }
 
 /**

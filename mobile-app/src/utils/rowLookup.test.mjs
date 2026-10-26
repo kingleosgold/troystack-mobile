@@ -65,8 +65,13 @@ test('an edit whose lookup failed takes the lookup mark, and the sync reads the 
 });
 
 test('the upload sends marked edits over their rows and a failed one takes its row\'s place', () => {
-  assert.match(holdingsSource, /if \(!h\.deleted_at\) liveRows\.set\(notesData\.local_id, h\.id\);/);
-  assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId\)/);
+  // live rows only, in the fetch's order, under the id the fetch gives each
+  assert.match(holdingsSource, /const liveList = newestFirst\(\(existingHoldings \|\| \[\]\)\.filter\(\(h: any\) => !h\.deleted_at\)\);/);
+  assert.match(holdingsSource, /const liveRows: Map<number, string> = rowsByFetchId\(\n\s+liveList\.map\(localIdOf\),\n\s+liveList\.map\(\(h: any\) => h\.id\)\n\s+\);/);
+  assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId, existingRowIds\)/);
+  // and a holding sent over a row is never inserted too
+  assert.match(holdingsSource, /const sentOverRows = new Set\(rowEdits\.map\(\(\{ item \}\) => item\)\);/);
+  assert.match(holdingsSource, /\.filter\(\(item: LocalHolding\) => !sentOverRows\.has\(item\)\);/);
   assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
   assert.match(holdingsSource, /const unsentRows = unsentRowEdits\.map\(\(\{ item, rowId, metal \}\) => \(\{ item, metal, rowId \}\)\);/);
   // put back like a refusal, but never counted or named as one
@@ -107,4 +112,28 @@ test('a failed edit put back on its row goes over that row once and never as a n
   const back = { id: 7, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'r7' };
   assert.deepEqual(holdingsToUpload([back], new Set([7]), new Set(['r7'])), []);
   assert.deepEqual(send([back], new Map([[7, 'r7']]), 'a'), [{ item: back, rowId: 'r7' }]);
+});
+
+test("an edit of this account's row deleted elsewhere never lands on a row sharing its id", () => {
+  // rows rA and rB shared local id 5, rB's holding kept it, then rB was deleted
+  const edited = { id: 5, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
+  const accountRows = new Set(['rA', 'rB']);
+  assert.deepEqual(rowEditsToSend([edited], new Map([[5, 'rA']]), 'a', accountRows), []);
+  // while rB is live it still goes over rB
+  assert.deepEqual(rowEditsToSend([edited], new Map([[5, 'rB']]), 'a', accountRows), [{ item: edited, rowId: 'rB' }]);
+});
+
+test("a restored holding carrying another account's row is still found by local id", () => {
+  const restored = { id: 5, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'other' };
+  assert.deepEqual(rowEditsToSend([restored], new Map([[5, 'rA']]), 'a', new Set(['rA'])), [{ item: restored, rowId: 'rA' }]);
+});
+
+test("an edit on this account's live row goes over it after its id moved to another row", () => {
+  const accountRows = new Set(['rA', 'rB', 'rN']);
+  // a newer row rN took local id 5 from the holding's row rB
+  const kept = { id: 5, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
+  assert.deepEqual(rowEditsToSend([kept], new Map([[5, 'rN'], [9, 'rB']]), 'a', accountRows), [{ item: kept, rowId: 'rB' }]);
+  // rA, which held local id 5, was deleted, so rB now maps under 5, not the holding's hashed id
+  const hashed = { id: 8000000000000123, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
+  assert.deepEqual(rowEditsToSend([hashed], new Map([[5, 'rB']]), 'a', accountRows), [{ item: hashed, rowId: 'rB' }]);
 });

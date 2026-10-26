@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/fallbackIds.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HASHED_ID_BASE, hashedIdFor, idsForFetch } from './fallbackIds.js';
+import { HASHED_ID_BASE, hashedIdFor, idsForFetch, rowsByFetchId } from './fallbackIds.js';
 
 const ROW_A = '3f2b8c1e-5d4a-4b6f-9e8d-1a2b3c4d5e6f';
 const ROW_B = 'a7c9e1f3-2b4d-4f6a-8c0e-9d8c7b6a5f4e';
@@ -57,4 +57,28 @@ test('a local_id repeated in one fetch stays on its first row only', () => {
   const ids = idsForFetch([5, 5, undefined, 5], [ROW_A, ROW_B, ROW_C, ROW_D]);
   assert.deepEqual(ids, [5, hashedIdFor(ROW_B), hashedIdFor(ROW_C), hashedIdFor(ROW_D)]);
   assert.equal(new Set(ids).size, ids.length);
+});
+
+test('a sync finds a row with no local_id under the id its holding got', () => {
+  const localIds = [7, undefined, null];
+  const rowIds = [ROW_A, ROW_B, ROW_C];
+  const fetched = idsForFetch(localIds, rowIds);
+  const rows = rowsByFetchId(localIds, rowIds);
+  assert.equal(rows.get(7), ROW_A);
+  assert.equal(rows.get(fetched[1]), ROW_B);
+  assert.equal(rows.get(fetched[2]), ROW_C);
+  assert.equal(rows.size, 3);
+});
+
+test('a repeated local_id maps to the row its holding kept, the rest to their own', () => {
+  const localIds = [5, 5, 5];
+  const rowIds = [ROW_A, ROW_B, ROW_C];
+  const rows = rowsByFetchId(localIds, rowIds);
+  assert.equal(rows.get(5), ROW_A);
+  assert.equal(rows.get(hashedIdFor(ROW_B)), ROW_B);
+  assert.equal(rows.get(hashedIdFor(ROW_C)), ROW_C);
+});
+
+test('no rows map nothing', () => {
+  assert.equal(rowsByFetchId([], []).size, 0);
 });
