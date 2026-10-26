@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { asRestoredBy, holdingsToUpload, localHoldingsToSync, rowEditsToSend, withRetryMarks, withRowLookups } from './holdingsUpload.js';
+import { asRestoredBy, holdingsToInsert, holdingsToUpload, localHoldingsToSync, rowEditsToSend, withRetryMarks, withRowLookups } from './holdingsUpload.js';
 
 const appSource = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
@@ -71,7 +71,7 @@ test('the upload sends marked edits over their rows and a failed one takes its r
   assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId, existingRowIds\)/);
   // and a holding sent over a row is never inserted too
   assert.match(holdingsSource, /const sentOverRows = new Set\(rowEdits\.map\(\(\{ item \}\) => item\)\);/);
-  assert.match(holdingsSource, /\.filter\(\(item: LocalHolding\) => !sentOverRows\.has\(item\)\);/);
+  assert.match(holdingsSource, /holdingsToInsert\(metalGroups, existingLocalIds, existingRowIds, sentOverRows\)/);
   assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
   assert.match(holdingsSource, /const unsentRows = unsentRowEdits\.map\(\(\{ item, rowId, metal \}\) => \(\{ item, metal, rowId \}\)\);/);
   // put back like a refusal, but never counted or named as one
@@ -136,4 +136,37 @@ test("an edit on this account's live row goes over it after its id moved to anot
   // rA, which held local id 5, was deleted, so rB now maps under 5, not the holding's hashed id
   const hashed = { id: 8000000000000123, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
   assert.deepEqual(rowEditsToSend([hashed], new Map([[5, 'rB']]), 'a', accountRows), [{ item: hashed, rowId: 'rB' }]);
+});
+
+test('a holding sent over a row is never inserted too, and counts as skipped', () => {
+  const edited = { id: 1, restoredFor: 'a', rowLookupFor: 'a' };
+  const added = { id: 2, restoredFor: 'a' };
+  const gold = { id: 3 };
+  const groups = [{ items: [edited, added], metal: 'silver' }, { items: [gold], metal: 'gold' }];
+  const sent = rowEditsToSend([edited, added], new Map([[1, 'r1']]), 'a');
+  const { uploads, skippedCount } = holdingsToInsert(groups, new Set(), new Set(), new Set(sent.map(({ item }) => item)));
+  assert.deepEqual(uploads, [{ item: added, metal: 'silver' }, { item: gold, metal: 'gold' }]);
+  assert.equal(skippedCount, 1);
+});
+
+test('the insert skips rows the account has and keeps each metal in order', () => {
+  const groups = [
+    { items: [{ id: 1 }, { id: 2, supabase_id: 'r2' }], metal: 'silver' },
+    { items: undefined, metal: 'gold' },
+    { items: [{ id: 3 }, { id: 4 }], metal: 'platinum' },
+  ];
+  const { uploads, skippedCount } = holdingsToInsert(groups, new Set([3]), new Set(['r2']));
+  assert.deepEqual(uploads, [{ item: groups[0].items[0], metal: 'silver' }, { item: groups[2].items[1], metal: 'platinum' }]);
+  assert.equal(skippedCount, 2);
+});
+
+test('two holdings sharing a local id both go up, since an old build could give two holdings one id', () => {
+  const a = { id: 5, weight: 1 };
+  const b = { id: 5, weight: 10 };
+  assert.deepEqual(holdingsToInsert([{ items: [a, b], metal: 'silver' }], new Set()).uploads.map(({ item }) => item), [a, b]);
+});
+
+test('nothing to insert from nothing', () => {
+  assert.deepEqual(holdingsToInsert(undefined, new Set()), { uploads: [], skippedCount: 0 });
+  assert.deepEqual(holdingsToInsert([], new Set()), { uploads: [], skippedCount: 0 });
 });
