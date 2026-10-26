@@ -1,7 +1,10 @@
 // Run with: node --test mobile-app/src/utils/insertRows.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { insertRows, isRowRejection } from './insertRows.js';
+import { readFileSync } from 'node:fs';
+import { insertRows, insertUploads, isRowRejection } from './insertRows.js';
+
+const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
 
 // A table that refuses any row whose bad field is set, the way Postgres
 // refuses a whole batch over one row
@@ -122,4 +125,55 @@ test('a connection lost inside a split half keeps what went up and the rows refu
   const result = await insertRows([{ id: 1, bad: true }, { id: 2 }, { id: 3 }, { id: 4 }], insert);
   assert.deepEqual(result, { insertedCount: 1, rejected: [0], error: offline });
   assert.deepEqual(sent, [[1, 2, 3, 4], [1, 2], [1], [2], [3, 4]]);
+});
+
+// Uploads as holdingsToInsert gives them, and the row each one becomes
+const upload = (id, metal, bad = false) => ({ item: { id, bad }, metal });
+const toRow = ({ item, metal }) => ({ local: item.id, metal, ...(item.bad ? { bad: true } : {}) });
+
+test('each refused row comes back as the holding it came from', async () => {
+  const t = table();
+  const uploads = [upload(1, 'silver'), upload(2, 'silver', true), upload(3, 'gold'), upload(4, 'gold'), upload(5, 'platinum', true)];
+  const result = await insertUploads(uploads, toRow, t.insert);
+  assert.equal(result.insertedCount, 3);
+  assert.equal(result.error, null);
+  assert.deepEqual(result.rejected, [uploads[1], uploads[4]]);
+  assert.deepEqual(t.saved.map((row) => [row.local, row.metal]), [[1, 'silver'], [3, 'gold'], [4, 'gold']]);
+});
+
+test('a holding id repeated across metals is refused for the right metal', async () => {
+  const t = table();
+  const uploads = [upload(7, 'silver'), upload(7, 'gold', true), upload(7, 'palladium')];
+  const result = await insertUploads(uploads, toRow, t.insert);
+  assert.deepEqual(result.rejected, [uploads[1]]);
+  assert.equal(result.rejected[0].metal, 'gold');
+  assert.deepEqual(t.saved.map((row) => row.metal), ['silver', 'palladium']);
+});
+
+test('the rows go up in the uploads\' order, one per upload', async () => {
+  const t = table();
+  const uploads = [upload(3, 'gold'), upload(1, 'silver'), upload(2, 'gold')];
+  await insertUploads(uploads, toRow, t.insert);
+  assert.deepEqual(t.saved, uploads.map(toRow));
+});
+
+test('no uploads make no call', async () => {
+  const t = table();
+  assert.deepEqual(await insertUploads([], toRow, t.insert), { insertedCount: 0, rejected: [], error: null });
+  assert.deepEqual(await insertUploads(undefined, toRow, t.insert), { insertedCount: 0, rejected: [], error: null });
+  assert.deepEqual(t.calls, []);
+});
+
+test('an error that is not a refusal comes back with no holding refused', async () => {
+  const lost = new TypeError('Network request failed');
+  const t = table({ failWith: () => lost });
+  const result = await insertUploads([upload(1, 'silver'), upload(2, 'gold')], toRow, t.insert);
+  assert.deepEqual(result, { insertedCount: 0, rejected: [], error: lost });
+});
+
+test('the sync inserts its uploads through insertUploads, so refusals mark their holdings', () => {
+  assert.match(holdingsSource, /import \{ insertUploads \} from '\.\.\/utils\/insertRows';/);
+  assert.match(holdingsSource, /await insertUploads\(\n\s+uploads,\n\s+\(\{ item, metal \}[^\n]*=> localToSupabase\(item, metal, userId\),/);
+  assert.match(holdingsSource, /rejected\.push\(\.\.\.rejectedUploads\);/);
+  assert.doesNotMatch(holdingsSource, /sources\[index\]/);
 });

@@ -60,3 +60,15 @@ async function splitRefused(rows, start, insert, result) {
     if (result.error) return;
   }
 }
+
+/**
+ * Inserts a sync's uploads, each { item, metal }, as the rows toRow builds
+ * from them, through insertRows. Resolves to { insertedCount, rejected,
+ * error }, where rejected holds the uploads whose rows the database refused,
+ * in order, so a refused row always marks the holding it came from.
+ */
+export async function insertUploads(uploads, toRow, insert) {
+  const list = uploads || [];
+  const { insertedCount, rejected, error } = await insertRows(list.map(toRow), insert);
+  return { insertedCount, rejected: rejected.map((index) => list[index]), error };
+}
