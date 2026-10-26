@@ -124,3 +124,13 @@ test("a restored holding carrying another account's row is still found by local 
   const restored = { id: 5, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'other' };
   assert.deepEqual(rowEditsToSend([restored], new Map([[5, 'rA']]), 'a', new Set(['rA'])), [{ item: restored, rowId: 'rA' }]);
 });
+
+test("an edit on this account's live row goes over it after its id moved to another row", () => {
+  const accountRows = new Set(['rA', 'rB', 'rN']);
+  // a newer row rN took local id 5 from the holding's row rB
+  const kept = { id: 5, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
+  assert.deepEqual(rowEditsToSend([kept], new Map([[5, 'rN'], [9, 'rB']]), 'a', accountRows), [{ item: kept, rowId: 'rB' }]);
+  // rA, which held local id 5, was deleted, so rB now maps under 5, not the holding's hashed id
+  const hashed = { id: 8000000000000123, restoredFor: 'a', rowLookupFor: 'a', supabase_id: 'rB' };
+  assert.deepEqual(rowEditsToSend([hashed], new Map([[5, 'rB']]), 'a', accountRows), [{ item: hashed, rowId: 'rB' }]);
+});
