@@ -142,5 +142,5 @@ test('the sync skips a restored holding under any id its account\'s rows take', 
   const fn = src.slice(start, src.indexOf('\n}\n', start));
   assert.match(fn, /const existingLocalIds: Set<number> = idsTakenBy\(\n\s+\(existingHoldings \|\| \[\]\)\.map\(localIdOf\),/);
   assert.match(fn, /liveRows\.forEach\(\(_rowId, id\) => existingLocalIds\.add\(id\)\);/);
-  assert.ok(fn.indexOf('liveRows.forEach(') < fn.indexOf('holdingsToUpload(items, existingLocalIds, existingRowIds)'));
+  assert.ok(fn.indexOf('liveRows.forEach(') < fn.indexOf('holdingsToInsert(metalGroups, existingLocalIds, existingRowIds, sentOverRows)'));
 });

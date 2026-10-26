@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
 import { idsForFetch, idsTakenBy, rowForFetchId, rowsByFetchId } from '../utils/fallbackIds';
-import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
+import { asRestoredBy, holdingsToInsert, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
 import { HOLDING_WRITES_WAIT_MS, sendAllWithin } from '../utils/pendingWrites';
@@ -377,7 +377,7 @@ export async function syncLocalToSupabase(
     liveRows.forEach((_rowId, id) => existingLocalIds.add(id));
 
     // Prepare holdings to insert, with the local holding each row came from
-    const holdingsToInsert: any[] = [];
+    const rowsToInsert: any[] = [];
     const sources: { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [];
 
     const metalGroups: { items: LocalHolding[]; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[] = [
@@ -408,20 +408,17 @@ export async function syncLocalToSupabase(
 
     // A holding sent over a row never goes up as a new row too
     const sentOverRows = new Set(rowEdits.map(({ item }) => item));
-    for (const { items, metal } of metalGroups) {
-      const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds)
-        .filter((item: LocalHolding) => !sentOverRows.has(item));
-      skippedCount += items.length - toUpload.length;
-      for (const item of toUpload) {
-        holdingsToInsert.push(localToSupabase(item, metal, userId));
-        sources.push({ item, metal });
-      }
+    const { uploads, skippedCount: skipped } = holdingsToInsert(metalGroups, existingLocalIds, existingRowIds, sentOverRows);
+    skippedCount = skipped;
+    for (const { item, metal } of uploads as { item: LocalHolding; metal: 'silver' | 'gold' | 'platinum' | 'palladium' }[]) {
+      rowsToInsert.push(localToSupabase(item, metal, userId));
+      sources.push({ item, metal });
     }
 
     // Batch insert, row by row if the database refuses the batch over one
     // row's data, so that row can't hold back every later sync
     const { insertedCount, rejected: rejectedRows, error: insertError } = await insertRows(
-      holdingsToInsert,
+      rowsToInsert,
       async (rows: any[]) => supabase.from('holdings').insert(rows)
     );
     syncedCount = insertedCount;

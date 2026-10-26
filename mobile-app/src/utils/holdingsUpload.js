@@ -329,3 +329,21 @@ export function mayAddEditedHolding(item, owner, userId) {
 export function holdingsToUpload(items, existingLocalIds, existingRowIds = new Set()) {
   return (items || []).filter((item) => !existingRowIds.has(item.supabase_id) && !existingLocalIds.has(item.id));
 }
+
+/**
+ * The holdings a sync inserts, each with its metal, from groups of
+ * { items, metal } in the order the rows go up, and how many it skipped.
+ * holdingsToUpload decides which go up, and a holding sent over a row, one
+ * of sentOverRows, never goes up as a new row too.
+ */
+export function holdingsToInsert(groups, existingLocalIds, existingRowIds = new Set(), sentOverRows = new Set()) {
+  const uploads = [];
+  let skippedCount = 0;
+  for (const { items, metal } of groups || []) {
+    const toUpload = holdingsToUpload(items, existingLocalIds, existingRowIds)
+      .filter((item) => !sentOverRows.has(item));
+    skippedCount += (items || []).length - toUpload.length;
+    toUpload.forEach((item) => uploads.push({ item, metal }));
+  }
+  return { uploads, skippedCount };
+}
