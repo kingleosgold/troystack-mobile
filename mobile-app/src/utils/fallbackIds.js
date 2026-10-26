@@ -6,23 +6,52 @@
  * its id, so two such rows in one fetch could share an id and a delete or an
  * edit on one could match both. An old build that edited two of them then
  * wrote that shared id back to both rows. Now each row with no local_id, and
- * each row after the first to repeat one, gets an id of its own, counted up
- * from now and past any id a row in the same fetch already carries. Those
- * rows still carry their cloud row, so edits and deletes find the right one.
+ * each row after the first to repeat one, gets an id hashed from its cloud
+ * row's id. That id is the same at every fetch, so a queued delete or an edit
+ * made under it still finds its row after the next fetch. It sits in a range
+ * no Date.now() id reaches, and a clash in one fetch counts up to a free id.
  * Nothing here imports React Native, so it runs under `node --test`.
  */
 
+// Hashed ids run from here to just under 9e15, all safe integers. Date.now()
+// ids won't reach 8e15 for over 250,000 years.
+export const HASHED_ID_BASE = 8e15;
+// The high part stays under this so the high and low parts together stay
+// under 1e15
+const HIGH_SPAN = 232830;
+const LOW_SPAN = 4294967296;
+
+// 32-bit FNV-1a over a string, from a given seed
+function fnv1a(text, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h;
+}
+
+// The id for a cloud row with no usable local_id, from that row's id
+export function hashedIdFor(rowId) {
+  const text = String(rowId ?? '');
+  const high = fnv1a(text, 2166136261) % HIGH_SPAN;
+  const low = fnv1a(text, 3735928559);
+  return HASHED_ID_BASE + high * LOW_SPAN + low;
+}
+
 // The ids for one fetch's rows, in order. `localIds` holds each row's
-// local_id, or a falsy value for a row with none.
-export function idsForFetch(localIds, now) {
-  const taken = new Set((localIds || []).filter(Boolean));
+// local_id, or a falsy value for a row with none. `rowIds` holds each row's
+// cloud id, in the same order.
+export function idsForFetch(localIds, rowIds) {
+  const list = localIds || [];
+  const taken = new Set(list.filter(Boolean));
   const kept = new Set();
-  let next = now;
-  return (localIds || []).map((localId) => {
+  return list.map((localId, i) => {
     if (localId && !kept.has(localId)) {
       kept.add(localId);
       return localId;
     }
+    let next = hashedIdFor((rowIds || [])[i]);
     while (taken.has(next)) next += 1;
     taken.add(next);
     return next;
