@@ -160,9 +160,12 @@ export async function fetchHoldings(userId: string): Promise<{
     const platinumItems: LocalHolding[] = [];
     const palladiumItems: LocalHolding[] = [];
 
-    // A row with no local_id, or one repeating another row's, gets an id no
-    // other row in this fetch has
-    const ids = idsForFetch((data || []).map(localIdOf), Date.now());
+    // A row with no local_id, or one repeating another row's, gets an id
+    // hashed from its row id, the same at every fetch
+    const ids = idsForFetch(
+      (data || []).map(localIdOf),
+      (data || []).map((holding: SupabaseHolding) => holding.id)
+    );
 
     (data || []).forEach((holding: SupabaseHolding, i: number) => {
       const localHolding = supabaseToLocal(holding);
