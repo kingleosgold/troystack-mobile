@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { insertRows, insertUploads, isRowRejection } from './insertRows.js';
 
-const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
+// The sync's source with every run of whitespace as one space, so the wiring
+// test below reads what the code says, not how it's wrapped
+const holdingsSource = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8')
+  .replace(/\s+/g, ' ');
 
 // A table that refuses any row whose bad field is set, the way Postgres
 // refuses a whole batch over one row
@@ -172,8 +175,8 @@ test('an error that is not a refusal comes back with no holding refused', async 
 });
 
 test('the sync inserts its uploads through insertUploads, so refusals mark their holdings', () => {
-  assert.match(holdingsSource, /import \{ insertUploads \} from '\.\.\/utils\/insertRows';/);
-  assert.match(holdingsSource, /await insertUploads\(\n\s+uploads,\n\s+\(\{ item, metal \}[^\n]*=> localToSupabase\(item, metal, userId\),/);
-  assert.match(holdingsSource, /rejected\.push\(\.\.\.rejectedUploads\);/);
+  assert.match(holdingsSource, /import \{ ?insertUploads ?\} from '\.\.\/utils\/insertRows';/);
+  assert.match(holdingsSource, /await insertUploads\( ?uploads, ?\(\{ ?item, metal ?\}[^)]*\) ?=> ?localToSupabase\( ?item, metal, userId,? ?\),/);
+  assert.match(holdingsSource, /rejected\.push\( ?\.\.\.rejectedUploads,? ?\);/);
   assert.doesNotMatch(holdingsSource, /sources\[index\]/);
 });
