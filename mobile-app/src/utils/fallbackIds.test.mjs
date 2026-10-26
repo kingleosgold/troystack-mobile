@@ -21,3 +21,9 @@ test('an empty or missing fetch gives no ids', () => {
   assert.deepEqual(idsForFetch([], 1000), []);
   assert.deepEqual(idsForFetch(undefined, 1000), []);
 });
+
+test('a local_id repeated in one fetch stays on its first row only', () => {
+  const ids = idsForFetch([5, 5, undefined, 5], 1000);
+  assert.deepEqual(ids, [5, 1000, 1001, 1002]);
+  assert.equal(new Set(ids).size, ids.length);
+});

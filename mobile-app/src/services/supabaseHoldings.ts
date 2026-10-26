@@ -109,7 +109,7 @@ export function supabaseToLocal(holding: SupabaseHolding): LocalHolding {
   let notesData: HoldingNotes = {};
   if (holding.notes) {
     try {
-      notesData = JSON.parse(holding.notes);
+      notesData = JSON.parse(holding.notes) || {};
     } catch (e) {
       // notes might be plain text, not JSON
       console.warn('Could not parse notes as JSON:', holding.notes);
@@ -160,7 +160,8 @@ export async function fetchHoldings(userId: string): Promise<{
     const platinumItems: LocalHolding[] = [];
     const palladiumItems: LocalHolding[] = [];
 
-    // A row with no local_id gets an id no other row in this fetch has
+    // A row with no local_id, or one repeating another row's, gets an id no
+    // other row in this fetch has
     const ids = idsForFetch((data || []).map(localIdOf), Date.now());
 
     (data || []).forEach((holding: SupabaseHolding, i: number) => {
