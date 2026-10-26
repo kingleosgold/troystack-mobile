@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
-import { idsForFetch } from '../utils/fallbackIds';
+import { idsForFetch, rowsByFetchId } from '../utils/fallbackIds';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -366,22 +366,18 @@ export async function syncLocalToSupabase(
     // deleted rows included
     const existingRowIds = new Set<string>();
     const existingLocalIds = new Set<number>();
-    // The live rows by local_id, for edits whose lookup failed
-    const liveRows = new Map<number, string>();
     (existingHoldings || []).forEach((h: any) => {
       existingRowIds.add(h.id);
-      if (h.notes) {
-        try {
-          const notesData = JSON.parse(h.notes);
-          if (notesData.local_id) {
-            existingLocalIds.add(notesData.local_id);
-            if (!h.deleted_at) liveRows.set(notesData.local_id, h.id);
-          }
-        } catch (e) {
-          // Ignore parse errors
-        }
-      }
+      const localId = localIdOf(h);
+      if (localId) existingLocalIds.add(localId);
     });
+    // The live rows by the id a fetch gives each holding, for edits whose
+    // lookup failed. A row with no local_id maps under its hashed id.
+    const liveList = newestFirst((existingHoldings || []).filter((h: any) => !h.deleted_at));
+    const liveRows: Map<number, string> = rowsByFetchId(
+      liveList.map(localIdOf),
+      liveList.map((h: any) => h.id)
+    );
 
     // Prepare holdings to insert, with the local holding each row came from
     const holdingsToInsert: any[] = [];

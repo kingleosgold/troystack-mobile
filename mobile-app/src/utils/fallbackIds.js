@@ -57,3 +57,12 @@ export function idsForFetch(localIds, rowIds) {
     return next;
   });
 }
+
+// The live rows by the id a fetch gives each one, for a sync to find the row
+// under a holding's id. Pass the rows a fetch reads, in its order, so a row
+// with no local_id, or one repeating another row's, maps under the same
+// hashed id its holding carries.
+export function rowsByFetchId(localIds, rowIds) {
+  const ids = idsForFetch(localIds, rowIds);
+  return new Map(ids.map((id, i) => [id, rowIds[i]]));
+}

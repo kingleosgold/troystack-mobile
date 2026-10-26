@@ -65,7 +65,9 @@ test('an edit whose lookup failed takes the lookup mark, and the sync reads the 
 });
 
 test('the upload sends marked edits over their rows and a failed one takes its row\'s place', () => {
-  assert.match(holdingsSource, /if \(!h\.deleted_at\) liveRows\.set\(notesData\.local_id, h\.id\);/);
+  // live rows only, in the fetch's order, under the id the fetch gives each
+  assert.match(holdingsSource, /const liveList = newestFirst\(\(existingHoldings \|\| \[\]\)\.filter\(\(h: any\) => !h\.deleted_at\)\);/);
+  assert.match(holdingsSource, /const liveRows: Map<number, string> = rowsByFetchId\(\n\s+liveList\.map\(localIdOf\),\n\s+liveList\.map\(\(h: any\) => h\.id\)\n\s+\);/);
   assert.match(holdingsSource, /rowEditsToSend\(items, liveRows, userId\)/);
   assert.match(holdingsSource, /track\(rowId, \(\) => updateHolding\(userId, rowId, item, metal\)\)/);
   assert.match(holdingsSource, /const unsentRows = unsentRowEdits\.map\(\(\{ item, rowId, metal \}\) => \(\{ item, metal, rowId \}\)\);/);
