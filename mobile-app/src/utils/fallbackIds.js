@@ -66,3 +66,13 @@ export function rowsByFetchId(localIds, rowIds) {
   const ids = idsForFetch(localIds, rowIds);
   return new Map(ids.map((id, i) => [id, rowIds[i]]));
 }
+
+// The row a holding's id names, from the live rows a fetch reads, in its
+// order, and each row's local_id. A row with no local_id, or one repeating
+// another row's, is found under the hashed id its holding carries. Null when
+// no row carries that id.
+export function rowForFetchId(rows, localIds, id) {
+  const list = rows || [];
+  const i = idsForFetch(localIds, list.map((row) => row.id)).indexOf(id);
+  return i === -1 ? null : list[i];
+}
