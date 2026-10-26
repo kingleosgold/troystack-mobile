@@ -118,12 +118,16 @@ export function withRowLookups(items, marks, userId) {
  * this account's lookup and retry marks whose local id is on a live row of
  * the account, with that row's id. liveRows maps a local id to its row, and
  * leaves out deleted rows, so an edit of a holding deleted elsewhere isn't
- * sent and the cloud's copy drops it.
+ * sent and the cloud's copy drops it. accountRowIds holds every row of the
+ * account, deleted ones included.
  */
-export function rowEditsToSend(items, liveRows, userId) {
+export function rowEditsToSend(items, liveRows, userId, accountRowIds = new Set()) {
   if (!userId || !liveRows?.size) return [];
   return (items || [])
     .filter((item) => item.rowLookupFor === userId && item.restoredFor === userId && liveRows.has(item.id))
+    // A holding on one of this account's rows goes over that row only, so an
+    // edit of a row deleted elsewhere never lands on a row sharing its id
+    .filter((item) => !accountRowIds.has(item.supabase_id) || liveRows.get(item.id) === item.supabase_id)
     .map((item) => ({ item, rowId: liveRows.get(item.id) }));
 }
 

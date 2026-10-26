@@ -396,7 +396,7 @@ export async function syncLocalToSupabase(
     // back every sync. The sync waits for these writes only so long, as for
     // its other resends, and one it lets go of stays marked the same way.
     type RowEdit = { item: LocalHolding; rowId: string; metal: 'silver' | 'gold' | 'platinum' | 'palladium' };
-    const rowEdits: RowEdit[] = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId)
+    const rowEdits: RowEdit[] = metalGroups.flatMap(({ items, metal }) => rowEditsToSend(items, liveRows, userId, existingRowIds)
       .map(({ item, rowId }: { item: LocalHolding; rowId: string }) => ({ item, rowId, metal })));
     const track = rowEditWait.track || ((_rowId: string, run: () => Promise<{ error: any }>) => run());
     const unsentRowEdits: RowEdit[] = await sendAllWithin(
