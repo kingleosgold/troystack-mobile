@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, newestFirst } from '../utils/fetchAllRows';
+import { idsForFetch } from '../utils/fallbackIds';
 import { asRestoredBy, holdingsToUpload, rowEditsToSend } from '../utils/holdingsUpload';
 import { insertRows } from '../utils/insertRows';
 import { purchaseDateForCloud } from '../utils/purchaseDate';
@@ -92,6 +93,16 @@ export function localToSupabase(
   };
 }
 
+// The local_id in a row's notes JSON, if it has one
+function localIdOf(holding: SupabaseHolding): number | undefined {
+  if (!holding.notes) return undefined;
+  try {
+    return JSON.parse(holding.notes)?.local_id || undefined;
+  } catch (e) {
+    return undefined;
+  }
+}
+
 // Convert Supabase holding to local format
 export function supabaseToLocal(holding: SupabaseHolding): LocalHolding {
   // Parse extra fields from notes JSON
@@ -149,8 +160,12 @@ export async function fetchHoldings(userId: string): Promise<{
     const platinumItems: LocalHolding[] = [];
     const palladiumItems: LocalHolding[] = [];
 
-    (data || []).forEach((holding: SupabaseHolding) => {
+    // A row with no local_id gets an id no other row in this fetch has
+    const ids = idsForFetch((data || []).map(localIdOf), Date.now());
+
+    (data || []).forEach((holding: SupabaseHolding, i: number) => {
       const localHolding = supabaseToLocal(holding);
+      localHolding.id = ids[i];
       // Attach supabase_id for future updates
       (localHolding as any).supabase_id = holding.id;
 
