@@ -182,7 +182,10 @@ test('every caller of findHoldingByLocalId catches its throw', () => {
   const queued = app.indexOf('const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(');
   assert.ok(queued > 0);
   const job = app.slice(app.lastIndexOf('await sendAllWithin(', queued), queued);
-  assert.match(job, /^await sendAllWithin\(toDelete, \(entry\) => trackHoldingWrite\(async \(\) => \{\n\s*$/);
+  // Marked on its way in a try with no catch, so a throw still reaches it
+  assert.match(job, /^await sendAllWithin\(toDelete, \(entry\) => trackHoldingWrite\(async \(\) => \{\n\s*const sending = deletesSendingRef\.current;\n\s*sending\.add\(entry\);\n\s*try \{\n\s*$/);
+  const send = app.slice(queued, app.indexOf('resendsBy, accountChanged);', queued));
+  assert.doesNotMatch(send, /catch/);
   let at = app.indexOf('await findHoldingByLocalId(');
   let seen = 0;
   while (at !== -1) {

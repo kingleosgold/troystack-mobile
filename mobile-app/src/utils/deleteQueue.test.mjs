@@ -223,6 +223,12 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
   assert.ok(edits > 0 && send > edits && fetch > send);
   assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*if \(accountChanged\(\)\) return false;/);
   assert.match(body, /unsent \+= unsentDeletes\.length;/);
+  // Each send is marked on its way, so a sign out counts it once
+  const sendBody = body.slice(send, body.indexOf('resendsBy, accountChanged);', send));
+  assert.match(sendBody, /const sending = deletesSendingRef\.current;\n\s*sending\.add\(entry\);\n\s*try \{/);
+  assert.match(sendBody, /\} finally \{\n\s*sending\.delete\(entry\);\n\s*\}/);
+  // The mark stays on until the delete lands
+  assert.match(sendBody, /return await deleteHoldingFromSupabase\(supabaseUser\.id, row\.id\);/);
   assert.match(body, /withoutQueuedDeletes\(\[cloudSilver, cloudGold, cloudPlatinum, cloudPalladium\], stillQueued, supabaseUser\.id\)/);
 });
 
