@@ -4451,10 +4451,18 @@ function AppContent() {
       const queuedDeletes = await pendingDeletes.read();
       if (accountChanged()) return false;
       const toDelete = deletesFor(queuedDeletes, supabaseUser.id);
+      // Each is marked on its way, as a delete from the list is, so a sign out
+      // counts it once among the writes on their way and not again as queued
       const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
-        const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
-        if (!row) return { error: null };
-        return deleteHoldingFromSupabase(supabaseUser.id, row.id);
+        const sending = deletesSendingRef.current;
+        sending.add(entry);
+        try {
+          const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
+          if (!row) return { error: null };
+          return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
+        } finally {
+          sending.delete(entry);
+        }
       }), resendsBy, accountChanged);
       if (accountChanged()) return false;
       const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
