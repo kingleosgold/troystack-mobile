@@ -2480,6 +2480,10 @@ function AppContent() {
   // They're kept by holding rather than counted, so one queued or sent while
   // the count reads, or one still out after a sign out, can't offset another.
   const deletesSendingRef = useRef(new Set());
+  // Queued deletes from the list that found no row, each with its account.
+  // They wait for the sync only so a kill can't upload their holding again,
+  // and a sign out loses nothing with them, so it doesn't count them.
+  const deletesRowlessRef = useRef(new Set());
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3286,7 +3290,9 @@ function AppContent() {
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
-    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId) : 1;
+    // as does one that found no row, which has nothing left to send
+    const settledDeletes = new Set([...deletesSendingRef.current, ...deletesRowlessRef.current]);
+    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, settledDeletes, userId) : 1;
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
       + deletesLeft;
   };
@@ -4462,6 +4468,7 @@ function AppContent() {
           const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
           if (!row) {
             rowless.push(entry);
+            deletesRowlessRef.current.add(entry);
             return { error: null };
           }
           return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
@@ -4595,7 +4602,8 @@ function AppContent() {
         // restore check and with the cloud's copy in state, so a restored
         // copy of its holding stays deleted as the restore promises. One that
         // can't come off yet finds no row again at the next sync.
-        if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone)).catch(() => {});
+        // A restore that lands while the update waits its turn keeps them
+        if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone))).catch(() => {});
         if (accountChanged()) return false;
 
         // A holding the database refused stays on this phone only, so say so
@@ -10489,6 +10497,7 @@ function AppContent() {
                     // One that found no row stays for the sync, which takes it
                     // off once the stack without its holding is stored, or a
                     // kill before the save effect lands would upload it again
+                    if (queuedFirst && rowless) deletesRowlessRef.current.add(entry);
                     if (queuedFirst && !rowless) {
                       await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
                         .catch((err) => { if (__DEV__) console.error('Failed to unqueue the delete:', err); });

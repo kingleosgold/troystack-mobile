@@ -247,14 +247,14 @@ test('a holding whose delete was queued never goes up, even once the delete is d
 test('a delete that found no row leaves the queue only once the stack without its holding is stored', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n\s*return \{ error: null \};/);
+  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n\s*deletesRowlessRef\.current\.add\(entry\);\n\s*return \{ error: null \};/);
   // dropped from the queue at once are only the deletes that went to a row
   assert.match(body, /const dropNow = doneDeletes\.filter\(\(entry\) => !rowlessDone\.includes\(entry\)\);/);
   assert.match(body, /withoutDeletes\(queue, dropNow\)/);
   assert.doesNotMatch(body, /withoutDeletes\(queue, doneDeletes\)/);
   // the rest after the stack goes into storage in the synced write
   const write = body.indexOf("await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);");
-  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone))');
+  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
   assert.ok(write > 0 && drop > write);
   assert.match(body, /const stackWrites = putBack > 0 \|\| holdsDeletes\n/);
   assert.ok(body.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;') < write);
@@ -270,18 +270,29 @@ test('a delete from the list that finds no row stays queued for the sync', () =>
   assert.doesNotMatch(body, /if \(queuedFirst\) \{\n\s*await pendingDeletes\.update\(\(queue\) => withoutDeleteOf/);
 });
 
+test('a sign out leaves out a queued delete that found no row', () => {
+  const rowlessEntry = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
+  const queue = [byRow, { ...rowlessEntry }];
+  // Matched by holding, not by object
+  assert.equal(queuedNotSending(queue, new Set([rowlessEntry]), 'u1'), 1);
+  // And the handler marks one only once it's known to have found no row
+  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  assert.match(body, /if \(reached\) \{[\s\S]*?if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);/);
+});
+
 test('the sync takes a rowless delete off the queue only past the restore check and with the cloud copy in state', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
   const check = body.indexOf('if (restoreLanded()) {\n          if (putBack > 0) await AsyncStorage.removeItem(syncKey)');
   const state = body.indexOf('setPalladiumItems(remotePalladium);');
-  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone))');
+  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
   assert.ok(check > 0 && state > check && drop > state);
   assert.equal(body.split('withoutDeletes(queue, rowlessDone)').length, 2);
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
-  assert.match(app, /const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
+  assert.match(app, /const settledDeletes = new Set\(\[\.\.\.deletesSendingRef\.current, \.\.\.deletesRowlessRef\.current\]\);\n\s*const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, settledDeletes, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);
