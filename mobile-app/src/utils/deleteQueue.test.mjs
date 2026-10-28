@@ -260,6 +260,26 @@ test('a delete that found no row leaves the queue only once the stack without it
   assert.ok(body.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;') < write);
 });
 
+test('a delete from the list that finds no row stays queued for the sync', () => {
+  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  assert.match(body, /let rowless = false;/);
+  assert.match(body, /if \(existingHolding\) \{[\s\S]*?\} else \{\n\s*rowless = true;\n\s*\}/);
+  // Only a delete that went to a row comes off the queue at once
+  assert.match(body, /if \(queuedFirst && !rowless\) \{\n\s*await pendingDeletes\.update\(\(queue\) => withoutDeleteOf\(queue, entry\)\)/);
+  assert.doesNotMatch(body, /if \(queuedFirst\) \{\n\s*await pendingDeletes\.update\(\(queue\) => withoutDeleteOf/);
+});
+
+test('the sync takes a rowless delete off the queue only past the restore check and with the cloud copy in state', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  const check = body.indexOf('if (restoreLanded()) {\n          if (putBack > 0) await AsyncStorage.removeItem(syncKey)');
+  const state = body.indexOf('setPalladiumItems(remotePalladium);');
+  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone))');
+  assert.ok(check > 0 && state > check && drop > state);
+  assert.equal(body.split('withoutDeletes(queue, rowlessDone)').length, 2);
+});
+
 test('a sign out counts queued deletes and clears them with the stack', () => {
   assert.match(app, /const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');
