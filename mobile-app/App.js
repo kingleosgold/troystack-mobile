@@ -4603,8 +4603,13 @@ function AppContent() {
         // copy of its holding stays deleted as the restore promises. One that
         // can't come off yet finds no row again at the next sync.
         // A restore that lands while the update waits its turn keeps them
-        if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone))).catch(() => {});
-        if (accountChanged()) return false;
+        if (holdsDeletes) {
+          await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone))).catch(() => {});
+          if (accountChanged()) return false;
+          // The restore wants its own sync, so this one doesn't mark the
+          // session synced over it
+          if (restoreLanded()) return false;
+        }
 
         // A holding the database refused stays on this phone only, so say so
         // while there's still a chance to fix it before a sign out clears it

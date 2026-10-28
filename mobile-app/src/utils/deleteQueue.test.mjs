@@ -254,7 +254,7 @@ test('a delete that found no row leaves the queue only once the stack without it
   assert.doesNotMatch(body, /withoutDeletes\(queue, doneDeletes\)/);
   // the rest after the stack goes into storage in the synced write
   const write = body.indexOf("await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);");
-  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
+  const drop = body.indexOf('await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
   assert.ok(write > 0 && drop > write);
   assert.match(body, /const stackWrites = putBack > 0 \|\| holdsDeletes\n/);
   assert.ok(body.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;') < write);
@@ -286,9 +286,12 @@ test('the sync takes a rowless delete off the queue only past the restore check 
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
   const check = body.indexOf('if (restoreLanded()) {\n          if (putBack > 0) await AsyncStorage.removeItem(syncKey)');
   const state = body.indexOf('setPalladiumItems(remotePalladium);');
-  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
+  const drop = body.indexOf('await pendingDeletes.update((queue) => (restoreLanded() ? queue : withoutDeletes(queue, rowlessDone)))');
   assert.ok(check > 0 && state > check && drop > state);
   assert.equal(body.split('withoutDeletes(queue, rowlessDone)').length, 2);
+  // and a restore that landed while it waited gets its own sync
+  assert.match(body, /withoutDeletes\(queue, rowlessDone\)\)\)\.catch\(\(\) => \{\}\);\n\s*if \(accountChanged\(\)\) return false;\n(\s*\/\/.*\n)*\s*if \(restoreLanded\(\)\) return false;\n\s*\}/);
+  assert.ok(body.indexOf('setHasSyncedOnce(true);', drop) > drop);
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
