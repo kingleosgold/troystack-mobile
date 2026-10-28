@@ -4373,8 +4373,7 @@ function AppContent() {
         .map((items) => withRetryMarks(items, retryMarksRef.current, supabaseUser.id))
         .map((items) => withRowLookups(items, rowLookupMarksRef.current, supabaseUser.id))
         .map((items) => withEditMarks(items, editMarksRef.current, supabaseUser.id));
-      const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
-      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
+      const toSyncLists = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take.
       // Its guest marks come off too, or they'd let the next account take it,
@@ -4453,12 +4452,18 @@ function AppContent() {
       const toDelete = deletesFor(queuedDeletes, supabaseUser.id);
       // Each is marked on its way, as a delete from the list is, so a sign out
       // counts it once among the writes on their way and not again as queued
+      // One that finds no row is noted, since its holding may still be in the
+      // stack on disk
+      const rowless = [];
       const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
         const sending = deletesSendingRef.current;
         sending.add(entry);
         try {
           const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
-          if (!row) return { error: null };
+          if (!row) {
+            rowless.push(entry);
+            return { error: null };
+          }
           return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
         } finally {
           sending.delete(entry);
@@ -4466,13 +4471,25 @@ function AppContent() {
       }), resendsBy, accountChanged);
       if (accountChanged()) return false;
       const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
+      // A delete that found no row stays queued until the cloud's copy has
+      // replaced the stack in storage, or a sync that fails before that would
+      // leave the holding on disk with nothing holding it back from the next
+      // upload
+      const rowlessDone = doneDeletes.filter((entry) => rowless.includes(entry));
+      const dropNow = doneDeletes.filter((entry) => !rowlessDone.includes(entry));
       // The queue as it stands after, whose deletes the cloud's copy is kept
       // clear of below
-      const stillQueued = doneDeletes.length
-        ? await pendingDeletes.update((queue) => withoutDeletes(queue, doneDeletes))
+      const stillQueued = dropNow.length
+        ? await pendingDeletes.update((queue) => withoutDeletes(queue, dropNow))
         : queuedDeletes;
       if (accountChanged()) return false;
       unsent += unsentDeletes.length;
+      // A holding whose delete was queued never goes up, even once the delete
+      // is done, or a kill between the delete and the stack's save would bring
+      // it back: its delete finds no row, leaves the queue and the upload
+      // makes one
+      const toUpload = withoutQueuedDeletes(toSyncLists, queuedDeletes, supabaseUser.id);
+      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
@@ -4531,16 +4548,23 @@ function AppContent() {
         // the restore in storage, so they wait too. The restore dropped their marks.
         // So are row edits fullSync couldn't send, put back marked the same way
         const putBack = refusedCount + (unsentRowEdits || 0) + unsentEdits.length;
-        if (putBack > 0 && restoreLanded()) return false;
+        // A delete that found no row comes off the queue only once the stack
+        // without its holding is stored, so that stack goes in the same write,
+        // and waits for a restore the same way
+        const holdsDeletes = rowlessDone.length > 0;
+        if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;
         // Mark that this user has synced at least once, and that the stack on
         // this phone is now theirs. With refused holdings the stack carrying
         // their retry marks goes in the same write, so a kill before the save
         // effects run can't leave the phone marked synced over an unmarked one.
-        const stackWrites = putBack > 0
+        const stackWrites = putBack > 0 || holdsDeletes
           ? [['stack_silver', remoteSilver], ['stack_gold', remoteGold], ['stack_platinum', remotePlatinum], ['stack_palladium', remotePalladium]]
             .map(([key, items]) => [key, JSON.stringify(items)])
           : [];
         await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);
+        if (accountChanged()) return false;
+        // One that can't come off yet finds no row again at the next sync
+        if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone)).catch(() => {});
         if (accountChanged()) return false;
         // Other accounts' synced keys named the owner only until one was
         // recorded, and the stack they named is gone from the phone now
