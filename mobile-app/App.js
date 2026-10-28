@@ -10461,6 +10461,13 @@ function AppContent() {
                 }
                 const sending = deletesSendingRef.current;
                 if (queuedFirst) sending.add(entry);
+                // A holding deleted again, as after a restore brought it back,
+                // is counted afresh rather than as the one that found no row
+                for (const done of deletesRowlessRef.current) {
+                  if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
+                    deletesRowlessRef.current.delete(done);
+                  }
+                }
                 try {
                   if (itemToDelete.supabase_id) {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
