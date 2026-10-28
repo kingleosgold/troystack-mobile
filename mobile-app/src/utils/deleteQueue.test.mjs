@@ -232,6 +232,18 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
   assert.match(body, /withoutQueuedDeletes\(\[cloudSilver, cloudGold, cloudPlatinum, cloudPalladium\], stillQueued, supabaseUser\.id\)/);
 });
 
+test('a holding whose delete was queued never goes up, even once the delete is done', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  const read = body.indexOf('const queuedDeletes = await pendingDeletes.read();');
+  const filter = body.indexOf('const toUpload = withoutQueuedDeletes(toSyncLists, queuedDeletes, supabaseUser.id);');
+  const upload = body.indexOf('const runSync = () => fullSync(');
+  assert.ok(read > 0 && filter > read && upload > filter);
+  // Filtered by the queue as read, not by what's left after the sends
+  assert.doesNotMatch(body, /withoutQueuedDeletes\(toSyncLists, stillQueued/);
+  assert.ok(body.indexOf('const uploadLocal = isFirstSync || toUpload.some(') > filter);
+});
+
 test('a sign out counts queued deletes and clears them with the stack', () => {
   assert.match(app, /const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');

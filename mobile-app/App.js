@@ -4373,8 +4373,7 @@ function AppContent() {
         .map((items) => withRetryMarks(items, retryMarksRef.current, supabaseUser.id))
         .map((items) => withRowLookups(items, rowLookupMarksRef.current, supabaseUser.id))
         .map((items) => withEditMarks(items, editMarksRef.current, supabaseUser.id));
-      const toUpload = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
-      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
+      const toSyncLists = [localSilver, localGold, localPlatinum, localPalladium].map(toSync);
       // An unowned stack is this account's from here, before anything that can
       // fail, so a failed sync can't leave it for the next account to take.
       // Its guest marks come off too, or they'd let the next account take it,
@@ -4473,6 +4472,12 @@ function AppContent() {
         : queuedDeletes;
       if (accountChanged()) return false;
       unsent += unsentDeletes.length;
+      // A holding whose delete was queued never goes up, even once the delete
+      // is done, or a kill between the delete and the stack's save would bring
+      // it back: its delete finds no row, leaves the queue and the upload
+      // makes one
+      const toUpload = withoutQueuedDeletes(toSyncLists, queuedDeletes, supabaseUser.id);
+      const uploadLocal = isFirstSync || toUpload.some((items) => items.length > 0);
 
       // fullSync uploads toUpload when uploadLocal is set, then fetches the
       // account's holdings from Supabase (source of truth)
