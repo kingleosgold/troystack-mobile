@@ -205,8 +205,8 @@ test('a restore drops the write marks, so none lands on a restored copy', () => 
 
 test("a sync with edits put back doesn't write storage over a restore that landed", () => {
   assert.match(app, /const putBack = refusedCount \+ \(unsentRowEdits \|\| 0\) \+ unsentEdits\.length;/);
-  const guard = app.indexOf('if (putBack > 0 && restoreLanded()) return false;');
-  assert.ok(guard > 0 && guard < app.indexOf('const stackWrites = putBack > 0'));
+  const guard = app.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;');
+  assert.ok(guard > 0 && guard < app.indexOf('const stackWrites = putBack > 0 || holdsDeletes'));
   // and a late failure marks the stack in state only for its own account
   assert.match(app, /editMarksRef\.current\.set\(localId, mark\);\n(\s*\/\/.*\n)*\s*if \(userIdRef\.current !== userId\) return;/);
 });

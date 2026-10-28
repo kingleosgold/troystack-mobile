@@ -244,6 +244,22 @@ test('a holding whose delete was queued never goes up, even once the delete is d
   assert.ok(body.indexOf('const uploadLocal = isFirstSync || toUpload.some(') > filter);
 });
 
+test('a delete that found no row leaves the queue only once the stack without its holding is stored', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n\s*return \{ error: null \};/);
+  // dropped from the queue at once are only the deletes that went to a row
+  assert.match(body, /const dropNow = doneDeletes\.filter\(\(entry\) => !rowlessDone\.includes\(entry\)\);/);
+  assert.match(body, /withoutDeletes\(queue, dropNow\)/);
+  assert.doesNotMatch(body, /withoutDeletes\(queue, doneDeletes\)/);
+  // the rest after the stack goes into storage in the synced write
+  const write = body.indexOf("await AsyncStorage.multiSet([...stackWrites, [syncKey, 'true'], [HOLDINGS_OWNER_KEY, supabaseUser.id]]);");
+  const drop = body.indexOf('if (holdsDeletes) await pendingDeletes.update((queue) => withoutDeletes(queue, rowlessDone))');
+  assert.ok(write > 0 && drop > write);
+  assert.match(body, /const stackWrites = putBack > 0 \|\| holdsDeletes\n/);
+  assert.ok(body.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;') < write);
+});
+
 test('a sign out counts queued deletes and clears them with the stack', () => {
   assert.match(app, /const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');

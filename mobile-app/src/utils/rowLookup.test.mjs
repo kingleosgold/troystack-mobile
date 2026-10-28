@@ -81,8 +81,8 @@ test('the upload sends marked edits over their rows and a failed one takes its r
   assert.match(appSource, /if \(!error\) unsent \+= unsentRowEdits \|\| 0;/);
   // and written with the stack, marks and all, as a refusal is
   assert.match(appSource, /const putBack = refusedCount \+ \(unsentRowEdits \|\| 0\) \+ unsentEdits\.length;/);
-  assert.match(appSource, /if \(putBack > 0 && restoreLanded\(\)\) return false;/);
-  assert.match(appSource, /const stackWrites = putBack > 0\n/);
+  assert.match(appSource, /if \(\(putBack > 0 \|\| holdsDeletes\) && restoreLanded\(\)\) return false;/);
+  assert.match(appSource, /const stackWrites = putBack > 0 \|\| holdsDeletes\n/);
   assert.match(holdingsSource, /silverItems: lists\.silver,/);
 });
 
