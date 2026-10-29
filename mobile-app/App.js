@@ -2484,6 +2484,15 @@ function AppContent() {
   // They wait for the sync only so a kill can't upload their holding again,
   // and a sign out loses nothing with them, so it doesn't count them.
   const deletesRowlessRef = useRef(new Set());
+  // Clears the queue along with what's kept about its deletes. One still on
+  // its way or one that found no row belonged to the queue being cleared, so
+  // neither hides a delete queued after it from the count. A delete still out
+  // keeps the set it started with, so it never marks the new one.
+  const clearPendingDeletes = () => {
+    deletesSendingRef.current = new Set();
+    deletesRowlessRef.current = new Set();
+    return pendingDeletes.clear();
+  };
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3238,7 +3247,7 @@ function AppContent() {
       setSigningOut(true);
       accountGenRef.current += 1;
       await AsyncStorage.clear();
-      await pendingDeletes.clear();
+      await clearPendingDeletes();
       accountGenRef.current += 1;
       resetAllState();
       // A guest stays a guest, as on a first launch
@@ -3410,7 +3419,7 @@ function AppContent() {
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
-      await pendingDeletes.clear();
+      await clearPendingDeletes();
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -4468,7 +4477,8 @@ function AppContent() {
           const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
           if (!row) {
             rowless.push(entry);
-            deletesRowlessRef.current.add(entry);
+            // A sign out since cleared the queue it came from
+            if (!accountChanged()) deletesRowlessRef.current.add(entry);
             return { error: null };
           }
           return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
@@ -10514,7 +10524,10 @@ function AppContent() {
                     // off is sent again by the next sync, which does no harm.
                     // One that found no row stays for the sync, which takes it
                     // off once the stack without its holding is stored, or a
-                    // kill before the save effect lands would upload it again
+                    // kill before the save effect lands would upload it again.
+                    // A sign out since cleared the queue it was in, so it
+                    // touches nothing a delete queued after it may have left.
+                    if (!sameAccount()) return;
                     if (queuedFirst && rowless) deletesRowlessRef.current.add(entry);
                     if (queuedFirst && !rowless) {
                       await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
