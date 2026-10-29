@@ -150,6 +150,18 @@ test('clear waits for an update already reading, so it never writes the queue ba
   assert.equal(PENDING_DELETES_KEY in storage.data, false);
 });
 
+test('clears counts each clear as it is asked for, before it runs', async () => {
+  const storage = memory({ [PENDING_DELETES_KEY]: JSON.stringify([byRow]) });
+  const store = deleteQueueStore(storage);
+  assert.equal(store.clears(), 0);
+  await store.update((q) => withQueuedDelete(q, byLocal));
+  assert.equal(store.clears(), 0);
+  const cleared = store.clear();
+  assert.equal(store.clears(), 1);
+  await cleared;
+  assert.equal(PENDING_DELETES_KEY in storage.data, false);
+});
+
 test('a failed write rejects to its caller and the next change still runs', async () => {
   const storage = memory();
   const store = deleteQueueStore(storage);
@@ -308,14 +320,15 @@ test('a delete that fails after its account left is not queued under the next on
 });
 
 test('a delete from before a sign out is not queued again when the same account signs back in', () => {
-  // The account count is taken as the delete starts, and every queue write
-  // and the put back check it, since a sign out bumps it while the user id
-  // can come back the same
+  // The queue's clears are counted as the delete starts, and every queue
+  // write and the put back check them, since a sign out clears the queue
+  // while the user id can come back the same. A failed sign out clears
+  // nothing, so it doesn't drop the delete.
   const start = app.indexOf('const deleteGen = stackGenRef.current;');
   assert.ok(start > 0);
   const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  assert.match(body, /const deleteAccountGen = accountGenRef\.current;\n(\s*\/\/.*\n)*?\s*const sameAccount = \(\) => userIdRef\.current === supabaseUser\?\.id && accountGenRef\.current === deleteAccountGen;/);
-  assert.ok(body.indexOf('const deleteAccountGen') < body.indexOf('await '));
+  assert.match(body, /const deleteQueueClears = pendingDeletes\.clears\(\);\n(\s*\/\/.*\n)*?\s*const sameAccount = \(\) => userIdRef\.current === supabaseUser\?\.id && pendingDeletes\.clears\(\) === deleteQueueClears;/);
+  assert.ok(body.indexOf('const deleteQueueClears') < body.indexOf('await '));
   assert.doesNotMatch(body, /if \(userIdRef\.current [!=]== supabaseUser\.id/);
   assert.match(body, /if \(sameAccount\(\) && stackGenRef\.current === deleteGen\) \{/);
 });

@@ -10429,11 +10429,12 @@ function AppContent() {
             const removedIndex = committed.findIndex(i => i.id === id);
             const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
             const deleteGen = stackGenRef.current;
-            // The account as the delete starts. A sign out bumps it even when
+            // The queue as the delete starts. A sign out clears it even when
             // the same account signs back in, so a delete from before never
-            // lands in the queue that sign out cleared.
-            const deleteAccountGen = accountGenRef.current;
-            const sameAccount = () => userIdRef.current === supabaseUser?.id && accountGenRef.current === deleteAccountGen;
+            // lands in the queue that sign out cleared. A sign out that failed
+            // cleared nothing, so the delete still queues.
+            const deleteQueueClears = pendingDeletes.clears();
+            const sameAccount = () => userIdRef.current === supabaseUser?.id && pendingDeletes.clears() === deleteQueueClears;
             setter(prev => prev.filter(i => i.id !== id));
 
             // Delete from Supabase if signed in
