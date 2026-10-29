@@ -358,6 +358,10 @@ test('a delete from the list that lands after a sign out touches nothing the new
   // The account check comes before both the rowless mark and the unqueue
   assert.match(body, /if \(reached\) \{(\n\s*\/\/.*)*\n\s*if \(!sameAccount\(\)\) return;\n\s*if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);\n\s*if \(queuedFirst && !rowless\) \{/);
   // and the sending mark it took still comes off the set it went on
-  assert.match(body, /const sending = deletesSendingRef\.current;\n\s*if \(queuedFirst\) sending\.add\(entry\);/);
+  // taken before the queue write, so a sign out while it waits can't move it
+  const taken = body.indexOf('const sending = deletesSendingRef.current;');
+  const write = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
+  assert.ok(taken > 0 && write > taken);
+  assert.match(body, /\n\s*\}\n\s*if \(queuedFirst\) sending\.add\(entry\);/);
   assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);\n\s*\}/);
 });

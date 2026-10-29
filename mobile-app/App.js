@@ -10471,6 +10471,9 @@ function AppContent() {
                 // deleted and isn't found by local id. A sign out or account
                 // change since has cleared the queue, so it isn't written
                 // back under it. A queue that can't be saved still sends.
+                // Its mark goes on the set of the queue it joins, taken now
+                // since a sign out while the queue write waits swaps the set
+                const sending = deletesSendingRef.current;
                 let queuedFirst = false;
                 if (sameAccount()) {
                   try {
@@ -10480,7 +10483,6 @@ function AppContent() {
                     if (__DEV__) console.error('Failed to queue the delete:', err);
                   }
                 }
-                const sending = deletesSendingRef.current;
                 if (queuedFirst) sending.add(entry);
                 // A holding deleted again, as after a restore brought it back,
                 // is counted afresh rather than as the one that found no row
