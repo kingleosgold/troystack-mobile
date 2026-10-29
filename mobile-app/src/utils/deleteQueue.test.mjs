@@ -198,7 +198,7 @@ test('a signed-in delete is queued before it is sent and taken off once it lands
   const unqueued = body.indexOf('await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))');
   assert.ok(queued > 0 && sent > queued && unqueued > sent);
   // Not queued under an account that has left, and counted once by a sign out
-  assert.match(body, /if \(userIdRef\.current === supabaseUser\.id\) \{\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, entry\)\);\n\s*queuedFirst = true;/);
+  assert.match(body, /if \(sameAccount\(\)\) \{\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, entry\)\);\n\s*queuedFirst = true;/);
   assert.match(body, /if \(queuedFirst\) sending\.add\(entry\);/);
   assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);/);
 });
@@ -304,7 +304,20 @@ test('a sign out counts queued deletes and clears them with the stack', () => {
 });
 
 test('a delete that fails after its account left is not queued under the next one', () => {
-  assert.match(app, /if \(userIdRef\.current !== supabaseUser\.id\) return;\n\s*let queued = queuedFirst;/);
+  assert.match(app, /if \(!sameAccount\(\)\) return;\n\s*let queued = queuedFirst;/);
+});
+
+test('a delete from before a sign out is not queued again when the same account signs back in', () => {
+  // The account count is taken as the delete starts, and every queue write
+  // and the put back check it, since a sign out bumps it while the user id
+  // can come back the same
+  const start = app.indexOf('const deleteGen = stackGenRef.current;');
+  assert.ok(start > 0);
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  assert.match(body, /const deleteAccountGen = accountGenRef\.current;\n(\s*\/\/.*\n)*?\s*const sameAccount = \(\) => userIdRef\.current === supabaseUser\?\.id && accountGenRef\.current === deleteAccountGen;/);
+  assert.ok(body.indexOf('const deleteAccountGen') < body.indexOf('await '));
+  assert.doesNotMatch(body, /if \(userIdRef\.current [!=]== supabaseUser\.id/);
+  assert.match(body, /if \(sameAccount\(\) && stackGenRef\.current === deleteGen\) \{/);
 });
 
 test('a restore never overrides a queued delete', () => {
