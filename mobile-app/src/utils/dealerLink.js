@@ -12,7 +12,7 @@
 
 export const DEALER_LINK_FAILED = {
   title: "Couldn't open the dealer",
-  message: "The dealer's page didn't open. Try again in a moment.",
+  message: "The dealer's page couldn't be opened right now.",
 };
 
 /** True for an http or https URL with a host, the only kind a dealer link opens. */
