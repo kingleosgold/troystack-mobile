@@ -232,7 +232,7 @@ test('a holding is not put back once the account changed while the retry queue w
     if (writes === 2) state.account = false;
     throw new Error('disk full');
   };
-  assert.equal(await sendListDelete(ctx), 'restored');
+  assert.equal(await sendListDelete(ctx), 'left');
   assert.equal(writes, 2);
   assert.equal(state.putBack, 0);
 });
@@ -281,6 +281,72 @@ test('a delete that joins the queue only on the retry clears the earlier rowless
   assert.equal(marks.rowless.size, 0);
 });
 
+test('the latest delete marks the holding rowless when its own queue write failed', async () => {
+  const { ctx, storage, pendingDeletes, turns, marks, queue } = setup({ findRow: async () => null });
+  // An earlier delete of the holding is queued and left its mark to this one
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: null, localId: 55, metal: 'silver' }]);
+  const turn = turns.start('u1', 'silver', 55);
+  // Its own queue write fails, here on the read before it
+  const getItem = storage.getItem;
+  let reads = 0;
+  storage.getItem = async (key) => {
+    reads += 1;
+    if (reads === 1) throw new Error('disk unreadable');
+    return getItem(key);
+  };
+  const result = await sendListDelete({ ...ctx, isLatest: () => turns.isLatest('u1', 'silver', 55, turn) });
+  assert.equal(result, 'rowless');
+  assert.equal(queue().length, 1);
+  assert.equal(marks.rowless.size, 1);
+  // Sign Out leaves the earlier entry out of the unsent count
+  assert.equal(queuedNotSending(queue(), new Set([...marks.sending, ...marks.rowless]), 'u1'), 0);
+});
+
+test('a rowless delete whose queue write failed is not marked once a later delete started', async () => {
+  const { ctx, storage, turns, marks } = setup({
+    findRow: async () => {
+      turns.start('u1', 'silver', 55);
+      return null;
+    },
+  });
+  storage.failing.set = 1;
+  assert.equal(await sendListDelete(ctx), 'rowless');
+  assert.equal(marks.rowless.size, 0);
+});
+
+test('the sending mark comes off after a delete that stays queued', async () => {
+  const { ctx, marks } = setup({ findRow: async () => { throw new Error('offline'); } });
+  assert.equal(await sendListDelete(ctx), 'queued');
+  assert.equal(marks.sending.size, 0);
+});
+
+test('the sending mark comes off after a delete that finds no row', async () => {
+  let during = null;
+  const { ctx, marks } = setup({
+    findRow: async () => {
+      during = marks.sending.size;
+      return null;
+    },
+  });
+  assert.equal(await sendListDelete(ctx), 'rowless');
+  assert.equal(during, 1);
+  assert.equal(marks.sending.size, 0);
+});
+
+test('a delete that lands but can\'t come off the queue is left for the sync', async () => {
+  const warned = [];
+  const { ctx, storage, queue, state } = setup({
+    entry: { userId: 'u1', rowId: 'row-55', localId: 55, metal: 'silver' },
+    warn: (message) => warned.push(message),
+  });
+  storage.removeItem = async () => { throw new Error('disk full'); };
+  assert.equal(await sendListDelete(ctx), 'deleted');
+  assert.equal(queue().length, 1);
+  assert.deepEqual(warned, ['Failed to unqueue the delete:']);
+  assert.equal(state.noted, 0);
+  assert.equal(state.putBack, 0);
+});
+
 // The wiring in App.js, read as source like the other sync tests
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -295,6 +361,9 @@ test('the list delete sends through sendListDelete inside the write tracker', ()
   assert.ok(body.indexOf('const deleteQueueClears') < body.indexOf('await '));
   assert.match(body, /await trackHoldingWrite\(\(\) => sendListDelete\(\{/);
   assert.match(body, /entry: \{ userId: supabaseUser\.id, rowId: itemToDelete\.supabase_id \|\| null, localId: id, metal \},/);
+  // The queue and the account check the delete runs against
+  assert.match(body, /\n\s*pendingDeletes,\n/);
+  assert.match(body, /\n\s*sameAccount,\n/);
   // The marks sets are read when used, since a sign out swaps them
   assert.match(body, /sendingSet: \(\) => deletesSendingRef\.current,\n\s*rowlessSet: \(\) => deletesRowlessRef\.current,/);
   assert.match(body, /isLatest: \(\) => deleteTurnsRef\.current\.isLatest\(supabaseUser\.id, metal, id, deleteTurn\),/);
