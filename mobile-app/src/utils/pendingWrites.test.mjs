@@ -160,7 +160,10 @@ test('every holdings write to the cloud goes through the tracker', () => {
   const syncEnd = app.indexOf('// A change away from a signed-in account stops', sync);
   const calls = [...app.matchAll(/await (addHolding|updateHolding|updateAfterResend|deleteHoldingFromSupabase)\(/g)]
     .filter((call) => call.index < sync || call.index > syncEnd);
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 7);
+  // The list delete's two sends go through sendListDelete, run by the tracker
+  assert.match(app, /await trackHoldingWrite\(\(\) => sendListDelete\(\{/);
+  assert.match(app, /deleteRow: \(rowId\) => deleteHoldingFromSupabase\(supabaseUser\.id, rowId\),/);
   for (const call of calls) {
     const opener = app.lastIndexOf('async () => {', call.index);
     assert.equal(app.slice(opener - 'trackHoldingWrite('.length, opener), 'trackHoldingWrite(', `${call[1]} at ${call.index} is outside trackHoldingWrite`);
@@ -169,7 +172,8 @@ test('every holdings write to the cloud goes through the tracker', () => {
 
 test('every cloud update and delete is pinned to the account the tracker waits on', () => {
   const calls = [...app.matchAll(/(?:await |=> |return )(updateHolding|deleteHoldingFromSupabase)\(([^,)]*)/g)];
-  assert.equal(calls.length, 5);
+  // The list delete's two sends are one deleteRow in sendListDelete's wiring
+  assert.equal(calls.length, 4);
   for (const call of calls) assert.equal(call[2], 'supabaseUser.id', `${call[1]} at ${call.index}`);
   const service = readFileSync(new URL('../services/supabaseHoldings.ts', import.meta.url), 'utf8');
   for (const name of ['updateHolding', 'deleteHolding']) {
@@ -330,5 +334,6 @@ test('an edit or delete whose wait for earlier writes runs out never trusts a lo
   // the throw lands where a failed lookup does, which marks the edit for its row
   assert.match(app, /if \(addsRow && editingItem && !lookedUp\) markRowLookupForRetry\(targetMetal, item\.id, userId, stackGen\);/);
   assert.ok(app.indexOf("throw new Error('An earlier write is still saving')") < app.indexOf('lookedUp = true;'));
-  assert.match(app, /\} else if \(!\(await earlierWrites\) && !knownRowsRef\.current\.rowFor\(id, supabaseUser\.id\)\) \{\n(\s*\/\/.*\n)*\s*reached = false;/);
+  // The list delete's wait goes to sendListDelete, whose tests hold it
+  assert.match(app, /: holdingWrites\.settled\(HOLDING_WRITES_WAIT_MS, supabaseUser\.id, \(\) => userIdRef\.current !== supabaseUser\.id\);\n\s*await trackHoldingWrite\(\(\) => sendListDelete\(\{[\s\S]*?\n\s*earlierWrites,\n/);
 });
