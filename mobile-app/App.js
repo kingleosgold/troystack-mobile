@@ -832,7 +832,8 @@ function InlineDealerCard({ data }) {
 
   return (
     <View style={INLINE_CARD_STYLE}>
-      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 8 }}>{data.product}</Text>
+      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 4 }}>{data.product}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginBottom: 8 }}>We may earn a commission from these links.</Text>
       {dealers.map((d, i) => (
         <TouchableOpacity
           key={i}
