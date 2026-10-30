@@ -61,7 +61,7 @@ import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, wi
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
-import { openDealerLink, DEALER_LINK_FAILED } from './src/utils/dealerLink';
+import { openDealerLink, onceUntilDismissed, DEALER_LINK_FAILED } from './src/utils/dealerLink';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -828,9 +828,15 @@ function InlinePurchasingPowerCard({ data, onExpand }) {
 // Linking.openURL reads this, so it's never passed bare.
 const openInBrowser = (url) => Linking.openURL(url);
 
-function showDealerLinkFailed() {
-  Alert.alert(DEALER_LINK_FAILED.title, DEALER_LINK_FAILED.message);
-}
+// Repeated taps on a dead link put up one alert, not a stack of them.
+const showDealerLinkFailed = onceUntilDismissed((dismiss) => {
+  Alert.alert(
+    DEALER_LINK_FAILED.title,
+    DEALER_LINK_FAILED.message,
+    [{ text: 'OK', onPress: dismiss }],
+    { cancelable: true, onDismiss: dismiss }
+  );
+});
 
 function InlineDealerCard({ data }) {
   if (!data) return null;

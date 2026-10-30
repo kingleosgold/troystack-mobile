@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isWebUrl, openDealerLink } from './dealerLink.js';
+import { isWebUrl, openDealerLink, onceUntilDismissed } from './dealerLink.js';
 
 test('http and https links are web links', () => {
   assert.equal(isWebUrl('https://www.awin1.com/cread.php?awinmid=88985'), true);
@@ -74,4 +74,44 @@ test('App.js opens every dealer link through a bound opener', () => {
   assert.equal(calls.length, 4);
   for (const call of calls) assert.match(call, /, openInBrowser, showDealerLinkFailed\)$/);
   assert.match(app, /const openInBrowser = \(url\) => Linking\.openURL\(url\);/);
+});
+
+test('a burst of failed taps shows one notice until it is dismissed', async () => {
+  let t = 0;
+  const dismissals = [];
+  const notify = onceUntilDismissed((dismiss) => { dismissals.push(dismiss); }, { now: () => t });
+  const dead = () => Promise.reject(new Error('no browser'));
+  await Promise.all([1, 2, 3].map(() => openDealerLink('https://apmex.com', dead, notify)));
+  assert.equal(dismissals.length, 1);
+  t = 5000;
+  assert.equal(notify(), false);
+  dismissals[0]();
+  assert.equal(notify(), true);
+  assert.equal(dismissals.length, 2);
+});
+
+test('a notice whose dismiss never fires stops blocking after staleMs', () => {
+  let t = 0;
+  let shown = 0;
+  const notify = onceUntilDismissed(() => { shown += 1; }, { now: () => t, staleMs: 10000 });
+  assert.equal(notify(), true);
+  t = 9999;
+  assert.equal(notify(), false);
+  t = 10000;
+  assert.equal(notify(), true);
+  assert.equal(shown, 2);
+});
+
+test('a notice that throws does not block the next one', () => {
+  let calls = 0;
+  const notify = onceUntilDismissed(() => { calls += 1; if (calls === 1) throw new Error('boom'); });
+  assert.throws(() => notify());
+  assert.equal(notify(), true);
+  assert.equal(calls, 2);
+});
+
+test('App.js wraps the dealer alert so taps cannot stack it', () => {
+  const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  assert.match(app, /const showDealerLinkFailed = onceUntilDismissed\(\(dismiss\) => \{/);
+  assert.match(app, /\[\{ text: 'OK', onPress: dismiss \}\],\s*\{ cancelable: true, onDismiss: dismiss \}/);
 });
