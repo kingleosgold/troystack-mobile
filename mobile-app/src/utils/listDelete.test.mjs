@@ -200,6 +200,43 @@ test('a delete that lands after a sign out touches nothing the new session queue
   assert.ok(!log.includes('queue:'));
 });
 
+test('a delete that reaches its row after a sign out leaves the new queue alone', async () => {
+  const { ctx, state, log, queue } = setup({
+    deleteRow: async (rowId) => {
+      log.push(`delete:${rowId}`);
+      state.account = false;
+      return { error: null };
+    },
+  });
+  assert.equal(await sendListDelete({ ...ctx, entry: { ...ctx.entry, rowId: 'row-55' } }), 'left');
+  // Nothing written to the queue after the send, so a delete the new
+  // session queued for the same holding stays
+  assert.deepEqual(log, ['queue:55/row-55', 'delete:row-55']);
+  assert.equal(queue().length, 1);
+});
+
+test('a holding with a row whose send fails stays queued by that row with the notice', async () => {
+  const { ctx, state, queue } = setup({ deleteRow: async () => ({ error: new Error('500') }) });
+  assert.equal(await sendListDelete({ ...ctx, entry: { ...ctx.entry, rowId: 'row-55' } }), 'queued');
+  assert.deepEqual(queue(), [{ userId: 'u1', rowId: 'row-55', localId: 55, metal: 'silver' }]);
+  assert.equal(state.noted, 1);
+  assert.equal(state.putBack, 0);
+});
+
+test('a holding is not put back once the account changed while the retry queue write failed', async () => {
+  const { ctx, state, storage } = setup({ deleteRow: async () => ({ error: new Error('500') }) });
+  let writes = 0;
+  storage.setItem = async () => {
+    writes += 1;
+    // The first write fails, and the retry fails as a sign out happens
+    if (writes === 2) state.account = false;
+    throw new Error('disk full');
+  };
+  assert.equal(await sendListDelete(ctx), 'restored');
+  assert.equal(writes, 2);
+  assert.equal(state.putBack, 0);
+});
+
 test('the sending mark comes off the set it went on, even after a sign out swaps the sets', async () => {
   const first = new Set();
   let current = first;
@@ -261,6 +298,7 @@ test('the list delete sends through sendListDelete inside the write tracker', ()
   // The marks sets are read when used, since a sign out swaps them
   assert.match(body, /sendingSet: \(\) => deletesSendingRef\.current,\n\s*rowlessSet: \(\) => deletesRowlessRef\.current,/);
   assert.match(body, /isLatest: \(\) => deleteTurnsRef\.current\.isLatest\(supabaseUser\.id, metal, id, deleteTurn\),/);
+  assert.match(body, /deleteRow: \(rowId\) => deleteHoldingFromSupabase\(supabaseUser\.id, rowId\),/);
   assert.match(body, /knownRow: \(\) => knownRowsRef\.current\.rowFor\(id, supabaseUser\.id\),/);
   assert.match(body, /noteQueued: \(\) => noteCloudMiss\('edit', supabaseUser\.id\),/);
   // The holding goes back only into the stack it was deleted from
