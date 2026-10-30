@@ -10494,12 +10494,19 @@ function AppContent() {
                 }
                 if (queuedFirst) sending.add(entry);
                 // A holding deleted again, as after a restore brought it back,
-                // is counted afresh rather than as the one that found no row
-                for (const done of deletesRowlessRef.current) {
-                  if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
-                    deletesRowlessRef.current.delete(done);
+                // is counted afresh rather than as the one that found no row.
+                // Only a delete that joined this queue does that. One that
+                // didn't, as after a sign out and back in, leaves the queued
+                // delete and its mark as they are, or the unsent count would
+                // take it for one still to send.
+                const dropRowlessMarks = () => {
+                  for (const done of deletesRowlessRef.current) {
+                    if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
+                      deletesRowlessRef.current.delete(done);
+                    }
                   }
-                }
+                };
+                if (queuedFirst) dropRowlessMarks();
                 try {
                   if (itemToDelete.supabase_id) {
                     const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
@@ -10560,6 +10567,9 @@ function AppContent() {
                   try {
                     await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
                     queued = true;
+                    // One that only joined the queue now clears an earlier
+                    // mark here, or Sign Out would count it as settled
+                    if (!queuedFirst) dropRowlessMarks();
                   } catch (err) {
                     if (__DEV__) console.error('Failed to queue the delete:', err);
                   }

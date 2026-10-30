@@ -365,3 +365,22 @@ test('a delete from the list that lands after a sign out touches nothing the new
   assert.match(body, /\n\s*\}\n\s*if \(queuedFirst\) sending\.add\(entry\);/);
   assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);\n\s*\}/);
 });
+
+test('a delete from the list that never joined the queue keeps the rowless mark of the one queued', () => {
+  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  // Only a delete that joined this queue clears an earlier mark for its
+  // holding, so one started before a sign out and back in can't make the
+  // queued delete count as unsent
+  assert.equal(body.split('deletesRowlessRef.current.delete(done)').length, 2);
+  assert.match(body, /const dropRowlessMarks = \(\) => \{\n\s*for \(const done of deletesRowlessRef\.current\) \{/);
+  assert.equal(body.split('dropRowlessMarks()').length, 3);
+  // The first clear waits on the queue write and comes before the send
+  const write = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
+  const first = body.indexOf('if (queuedFirst) dropRowlessMarks();');
+  const send = body.indexOf('deleteHoldingFromSupabase(');
+  assert.ok(write > 0 && first > write && send > first);
+  // A delete whose first queue write failed clears it once the retry write
+  // queues it, behind the account check
+  assert.match(body, /if \(!sameAccount\(\)\) return;\n\s*let queued = queuedFirst;\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, \{ \.\.\.entry, rowId \}\)\);\n\s*queued = true;\n(\s*\/\/.*\n)*\s*if \(!queuedFirst\) dropRowlessMarks\(\);\n\s*\} catch/);
+});
