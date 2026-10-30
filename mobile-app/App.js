@@ -10429,6 +10429,12 @@ function AppContent() {
             const removedIndex = committed.findIndex(i => i.id === id);
             const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
             const deleteGen = stackGenRef.current;
+            // The queue as the delete starts. A sign out clears it even when
+            // the same account signs back in, so a delete from before never
+            // lands in the queue that sign out cleared. A sign out that failed
+            // cleared nothing, so the delete still queues.
+            const deleteQueueClears = pendingDeletes.clears();
+            const sameAccount = () => userIdRef.current === supabaseUser?.id && pendingDeletes.clears() === deleteQueueClears;
             setter(prev => prev.filter(i => i.id !== id));
 
             // Delete from Supabase if signed in
@@ -10456,7 +10462,7 @@ function AppContent() {
                 // change since has cleared the queue, so it isn't written
                 // back under it. A queue that can't be saved still sends.
                 let queuedFirst = false;
-                if (userIdRef.current === supabaseUser.id) {
+                if (sameAccount()) {
                   try {
                     await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));
                     queuedFirst = true;
@@ -10525,7 +10531,7 @@ function AppContent() {
                   // local id once those writes land.
                   // A sign out or account change since has cleared the queue,
                   // so the delete isn't written back under it
-                  if (userIdRef.current !== supabaseUser.id) return;
+                  if (!sameAccount()) return;
                   let queued = queuedFirst;
                   try {
                     await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
@@ -10541,7 +10547,7 @@ function AppContent() {
                   // holding goes back now with a notice, while the same
                   // account holds the same stack. After a swap the stack came
                   // from the cloud, which still has it.
-                  if (userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
+                  if (sameAccount() && stackGenRef.current === deleteGen) {
                     setter(prev => withHoldingRestored(prev, removed, removedIndex));
                     const { title, message } = deleteMissAlert(removed?.productName);
                     Alert.alert(title, message);
