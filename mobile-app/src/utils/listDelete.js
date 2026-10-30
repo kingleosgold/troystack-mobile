@@ -124,9 +124,13 @@ export async function sendListDelete({
       // stays for the sync, which takes it off once the stack without its
       // holding is stored, or a kill before the save effect lands would
       // upload it again. A sign out since cleared the queue it was in, so it
-      // touches nothing a delete queued after it may have left.
+      // touches nothing a delete queued after it may have left. The latest
+      // delete of the holding marks it rowless even when its own queue write
+      // failed, since an earlier delete's entry for the holding may still be
+      // queued, and that one left its mark to this delete. A mark with no
+      // queued entry takes nothing off the count.
       if (!sameAccount()) return 'left';
-      if (queuedFirst && rowless && isLatest()) rowlessSet().add(entry);
+      if (rowless && isLatest()) rowlessSet().add(entry);
       if (queuedFirst && !rowless) {
         await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
           .catch((err) => warn('Failed to unqueue the delete:', err));
@@ -158,7 +162,8 @@ export async function sendListDelete({
     // A queue that couldn't be saved can't hold it, so the holding goes back
     // now with a notice, while the same account holds the same stack. After
     // a swap the stack came from the cloud, which still has it.
-    if (sameAccount()) putBack();
+    if (!sameAccount()) return 'left';
+    putBack();
     return 'restored';
   } finally {
     if (queuedFirst) sending.delete(entry);
