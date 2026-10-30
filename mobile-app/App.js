@@ -17008,6 +17008,11 @@ function AppContent() {
                   {/* Error / coming soon state */}
                   {!dealerLoading && (dealerError || !dealerData?.products?.length) && (
                     <View style={{ paddingTop: 20, paddingHorizontal: 4 }}>
+                      {/* Affiliate disclosure, shown before any dealer link */}
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        We may earn a commission from these links.
+                      </Text>
+
                       {/* APMEX Quick Links */}
                       <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginBottom: 4 }}>Shop APMEX</Text>
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
