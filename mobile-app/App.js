@@ -61,6 +61,7 @@ import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, wi
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
+import { openDealerLink, DEALER_LINK_FAILED } from './src/utils/dealerLink';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -824,6 +825,13 @@ function InlinePurchasingPowerCard({ data, onExpand }) {
   );
 }
 
+// Linking.openURL reads this, so it's never passed bare.
+const openInBrowser = (url) => Linking.openURL(url);
+
+function showDealerLinkFailed() {
+  Alert.alert(DEALER_LINK_FAILED.title, DEALER_LINK_FAILED.message);
+}
+
 function InlineDealerCard({ data }) {
   if (!data) return null;
   // Support new shape (data.dealers array) and legacy shape (single data.dealer/url)
@@ -837,7 +845,7 @@ function InlineDealerCard({ data }) {
       {dealers.map((d, i) => (
         <TouchableOpacity
           key={i}
-          onPress={() => Linking.openURL(d.url)}
+          onPress={() => openDealerLink(d.url, openInBrowser, showDealerLinkFailed)}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -17027,7 +17035,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={i}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
@@ -17055,7 +17063,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={`sd-${i}`}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
@@ -17083,7 +17091,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={`mm-${i}`}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
