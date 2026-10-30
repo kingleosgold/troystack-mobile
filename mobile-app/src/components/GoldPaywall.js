@@ -267,7 +267,7 @@ const GoldPaywall = ({ visible, onClose, onPurchaseSuccess, onRestored, userTier
           <View style={styles.header}>
             <Text style={styles.title}>Upgrade to Gold</Text>
             <Text style={styles.subtitle}>
-              AI-powered intelligence for serious stackers
+              Market intelligence for serious stackers
             </Text>
             <TouchableOpacity
               onPress={onClose}

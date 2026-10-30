@@ -41,7 +41,7 @@ const Tutorial = ({ visible, onComplete, slides: customSlides }) => {
     },
     {
       emoji: '📷',
-      title: 'Scan Receipts with AI',
+      title: 'Scan Your Receipts',
       description: 'Just snap a photo of your receipt and let Troy extract all the details automatically.',
       highlight: 'No manual entry. No hassle.',
     },
@@ -49,7 +49,7 @@ const Tutorial = ({ visible, onComplete, slides: customSlides }) => {
       emoji: '',
       emojiComponent: <View style={{ marginBottom: 20 }}><TroyCoinIcon size={72} /></View>,
       title: 'Go Gold for More',
-      description: 'Free tier: stack tracking, live prices, basic analytics. Gold tier: AI intelligence, Vault Watch, full analytics, and more.',
+      description: 'Free tier: stack tracking, live prices, basic analytics. Gold tier: Troy\'s market intelligence, Vault Watch, full analytics, and more.',
       highlight: 'Start stacking for free!',
     },
   ];
