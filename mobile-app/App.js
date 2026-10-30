@@ -832,7 +832,8 @@ function InlineDealerCard({ data }) {
 
   return (
     <View style={INLINE_CARD_STYLE}>
-      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 8 }}>{data.product}</Text>
+      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 4 }}>{data.product}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginBottom: 8 }}>We may earn a commission from these links.</Text>
       {dealers.map((d, i) => (
         <TouchableOpacity
           key={i}
@@ -17008,6 +17009,11 @@ function AppContent() {
                   {/* Error / coming soon state */}
                   {!dealerLoading && (dealerError || !dealerData?.products?.length) && (
                     <View style={{ paddingTop: 20, paddingHorizontal: 4 }}>
+                      {/* Affiliate disclosure, shown before any dealer link */}
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        We may earn a commission from these links.
+                      </Text>
+
                       {/* APMEX Quick Links */}
                       <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginBottom: 4 }}>Shop APMEX</Text>
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
