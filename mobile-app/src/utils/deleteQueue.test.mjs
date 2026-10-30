@@ -365,3 +365,21 @@ test('a delete from the list that lands after a sign out touches nothing the new
   assert.match(body, /\n\s*\}\n\s*if \(queuedFirst\) sending\.add\(entry\);/);
   assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);\n\s*\}/);
 });
+
+test('a delete from the list that never joined the queue keeps the rowless mark of the one queued', () => {
+  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  // Only a delete that joined this queue clears an earlier mark for its
+  // holding, so one started before a sign out and back in can't make the
+  // queued delete count as unsent
+  assert.match(body, /if \(queuedFirst\) \{\n\s*for \(const done of deletesRowlessRef\.current\) \{/);
+  assert.equal(body.split('deletesRowlessRef.current.delete(done)').length, 2);
+  // The mark is cleared after the queue write and before the send
+  const write = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
+  const clear = body.indexOf('deletesRowlessRef.current.delete(done)');
+  const send = body.indexOf('deleteHoldingFromSupabase(');
+  assert.ok(write > 0 && clear > write && send > clear);
+  // and the count still treats the queued delete as settled while its mark stays
+  const mark = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
+  assert.equal(queuedNotSending([{ ...mark }], new Set([mark]), 'u1'), 0);
+});

@@ -10494,10 +10494,16 @@ function AppContent() {
                 }
                 if (queuedFirst) sending.add(entry);
                 // A holding deleted again, as after a restore brought it back,
-                // is counted afresh rather than as the one that found no row
-                for (const done of deletesRowlessRef.current) {
-                  if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
-                    deletesRowlessRef.current.delete(done);
+                // is counted afresh rather than as the one that found no row.
+                // Only a delete that joined this queue does that. One that
+                // didn't, as after a sign out and back in, leaves the queued
+                // delete and its mark as they are, or the unsent count would
+                // take it for one still to send.
+                if (queuedFirst) {
+                  for (const done of deletesRowlessRef.current) {
+                    if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
+                      deletesRowlessRef.current.delete(done);
+                    }
                   }
                 }
                 try {
