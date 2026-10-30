@@ -832,7 +832,8 @@ function InlineDealerCard({ data }) {
 
   return (
     <View style={INLINE_CARD_STYLE}>
-      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 8 }}>{data.product}</Text>
+      <Text style={{ color: '#DAA520', fontSize: 14, fontWeight: '600', marginBottom: 4 }}>{data.product}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginBottom: 8 }}>We may earn a commission from these links.</Text>
       {dealers.map((d, i) => (
         <TouchableOpacity
           key={i}
@@ -2484,6 +2485,15 @@ function AppContent() {
   // They wait for the sync only so a kill can't upload their holding again,
   // and a sign out loses nothing with them, so it doesn't count them.
   const deletesRowlessRef = useRef(new Set());
+  // Clears the queue along with what's kept about its deletes. One still on
+  // its way or one that found no row belonged to the queue being cleared, so
+  // neither hides a delete queued after it from the count. A delete still out
+  // keeps the set it started with, so it never marks the new one.
+  const clearPendingDeletes = () => {
+    deletesSendingRef.current = new Set();
+    deletesRowlessRef.current = new Set();
+    return pendingDeletes.clear();
+  };
   // Local ids of holdings whose cloud add failed, each with its account. A
   // sync that waited for the write can read the stack before React commits
   // the holding's retry mark, so it puts these marks back on what it reads.
@@ -3238,7 +3248,7 @@ function AppContent() {
       setSigningOut(true);
       accountGenRef.current += 1;
       await AsyncStorage.clear();
-      await pendingDeletes.clear();
+      await clearPendingDeletes();
       accountGenRef.current += 1;
       resetAllState();
       // A guest stays a guest, as on a first launch
@@ -3410,7 +3420,7 @@ function AppContent() {
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
-      await pendingDeletes.clear();
+      await clearPendingDeletes();
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -4468,7 +4478,8 @@ function AppContent() {
           const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
           if (!row) {
             rowless.push(entry);
-            deletesRowlessRef.current.add(entry);
+            // A sign out since cleared the queue it came from
+            if (!accountChanged()) deletesRowlessRef.current.add(entry);
             return { error: null };
           }
           return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
@@ -10429,6 +10440,12 @@ function AppContent() {
             const removedIndex = committed.findIndex(i => i.id === id);
             const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
             const deleteGen = stackGenRef.current;
+            // The queue as the delete starts. A sign out clears it even when
+            // the same account signs back in, so a delete from before never
+            // lands in the queue that sign out cleared. A sign out that failed
+            // cleared nothing, so the delete still queues.
+            const deleteQueueClears = pendingDeletes.clears();
+            const sameAccount = () => userIdRef.current === supabaseUser?.id && pendingDeletes.clears() === deleteQueueClears;
             setter(prev => prev.filter(i => i.id !== id));
 
             // Delete from Supabase if signed in
@@ -10455,8 +10472,11 @@ function AppContent() {
                 // deleted and isn't found by local id. A sign out or account
                 // change since has cleared the queue, so it isn't written
                 // back under it. A queue that can't be saved still sends.
+                // Its mark goes on the set of the queue it joins, taken now
+                // since a sign out while the queue write waits swaps the set
+                const sending = deletesSendingRef.current;
                 let queuedFirst = false;
-                if (userIdRef.current === supabaseUser.id) {
+                if (sameAccount()) {
                   try {
                     await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));
                     queuedFirst = true;
@@ -10464,7 +10484,6 @@ function AppContent() {
                     if (__DEV__) console.error('Failed to queue the delete:', err);
                   }
                 }
-                const sending = deletesSendingRef.current;
                 if (queuedFirst) sending.add(entry);
                 // A holding deleted again, as after a restore brought it back,
                 // is counted afresh rather than as the one that found no row
@@ -10508,7 +10527,10 @@ function AppContent() {
                     // off is sent again by the next sync, which does no harm.
                     // One that found no row stays for the sync, which takes it
                     // off once the stack without its holding is stored, or a
-                    // kill before the save effect lands would upload it again
+                    // kill before the save effect lands would upload it again.
+                    // A sign out since cleared the queue it was in, so it
+                    // touches nothing a delete queued after it may have left.
+                    if (!sameAccount()) return;
                     if (queuedFirst && rowless) deletesRowlessRef.current.add(entry);
                     if (queuedFirst && !rowless) {
                       await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
@@ -10525,7 +10547,7 @@ function AppContent() {
                   // local id once those writes land.
                   // A sign out or account change since has cleared the queue,
                   // so the delete isn't written back under it
-                  if (userIdRef.current !== supabaseUser.id) return;
+                  if (!sameAccount()) return;
                   let queued = queuedFirst;
                   try {
                     await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
@@ -10541,7 +10563,7 @@ function AppContent() {
                   // holding goes back now with a notice, while the same
                   // account holds the same stack. After a swap the stack came
                   // from the cloud, which still has it.
-                  if (userIdRef.current === supabaseUser.id && stackGenRef.current === deleteGen) {
+                  if (sameAccount() && stackGenRef.current === deleteGen) {
                     setter(prev => withHoldingRestored(prev, removed, removedIndex));
                     const { title, message } = deleteMissAlert(removed?.productName);
                     Alert.alert(title, message);
@@ -16987,6 +17009,11 @@ function AppContent() {
                   {/* Error / coming soon state */}
                   {!dealerLoading && (dealerError || !dealerData?.products?.length) && (
                     <View style={{ paddingTop: 20, paddingHorizontal: 4 }}>
+                      {/* Affiliate disclosure, shown before any dealer link */}
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        We may earn a commission from these links.
+                      </Text>
+
                       {/* APMEX Quick Links */}
                       <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginBottom: 4 }}>Shop APMEX</Text>
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
@@ -17028,6 +17055,34 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={`sd-${i}`}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          style={{
+                            backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
+                            borderWidth: 1, borderColor: colors.border,
+                            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                          }}
+                        >
+                          <View>
+                            <Text style={{ color: colors.text, fontSize: scaledFonts.normal, fontWeight: '600' }}>{link.label}</Text>
+                            <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginTop: 2 }}>{link.sub}</Text>
+                          </View>
+                          <Text style={{ color: colors.gold, fontSize: 18 }}>→</Text>
+                        </TouchableOpacity>
+                      ))}
+
+                      {/* Money Metals Quick Links (Awin) */}
+                      <Text style={{ color: colors.text, fontSize: scaledFonts.large, fontWeight: '700', marginTop: 20, marginBottom: 4 }}>Shop Money Metals</Text>
+                      <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 16, lineHeight: scaledFonts.small * 1.5 }}>
+                        Coins, bars and current specials.
+                      </Text>
+                      {[
+                        { label: 'Specials', sub: 'Current specials', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fspecials' },
+                        { label: 'Silver Eagles', sub: 'American Silver Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fsilver%2Fcoins%2Famerican-silver-eagle' },
+                        { label: 'Gold Eagles', sub: 'American Gold Eagle coins', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com%2Fbuy%2Fgold%2Fcoins%2Famerican-gold-eagle' },
+                        { label: 'Browse All', sub: 'Full Money Metals catalog', url: 'https://www.awin1.com/cread.php?awinmid=88985&awinaffid=2844460&ued=https%3A%2F%2Fwww.moneymetals.com' },
+                      ].map((link, i) => (
+                        <TouchableOpacity
+                          key={`mm-${i}`}
                           onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
