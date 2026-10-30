@@ -40,3 +40,28 @@ export function openDealerLink(url, openURL, onFail) {
       }
     );
 }
+
+/**
+ * Wraps show so a burst of failed taps puts up one notice, not a stack of
+ * them. show gets a dismiss callback to call when the user closes the notice.
+ * Until then, or until staleMs passes in case dismiss never fires, further
+ * calls are dropped. Returns true when the notice was shown.
+ */
+export function onceUntilDismissed(show, { now = Date.now, staleMs = 10000 } = {}) {
+  let shownAt = null;
+  const dismiss = () => {
+    shownAt = null;
+  };
+  return () => {
+    const t = now();
+    if (shownAt !== null && t - shownAt < staleMs) return false;
+    shownAt = t;
+    try {
+      show(dismiss);
+    } catch (e) {
+      shownAt = null;
+      throw e;
+    }
+    return true;
+  };
+}
