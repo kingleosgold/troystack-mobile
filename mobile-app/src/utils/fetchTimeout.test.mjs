@@ -200,5 +200,7 @@ test('every caller of findHoldingByLocalId catches its throw', () => {
     assert.match(after, /\} catch \(err\) \{/);
     at = app.indexOf('await findHoldingByLocalId(', at + 1);
   }
-  assert.equal(seen, 2);
+  assert.equal(seen, 1);
+  // The list delete's lookup runs in sendListDelete, whose tests cover a throw
+  assert.match(app, /findRow: \(localId, rowMetal\) => findHoldingByLocalId\(supabaseUser\.id, localId, rowMetal\),/);
 });
