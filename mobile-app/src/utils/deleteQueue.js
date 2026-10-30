@@ -138,3 +138,20 @@ export function deleteQueueStore(storage, key = PENDING_DELETES_KEY) {
     clears: () => clears,
   };
 }
+
+// Numbers each delete started for a holding, keyed by account, metal and
+// local id, so a delete that ends can tell whether a later one of the same
+// holding has started since.
+export function deleteTurns() {
+  const latest = new Map();
+  const keyOf = (userId, metal, localId) => `${userId}:${metal}:${localId}`;
+  return {
+    start: (userId, metal, localId) => {
+      const key = keyOf(userId, metal, localId);
+      const turn = (latest.get(key) || 0) + 1;
+      latest.set(key, turn);
+      return turn;
+    },
+    isLatest: (userId, metal, localId, turn) => latest.get(keyOf(userId, metal, localId)) === turn,
+  };
+}
