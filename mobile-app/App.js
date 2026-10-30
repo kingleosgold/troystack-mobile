@@ -57,7 +57,7 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
-import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes, queuedNotSending } from './src/utils/deleteQueue';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes, queuedNotSending, deleteTurns } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
@@ -2499,6 +2499,12 @@ function AppContent() {
   // They wait for the sync only so a kill can't upload their holding again,
   // and a sign out loses nothing with them, so it doesn't count them.
   const deletesRowlessRef = useRef(new Set());
+  // Numbers the deletes started for each holding. A delete still out when a
+  // later one of the same holding starts, as after a restore brought it back,
+  // leaves the rowless mark to the later one, or its mark would hide the
+  // later delete from the Sign Out count.
+  const deleteTurnsRef = useRef(null);
+  if (!deleteTurnsRef.current) deleteTurnsRef.current = deleteTurns();
   // Clears the queue along with what's kept about its deletes. One still on
   // its way or one that found no row belonged to the queue being cleared, so
   // neither hides a delete queued after it from the count. A delete still out
@@ -10454,6 +10460,7 @@ function AppContent() {
             const removedIndex = committed.findIndex(i => i.id === id);
             const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
             const deleteGen = stackGenRef.current;
+            const deleteTurn = deleteTurnsRef.current.start(supabaseUser?.id, metal, id);
             // The queue as the delete starts. A sign out clears it even when
             // the same account signs back in, so a delete from before never
             // lands in the queue that sign out cleared. A sign out that failed
@@ -10552,7 +10559,9 @@ function AppContent() {
                     // A sign out since cleared the queue it was in, so it
                     // touches nothing a delete queued after it may have left.
                     if (!sameAccount()) return;
-                    if (queuedFirst && rowless) deletesRowlessRef.current.add(entry);
+                    if (queuedFirst && rowless && deleteTurnsRef.current.isLatest(entry.userId, metal, id, deleteTurn)) {
+                      deletesRowlessRef.current.add(entry);
+                    }
                     if (queuedFirst && !rowless) {
                       await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
                         .catch((err) => { if (__DEV__) console.error('Failed to unqueue the delete:', err); });

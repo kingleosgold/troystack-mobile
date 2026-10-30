@@ -11,6 +11,7 @@ import {
   withoutQueuedDeletes,
   queuedNotSending,
   deleteQueueStore,
+  deleteTurns,
 } from './deleteQueue.js';
 
 const byRow = { userId: 'u1', rowId: 'row-1', localId: 11, metal: 'silver' };
@@ -290,7 +291,7 @@ test('a sign out leaves out a queued delete that found no row', () => {
   // And the handler marks one only once it's known to have found no row
   const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
   const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  assert.match(body, /if \(reached\) \{[\s\S]*?if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);/);
+  assert.match(body, /if \(reached\) \{[\s\S]*?if \(queuedFirst && rowless && deleteTurnsRef\.current\.isLatest\(entry\.userId, metal, id, deleteTurn\)\) \{\n\s*deletesRowlessRef\.current\.add\(entry\);/);
 });
 
 test('the sync takes a rowless delete off the queue only past the restore check and with the cloud copy in state', () => {
@@ -356,7 +357,7 @@ test('a delete from the list that lands after a sign out touches nothing the new
   const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
   const body = app.slice(start, app.indexOf('// Close detail view if open', start));
   // The account check comes before both the rowless mark and the unqueue
-  assert.match(body, /if \(reached\) \{(\n\s*\/\/.*)*\n\s*if \(!sameAccount\(\)\) return;\n\s*if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);\n\s*if \(queuedFirst && !rowless\) \{/);
+  assert.match(body, /if \(reached\) \{(\n\s*\/\/.*)*\n\s*if \(!sameAccount\(\)\) return;\n\s*if \(queuedFirst && rowless && deleteTurnsRef\.current\.isLatest\(entry\.userId, metal, id, deleteTurn\)\) \{\n\s*deletesRowlessRef\.current\.add\(entry\);\n\s*\}\n\s*if \(queuedFirst && !rowless\) \{/);
   // and the sending mark it took still comes off the set it went on
   // taken before the queue write, so a sign out while it waits can't move it
   const taken = body.indexOf('const sending = deletesSendingRef.current;');
@@ -383,4 +384,31 @@ test('a delete from the list that never joined the queue keeps the rowless mark 
   // A delete whose first queue write failed clears it once the retry write
   // queues it, behind the account check
   assert.match(body, /if \(!sameAccount\(\)\) return;\n\s*let queued = queuedFirst;\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, \{ \.\.\.entry, rowId \}\)\);\n\s*queued = true;\n(\s*\/\/.*\n)*\s*if \(!queuedFirst\) dropRowlessMarks\(\);\n\s*\} catch/);
+});
+
+test('a delete knows when a later one of the same holding has started', () => {
+  const turns = deleteTurns();
+  const first = turns.start('u1', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 55, first), true);
+  const second = turns.start('u1', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 55, first), false);
+  assert.equal(turns.isLatest('u1', 'silver', 55, second), true);
+  // Another holding, metal or account keeps its own count
+  const otherHolding = turns.start('u1', 'silver', 56);
+  const otherMetal = turns.start('u1', 'gold', 55);
+  const otherAccount = turns.start('u2', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 56, otherHolding), true);
+  assert.equal(turns.isLatest('u1', 'gold', 55, otherMetal), true);
+  assert.equal(turns.isLatest('u2', 'silver', 55, otherAccount), true);
+  assert.equal(turns.isLatest('u1', 'silver', 55, second), true);
+});
+
+test('a delete from the list takes its turn as it starts and marks rowless only if still the latest', () => {
+  const start = app.indexOf('const deleteGen = stackGenRef.current;');
+  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
+  // The turn is taken at the confirm, before any await
+  assert.match(body, /^const deleteGen = stackGenRef\.current;\n\s*const deleteTurn = deleteTurnsRef\.current\.start\(supabaseUser\?\.id, metal, id\);/);
+  assert.ok(body.indexOf('const deleteTurn =') < body.indexOf('await '));
+  assert.equal(body.split('deletesRowlessRef.current.add(entry)').length, 2);
+  assert.match(app, /const deleteTurnsRef = useRef\(null\);\n\s*if \(!deleteTurnsRef\.current\) deleteTurnsRef\.current = deleteTurns\(\);/);
 });
