@@ -3324,8 +3324,9 @@ function AppContent() {
     // A queued delete still on its way counts among the writes on their way
     // as does one with no row whose holding found none, which has nothing
     // left to send. A rowless mark is cleared by a sign out or by a later
-    // list delete that queues, the only kind that adds queue entries, though
-    // a sync whose lookup was already out can mark the holding after that.
+    // list delete that queues, the only kind that adds queue entries. A sync
+    // marks only while it holds the delete gate shut, so no list delete can
+    // start between its lookup and its mark.
     const deletesLeft = queuedDeletes
       ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId, deletesRowlessRef.current)
       : 1;
@@ -4495,8 +4496,13 @@ function AppContent() {
       // Each is marked on its way, as a delete from the list is, so a sign out
       // counts it once among the writes on their way and not again as queued
       // One that finds no row is noted, since its holding may still be in the
-      // stack on disk
+      // stack on disk. Only a lookup the sync still waits on marks it, since
+      // the sync holds the delete gate shut only that long: one it let go of
+      // could land past the sync's end and hide a later delete of the same
+      // holding from the Sign Out count. Its delete stays queued as unsent,
+      // so it's only asked about once more and the next sync finds no row again.
       const rowless = [];
+      let deletesLetGo = false;
       const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
         const sending = deletesSendingRef.current;
         sending.add(entry);
@@ -4505,7 +4511,7 @@ function AppContent() {
           if (!row) {
             rowless.push(entry);
             // A sign out since cleared the queue it came from
-            if (!accountChanged()) deletesRowlessRef.current.add(entry);
+            if (!accountChanged() && !deletesLetGo) deletesRowlessRef.current.add(entry);
             return { error: null };
           }
           return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
@@ -4513,6 +4519,7 @@ function AppContent() {
           sending.delete(entry);
         }
       }), resendsBy, accountChanged);
+      deletesLetGo = true;
       if (accountChanged()) return false;
       const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
       // A delete that found no row stays queued until the cloud's copy has
