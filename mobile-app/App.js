@@ -2496,9 +2496,10 @@ function AppContent() {
   // They're kept by holding rather than counted, so one queued or sent while
   // the count reads, or one still out after a sign out, can't offset another.
   const deletesSendingRef = useRef(new Set());
-  // Queued deletes from the list that found no row, each with its account.
-  // They wait for the sync only so a kill can't upload their holding again,
-  // and a sign out loses nothing with them, so it doesn't count them.
+  // Queued deletes with no row whose lookup found none, from the list or the
+  // sync, each with its account. They wait for the sync only so a kill can't
+  // upload their holding again, and a sign out loses nothing with them, so it
+  // doesn't count them. A queued delete that names a row still counts.
   const deletesRowlessRef = useRef(new Set());
   // Numbers the deletes started for each holding. A delete still out when a
   // later one of the same holding starts, as after a restore brought it back,
@@ -3321,9 +3322,13 @@ function AppContent() {
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
-    // as does one that found no row, which has nothing left to send
-    const settledDeletes = new Set([...deletesSendingRef.current, ...deletesRowlessRef.current]);
-    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, settledDeletes, userId) : 1;
+    // as does one with no row whose holding found none, which has nothing
+    // left to send. A rowless mark is cleared by a sign out or by a later
+    // list delete that queues, the only kind that adds queue entries, though
+    // a sync whose lookup was already out can mark the holding after that.
+    const deletesLeft = queuedDeletes
+      ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId, deletesRowlessRef.current)
+      : 1;
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
       + deletesLeft;
   };

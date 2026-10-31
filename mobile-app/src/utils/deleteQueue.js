@@ -82,11 +82,16 @@ export function withoutDeleteOf(queue, { userId, localId, metal } = {}) {
 // since one on its way is counted among the writes on their way. A delete is
 // matched to the one sending by account, local id and metal, so a sending one
 // the queue read missed, or one left from before a sign out, takes nothing
-// off another.
-export function queuedNotSending(queue, sending, userId) {
-  const out = [...(sending || [])].filter((entry) => entry?.userId === userId);
-  return deletesFor(queue, userId).filter((entry) => !out.some((s) => s.localId === entry.localId
-    && s.metal === entry.metal)).length;
+// off another. A delete that found no row settles only a queued one with no
+// row too. One that names a row still has that row to send, which a lookup by
+// local id can miss.
+export function queuedNotSending(queue, sending, userId, rowless = null) {
+  const mine = (marks) => [...(marks || [])].filter((entry) => entry?.userId === userId);
+  const out = mine(sending);
+  const found = mine(rowless);
+  const sameHolding = (a, b) => a.localId === b.localId && a.metal === b.metal;
+  return deletesFor(queue, userId).filter((entry) => !out.some((s) => sameHolding(s, entry))
+    && !(!entry.rowId && found.some((r) => sameHolding(r, entry)))).length;
 }
 
 // The cloud's copy, one array per metal in METALS order, without the
