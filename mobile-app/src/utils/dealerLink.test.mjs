@@ -155,28 +155,74 @@ test('a bad link with a throwing onFail does not throw before returning', () => 
   assert.ok(result instanceof Promise);
 });
 
-test('a swallowed onFail error is logged in a dev build only', async () => {
-  const boom = () => { throw new Error('no alert'); };
+// Sets __DEV__ for fn and puts back whatever was there before, absent included
+async function withDev(value, fn) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, '__DEV__');
+  const prior = globalThis.__DEV__;
+  if (value === undefined) delete globalThis.__DEV__;
+  else globalThis.__DEV__ = value;
+  try {
+    return await fn();
+  } finally {
+    if (had) globalThis.__DEV__ = prior;
+    else delete globalThis.__DEV__;
+  }
+}
+
+// Swaps console.warn for fn's run and hands back what it was called with
+async function captureWarn(fn, warn) {
   const warned = [];
   const realWarn = console.warn;
-  console.warn = (...args) => { warned.push(args); };
+  console.warn = warn || ((...args) => { warned.push(args); });
   try {
-    delete globalThis.__DEV__;
-    assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
-    assert.equal(warned.length, 0);
-    globalThis.__DEV__ = false;
-    assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
-    assert.equal(warned.length, 0);
-    globalThis.__DEV__ = true;
-    assert.equal(await openDealerLink('https://apmex.com', () => Promise.reject(new Error('no browser')), boom), false);
-    assert.equal(warned.length, 1);
-    assert.equal(warned[0][1].message, 'no alert');
-    assert.equal(await openDealerLink('https://apmex.com', () => {}, boom), true);
-    assert.equal(warned.length, 1);
+    await fn();
   } finally {
     console.warn = realWarn;
-    delete globalThis.__DEV__;
   }
+  return warned;
+}
+
+const boom = () => { throw new Error('no alert'); };
+const dead = () => Promise.reject(new Error('no browser'));
+
+test('a swallowed onFail error is logged in a dev build only', async () => {
+  for (const dev of [undefined, false]) {
+    const warned = await captureWarn(() => withDev(dev, async () => {
+      assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
+      assert.equal(await openDealerLink('https://apmex.com', dead, boom), false);
+    }));
+    assert.equal(warned.length, 0, `__DEV__ ${dev}`);
+  }
+  const warned = await captureWarn(() => withDev(true, async () => {
+    assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
+    assert.equal(await openDealerLink('https://apmex.com', dead, boom), false);
+    assert.equal(await openDealerLink('https://apmex.com', () => {}, boom), true);
+  }));
+  assert.equal(warned.length, 2);
+  for (const [prefix, err] of warned) {
+    assert.match(prefix, /^\[dealerLink\] /);
+    assert.equal(err.message, 'no alert');
+  }
+});
+
+test('a dev build log that throws never makes the open throw or reject', async () => {
+  const throwingWarn = () => { throw new Error('log handler'); };
+  await captureWarn(() => withDev(true, async () => {
+    let result;
+    assert.doesNotThrow(() => { result = openDealerLink('tel:5551234', () => {}, boom); });
+    assert.equal(await result, false);
+    assert.equal(await openDealerLink('https://apmex.com', dead, boom), false);
+  }), throwingWarn);
+});
+
+test('the __DEV__ helper puts back a prior value', async () => {
+  await withDev('outer', async () => {
+    await withDev(true, async () => { assert.equal(globalThis.__DEV__, true); });
+    assert.equal(globalThis.__DEV__, 'outer');
+    await withDev(undefined, async () => { assert.equal('__DEV__' in globalThis, false); });
+    assert.equal(globalThis.__DEV__, 'outer');
+  });
+  assert.equal('__DEV__' in globalThis, false);
 });
 
 test('a show that throws still turns an older notice dismiss into a no-op', () => {
