@@ -2496,9 +2496,10 @@ function AppContent() {
   // They're kept by holding rather than counted, so one queued or sent while
   // the count reads, or one still out after a sign out, can't offset another.
   const deletesSendingRef = useRef(new Set());
-  // Queued deletes from the list that found no row, each with its account.
-  // They wait for the sync only so a kill can't upload their holding again,
-  // and a sign out loses nothing with them, so it doesn't count them.
+  // Queued deletes with no row whose lookup found none, from the list or the
+  // sync, each with its account. They wait for the sync only so a kill can't
+  // upload their holding again, and a sign out loses nothing with them, so it
+  // doesn't count them. A queued delete that names a row still counts.
   const deletesRowlessRef = useRef(new Set());
   // Numbers the deletes started for each holding. A delete still out when a
   // later one of the same holding starts, as after a restore brought it back,
