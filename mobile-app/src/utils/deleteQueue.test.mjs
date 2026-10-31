@@ -209,7 +209,7 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
   const send = body.indexOf('await sendAllWithin(toDelete,');
   const fetch = body.indexOf('const runSync = () => fullSync(');
   assert.ok(edits > 0 && send > edits && fetch > send);
-  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*if \(accountChanged\(\)\) return false;/);
+  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*deletesLetGo = true;\n\s*if \(accountChanged\(\)\) return false;/);
   assert.match(body, /unsent \+= unsentDeletes\.length;/);
   // Each send is marked on its way, so a sign out counts it once
   const sendBody = body.slice(send, body.indexOf('resendsBy, accountChanged);', send));
@@ -235,7 +235,7 @@ test('a holding whose delete was queued never goes up, even once the delete is d
 test('a delete that found no row leaves the queue only once the stack without its holding is stored', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n(\s*\/\/.*\n)*\s*if \(!accountChanged\(\)\) deletesRowlessRef\.current\.add\(entry\);\n\s*return \{ error: null \};/);
+  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n(\s*\/\/.*\n)*\s*if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);\n\s*return \{ error: null \};/);
   // dropped from the queue at once are only the deletes that went to a row
   assert.match(body, /const dropNow = doneDeletes\.filter\(\(entry\) => !rowlessDone\.includes\(entry\)\);/);
   assert.match(body, /withoutDeletes\(queue, dropNow\)/);
@@ -330,36 +330,57 @@ test('a delete knows when a later one of the same holding has started', () => {
 
 
 // The sync marks a holding rowless without asking whether a later delete of
-// it has started, since no list delete can start while the sync runs: the
-// delete gate refuses one at the tap and again at the confirm. These hold
-// that gate, so a change that opens it fails here rather than let a sync's
-// mark hide a later delete from the Sign Out count.
+// it has started, since no list delete can start while the sync holds the
+// delete gate shut: the gate refuses one at the tap and again at the confirm,
+// and the sync waits for one already out. A lookup the sync let go of could
+// land past the sync's end, so it doesn't mark. These hold all of that, so a
+// change that opens the gate fails here rather than let a sync's mark hide a
+// later delete from the Sign Out count.
 test('the sync\'s own rowless mark is held by the delete gate', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
-  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  // The sync shuts the gate before its sends and opens it only in its finally
+  const end = app.indexOf('// A change away from a signed-in account stops', start);
+  assert.ok(start > 0 && end > start);
+  const body = app.slice(start, end);
+  // The sync shuts the gate, waits for the writes already out, and only then
+  // sends and marks, opening the gate only in its finally
   const shut = body.indexOf('isSyncingRef.current = true;');
+  const settled = body.indexOf('await holdingWrites.settled(');
   const mark = body.indexOf('deletesRowlessRef.current.add(entry);');
   const tail = body.lastIndexOf('} finally {');
   const open = body.indexOf('isSyncingRef.current = false;');
-  assert.ok(shut > 0 && mark > shut && tail > mark && open > tail);
+  assert.ok(shut > 0 && settled > shut && mark > settled && tail > mark && open > tail);
   // and only the sync moves it
   assert.equal(app.split('isSyncingRef.current = ').length, 3);
+  // A lookup the sync let go of doesn't mark, so no mark lands once the
+  // gate is open
+  const sends = body.indexOf('await sendAllWithin(toDelete,');
+  const letGo = body.indexOf('deletesLetGo = true;');
+  assert.ok(sends > 0 && mark > sends && letGo > mark && tail > letGo);
+  assert.match(body, /let deletesLetGo = false;\n\s*const unsentDeletes = await sendAllWithin\(/);
+  assert.match(body, /if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);/);
+  assert.equal(body.split('deletesRowlessRef.current.add(').length, 2);
 
-  // The list delete is the only delete that starts a turn or joins the queue
+  // The list delete is the only delete that starts a turn or joins the
+  // queue, and it's a tracked write, so a sync waits for one already out
   assert.equal(app.split('sendListDelete(').length, 2);
   assert.equal(app.split('deleteTurnsRef.current.start(').length, 2);
   assert.doesNotMatch(app, /withQueuedDelete\(/);
+  assert.match(app, /await trackHoldingWrite\(\(\) => sendListDelete\(\{/);
 
   // Its gate reads the sync's ref and is checked at the tap and the confirm,
-  // each before the delete takes its turn or is sent
-  const handler = app.slice(app.indexOf('const deleteItem = (id, metal) => {'));
-  assert.match(handler, /const syncing = \(\) => \{\n\s*if \(!userIdRef\.current \|\| !isSyncingRef\.current\) return false;\n\s*Alert\.alert\('Syncing'/);
-  const ask = handler.indexOf("Alert.alert(\n      'Delete Item',");
+  // each before the delete takes its turn or is sent, with nothing awaited
+  // between the confirm's check and the tracked write
+  const handlerAt = app.indexOf('const deleteItem = (id, metal) => {');
+  assert.ok(handlerAt > 0);
+  const handler = app.slice(handlerAt);
+  assert.match(handler, /const syncing = \(\) => \{\s*if \(!userIdRef\.current \|\| !isSyncingRef\.current\) return false;\s*Alert\.alert\('Syncing'/);
+  const ask = handler.search(/Alert\.alert\(\s*'Delete Item',/);
   const confirm = handler.indexOf('onPress: async () => {', ask);
   const turn = handler.indexOf('deleteTurnsRef.current.start(');
-  const send = handler.indexOf('sendListDelete(');
-  assert.ok(ask > 0 && confirm > ask && turn > confirm && send > turn);
+  const track = handler.indexOf('await trackHoldingWrite(() => sendListDelete(');
+  assert.ok(ask > 0 && confirm > ask && turn > confirm && track > turn);
   assert.match(handler.slice(0, ask), /\n\s*if \(syncing\(\)\) return;\n/);
-  assert.match(handler.slice(confirm, turn), /\n\s*if \(syncing\(\)\) return;\n/);
+  const check = handler.indexOf('if (syncing()) return;', confirm);
+  assert.ok(check > confirm && turn > check);
+  assert.doesNotMatch(handler.slice(check, track), /\bawait\b/);
 });
