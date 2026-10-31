@@ -252,7 +252,22 @@ test('a sign out leaves out a queued delete that found no row', () => {
   const rowlessEntry = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
   const queue = [byRow, { ...rowlessEntry }];
   // Matched by holding, not by object
-  assert.equal(queuedNotSending(queue, new Set([rowlessEntry]), 'u1'), 1);
+  assert.equal(queuedNotSending(queue, new Set(), 'u1', new Set([rowlessEntry])), 1);
+});
+
+test('a rowless mark settles only a queued delete with no row', () => {
+  const mark = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
+  // An earlier delete of the holding named its row, which a lookup by local
+  // id missed, so that row is still to send
+  const named = { userId: 'u1', rowId: 'row-55', localId: 55, metal: 'silver' };
+  assert.equal(queuedNotSending([named], new Set(), 'u1', new Set([mark])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([mark])), 0);
+  // One on its way still settles it, row or not
+  assert.equal(queuedNotSending([named], new Set([mark]), 'u1', new Set([mark])), 0);
+  // Another account's mark, or another holding's, settles nothing
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([{ ...mark, userId: 'u2' }])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([{ ...mark, metal: 'gold' }])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], null, 'u1', null), 1);
 });
 
 test('the sync takes a rowless delete off the queue only past the restore check and with the cloud copy in state', () => {
@@ -269,7 +284,7 @@ test('the sync takes a rowless delete off the queue only past the restore check 
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
-  assert.match(app, /const settledDeletes = new Set\(\[\.\.\.deletesSendingRef\.current, \.\.\.deletesRowlessRef\.current\]\);\n\s*const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, settledDeletes, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
+  assert.match(app, /const deletesLeft = queuedDeletes\n\s*\? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId, deletesRowlessRef\.current\)\n\s*: 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);
@@ -292,7 +307,7 @@ test('a sign out starts the marks on queued deletes afresh', () => {
   // A stale mark from before the clear would hide a delete queued after it
   const before = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
   const after = [{ userId: 'u1', rowId: null, localId: 55, metal: 'silver' }];
-  assert.equal(queuedNotSending(after, new Set([before]), 'u1'), 0);
+  assert.equal(queuedNotSending(after, new Set(), 'u1', new Set([before])), 0);
   assert.equal(queuedNotSending(after, new Set(), 'u1'), 1);
 });
 

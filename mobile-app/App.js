@@ -3321,9 +3321,13 @@ function AppContent() {
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
-    // as does one that found no row, which has nothing left to send
-    const settledDeletes = new Set([...deletesSendingRef.current, ...deletesRowlessRef.current]);
-    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, settledDeletes, userId) : 1;
+    // as does one with no row whose holding found none, which has nothing
+    // left to send. A rowless mark clears only with a sign out or a later
+    // list delete that queues, which holds while only list deletes add
+    // entries to the queue.
+    const deletesLeft = queuedDeletes
+      ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId, deletesRowlessRef.current)
+      : 1;
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
       + deletesLeft;
   };
