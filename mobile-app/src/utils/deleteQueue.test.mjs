@@ -209,7 +209,7 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
   const send = body.indexOf('await sendAllWithin(toDelete,');
   const fetch = body.indexOf('const runSync = () => fullSync(');
   assert.ok(edits > 0 && send > edits && fetch > send);
-  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*deletesLetGo = true;\n\s*if \(accountChanged\(\)\) return false;/);
+  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*\} finally \{\n(\s*\/\/.*\n)*\s*deletesLetGo = true;\n\s*\}\n\s*if \(accountChanged\(\)\) return false;/);
   assert.match(body, /unsent \+= unsentDeletes\.length;/);
   // Each send is marked on its way, so a sign out counts it once
   const sendBody = body.slice(send, body.indexOf('resendsBy, accountChanged);', send));
@@ -356,7 +356,9 @@ test('the sync\'s own rowless mark is held by the delete gate', () => {
   const sends = body.indexOf('await sendAllWithin(toDelete,');
   const letGo = body.indexOf('deletesLetGo = true;');
   assert.ok(sends > 0 && mark > sends && letGo > mark && tail > letGo);
-  assert.match(body, /let deletesLetGo = false;\n\s*const unsentDeletes = await sendAllWithin\(/);
+  // set in a finally, so the guard holds even if the sends ever throw
+  assert.match(body, /let deletesLetGo = false;\n\s*let unsentDeletes;\n\s*try \{\n\s*unsentDeletes = await sendAllWithin\(/);
+  assert.equal(body.split('deletesLetGo = true;').length, 2);
   assert.match(body, /if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);/);
   assert.equal(body.split('deletesRowlessRef.current.add(').length, 2);
 
