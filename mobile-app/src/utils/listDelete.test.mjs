@@ -302,6 +302,67 @@ test('the latest delete marks the holding rowless when its own queue write faile
   assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 0);
 });
 
+test('a rowless delete whose queue save failed marks its holding and settles nothing else', async () => {
+  const seen = { sending: null };
+  let log;
+  const { ctx, storage, pendingDeletes, marks, queue, log: steps, state } = setup({
+    findRow: async (localId, metal) => {
+      log.push(`find:${metal}/${localId}`);
+      seen.sending = marks.sending.size;
+      return null;
+    },
+  });
+  // Another holding's delete is queued. A holding already queued saves
+  // nothing, so only one not yet queued can fail on the save. A failed read
+  // is covered above.
+  log = steps;
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: null, localId: 56, metal: 'silver' }]);
+  log.length = 0;
+  storage.failing.set = 1;
+  assert.equal(await sendListDelete(ctx), 'rowless');
+  assert.equal(storage.failing.set, 0);
+  // Nothing deleted and nothing taken off the queue
+  assert.deepEqual(log, ['queue-fail', 'find:silver/55']);
+  // Never marked on its way, since it never joined the queue
+  assert.equal(seen.sending, 0);
+  assert.equal(marks.sending.size, 0);
+  assert.equal(marks.rowless.size, 1);
+  assert.equal(state.noted, 0);
+  assert.equal(state.putBack, 0);
+  // Its mark has no entry to settle, so the other holding's still counts
+  assert.deepEqual(queue().map((e) => e.localId), [56]);
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+});
+
+test('a delete whose queue write failed leaves no mark once the account changes during its lookup', async () => {
+  const seen = { sending: null };
+  const { ctx, storage, pendingDeletes, marks, queue, state } = setup({
+    findRow: async () => {
+      seen.sending = marks.sending.size;
+      state.account = false;
+      return null;
+    },
+  });
+  // An earlier delete of the holding is queued, to show the change leaves it
+  // there, and this one's queue write fails on the read before it
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: null, localId: 55, metal: 'silver' }]);
+  const getItem = storage.getItem;
+  let reads = 0;
+  storage.getItem = async (key) => {
+    reads += 1;
+    if (reads === 1) throw new Error('disk unreadable');
+    return getItem(key);
+  };
+  assert.equal(await sendListDelete(ctx), 'left');
+  assert.equal(reads, 1);
+  assert.equal(seen.sending, 0);
+  assert.equal(marks.rowless.size, 0);
+  assert.equal(marks.sending.size, 0);
+  assert.equal(state.putBack, 0);
+  assert.equal(state.noted, 0);
+  assert.deepEqual(queue().map((e) => e.localId), [55]);
+});
+
 test('a rowless delete leaves an earlier queued delete that names a row in the count', async () => {
   const { ctx, pendingDeletes, marks, queue } = setup({ findRow: async () => null });
   // An earlier delete queued with its row, which this lookup by local id misses
