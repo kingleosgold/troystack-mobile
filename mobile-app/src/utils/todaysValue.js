@@ -60,6 +60,27 @@ export function offersTodaysValue(form, { editing, today }) {
  * becomes today's spot so the auto premium works out to nothing, and a total
  * typed earlier is cleared so the cost basis follows the new price.
  */
-export function applyTodaysValue(form, { value, spot }) {
-  return { ...form, unitPrice: value, spotPrice: String(spot), premium: '0', costBasis: '' };
+export function applyTodaysValue(form, { value, spot, metal }) {
+  return {
+    ...form, unitPrice: value, spotPrice: String(spot), premium: '0', costBasis: '',
+    todaysValueFor: { metal, ozt: form.ozt, value },
+  };
+}
+
+/**
+ * The add form once its metal or weight may have changed. Today's value was
+ * worked out from the metal and ozt it was taken for, so if either changes
+ * while the price is still that value, the price clears and the chip offers a
+ * fresh one. A price the user typed over it stays and the mark comes off.
+ */
+export function formAfterTodaysValueChange(form, metal) {
+  const mark = form?.todaysValueFor;
+  if (!mark) return form;
+  if (form.unitPrice !== mark.value) {
+    const { todaysValueFor, ...rest } = form;
+    return rest;
+  }
+  if (mark.metal === metal && form.ozt === mark.ozt) return form;
+  const { todaysValueFor, ...rest } = form;
+  return { ...rest, unitPrice: '', premium: '0' };
 }

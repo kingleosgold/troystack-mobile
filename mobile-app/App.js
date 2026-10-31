@@ -46,7 +46,7 @@ import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
-import { todaysUnitValue, offersTodaysValue, applyTodaysValue, localDateString } from './src/utils/todaysValue';
+import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -3814,6 +3814,11 @@ function AppContent() {
       setForm(prev => ({ ...prev, premium: Math.max(0, calculatedPremium).toFixed(2) }));
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
+
+  // Today's value fits only the metal and weight it was taken for, so a change to either clears it
+  useEffect(() => {
+    setForm(prev => formAfterTodaysValueChange(prev, metalTab));
+  }, [metalTab, form.ozt]);
 
   // ============================================
   // AUTHENTICATION & DATA
@@ -8571,12 +8576,6 @@ function AppContent() {
         const platinumPrice = raw.prices.platinum?.price;
         const palladiumPrice = raw.prices.palladium?.price;
 
-        setLiveSpotMetals({
-          silver: !!(silverPrice && silverPrice > 10),
-          gold: !!(goldPrice && goldPrice > 1000),
-          platinum: !!(platinumPrice && platinumPrice > 100),
-          palladium: !!(palladiumPrice && palladiumPrice > 100),
-        });
         if (silverPrice && silverPrice > 10) {
           setSilverSpot(silverPrice);
           await AsyncStorage.setItem('stack_silver_spot', silverPrice.toString());
@@ -8596,6 +8595,12 @@ function AppContent() {
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
+        setLiveSpotMetals({
+          silver: !!(silverPrice && silverPrice > 10),
+          gold: !!(goldPrice && goldPrice > 1000),
+          platinum: !!(platinumPrice && platinumPrice > 100),
+          palladium: !!(palladiumPrice && palladiumPrice > 100),
+        });
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
 
@@ -15629,7 +15634,7 @@ function AppContent() {
                       <TouchableOpacity
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          setForm(p => applyTodaysValue(p, { value, spot }));
+                          setForm(p => applyTodaysValue(p, { value, spot, metal: metalTab }));
                           setSpotPriceSource(null);
                           setHistoricalSpotSuggestion(null);
                           setFormErrors(e => ({ ...e, unitPrice: false }));

@@ -1,7 +1,7 @@
 // Run with: node --test mobile-app/src/utils/todaysValue.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { todaysUnitValue, offersTodaysValue, applyTodaysValue, localDateString } from './todaysValue.js';
+import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './todaysValue.js';
 
 const today = '2026-10-31';
 
@@ -51,7 +51,7 @@ test('offered with no date or today\'s, never on a past or future date', () => {
 
 test('taking today\'s value sets today\'s spot, no premium and clears a typed total', () => {
   const form = { productName: 'American Silver Eagle', ozt: '1', quantity: '3', unitPrice: '', spotPrice: '17.10', premium: '4.00', costBasis: '120.00', taxes: '2', shipping: '' };
-  const after = applyTodaysValue(form, { value: '77.12', spot: 77.123 });
+  const after = applyTodaysValue(form, { value: '77.12', spot: 77.123, metal: 'silver' });
   assert.equal(after.unitPrice, '77.12');
   assert.equal(after.spotPrice, '77.123');
   assert.equal(after.premium, '0');
@@ -64,4 +64,39 @@ test('taking today\'s value sets today\'s spot, no premium and clears a typed to
 test('the local date string is the phone\'s calendar day', () => {
   assert.equal(localDateString(new Date(2026, 0, 5, 23, 59)), '2026-01-05');
   assert.equal(localDateString(new Date(2026, 11, 31, 0, 1)), '2026-12-31');
+});
+
+const taken = () => applyTodaysValue(
+  { productName: 'American Silver Eagle', ozt: '1', quantity: '1', unitPrice: '', spotPrice: '', premium: '0', costBasis: '' },
+  { value: '77.12', spot: 77.123, metal: 'silver' },
+);
+
+test('the price taken stays while its metal and weight do', () => {
+  const form = taken();
+  assert.equal(formAfterTodaysValueChange(form, 'silver'), form);
+});
+
+test('a metal change clears the price taken, so gold never saves at silver\'s value', () => {
+  const after = formAfterTodaysValueChange({ ...taken(), productName: 'American Gold Eagle' }, 'gold');
+  assert.equal(after.unitPrice, '');
+  assert.equal(after.premium, '0');
+  assert.equal(after.todaysValueFor, undefined);
+  assert.equal(after.productName, 'American Gold Eagle');
+});
+
+test('a weight change clears the price taken', () => {
+  const after = formAfterTodaysValueChange({ ...taken(), ozt: '10' }, 'silver');
+  assert.equal(after.unitPrice, '');
+  assert.equal(after.todaysValueFor, undefined);
+});
+
+test('a price typed over today\'s value stays through a change and loses the mark', () => {
+  const after = formAfterTodaysValueChange({ ...taken(), unitPrice: '30', ozt: '10' }, 'gold');
+  assert.equal(after.unitPrice, '30');
+  assert.equal(after.todaysValueFor, undefined);
+});
+
+test('a form with no price taken passes through untouched', () => {
+  const form = { unitPrice: '30', ozt: '1' };
+  assert.equal(formAfterTodaysValueChange(form, 'gold'), form);
 });
