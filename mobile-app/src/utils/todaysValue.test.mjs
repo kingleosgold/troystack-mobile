@@ -1,7 +1,9 @@
 // Run with: node --test mobile-app/src/utils/todaysValue.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { todaysUnitValue, offersTodaysValue } from './todaysValue.js';
+import { todaysUnitValue, offersTodaysValue, applyTodaysValue, localDateString } from './todaysValue.js';
+
+const today = '2026-10-31';
 
 test('one unit is its weight times live spot, to the cent', () => {
   assert.equal(todaysUnitValue({ ozt: '1', spot: 77.123, live: true }), '77.12');
@@ -29,13 +31,37 @@ test('a value that rounds to nothing is not offered', () => {
 });
 
 test('offered on a new add with no positive price typed', () => {
-  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: false }), true);
-  assert.equal(offersTodaysValue({ unitPrice: '0' }, { editing: false }), true);
-  assert.equal(offersTodaysValue({ unitPrice: '.' }, { editing: false }), true);
-  assert.equal(offersTodaysValue({}, { editing: false }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: false, today }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '0' }, { editing: false, today }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '.' }, { editing: false, today }), true);
+  assert.equal(offersTodaysValue({}, { editing: false, today }), true);
 });
 
 test('not offered once a price is typed, or on any edit', () => {
-  assert.equal(offersTodaysValue({ unitPrice: '32.50' }, { editing: false }), false);
-  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: true }), false);
+  assert.equal(offersTodaysValue({ unitPrice: '32.50' }, { editing: false, today }), false);
+  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: true, today }), false);
+});
+
+test('offered with no date or today\'s, never on a past or future date', () => {
+  assert.equal(offersTodaysValue({ unitPrice: '', datePurchased: '' }, { editing: false, today }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '', datePurchased: today }, { editing: false, today }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '', datePurchased: '2019-05-01' }, { editing: false, today }), false);
+  assert.equal(offersTodaysValue({ unitPrice: '', datePurchased: '2026-11-01' }, { editing: false, today }), false);
+});
+
+test('taking today\'s value sets today\'s spot, no premium and clears a typed total', () => {
+  const form = { productName: 'American Silver Eagle', ozt: '1', quantity: '3', unitPrice: '', spotPrice: '17.10', premium: '4.00', costBasis: '120.00', taxes: '2', shipping: '' };
+  const after = applyTodaysValue(form, { value: '77.12', spot: 77.123 });
+  assert.equal(after.unitPrice, '77.12');
+  assert.equal(after.spotPrice, '77.123');
+  assert.equal(after.premium, '0');
+  assert.equal(after.costBasis, '');
+  assert.equal(after.quantity, '3');
+  assert.equal(after.taxes, '2');
+  assert.equal(after.productName, 'American Silver Eagle');
+});
+
+test('the local date string is the phone\'s calendar day', () => {
+  assert.equal(localDateString(new Date(2026, 0, 5, 23, 59)), '2026-01-05');
+  assert.equal(localDateString(new Date(2026, 11, 31, 0, 1)), '2026-12-31');
 });
