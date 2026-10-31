@@ -115,3 +115,42 @@ test('App.js wraps the dealer alert so taps cannot stack it', () => {
   assert.match(app, /const showDealerLinkFailed = onceUntilDismissed\(\(dismiss\) => \{/);
   assert.match(app, /\[\{ text: 'OK', onPress: dismiss \}\],\s*\{ cancelable: true, onDismiss: dismiss \}/);
 });
+
+test('a late dismiss from a stale notice does not open the gate of a newer one', () => {
+  let t = 0;
+  const dismissals = [];
+  const notify = onceUntilDismissed((dismiss) => { dismissals.push(dismiss); }, { now: () => t, staleMs: 10000 });
+  assert.equal(notify(), true);
+  t = 11000;
+  assert.equal(notify(), true);
+  dismissals[0]();
+  t = 12000;
+  assert.equal(notify(), false);
+  dismissals[1]();
+  assert.equal(notify(), true);
+  assert.equal(dismissals.length, 3);
+});
+
+test('a dismiss fired twice still clears only its own notice', () => {
+  let t = 0;
+  const dismissals = [];
+  const notify = onceUntilDismissed((dismiss) => { dismissals.push(dismiss); }, { now: () => t });
+  assert.equal(notify(), true);
+  dismissals[0]();
+  assert.equal(notify(), true);
+  dismissals[0]();
+  assert.equal(notify(), false);
+});
+
+test('an onFail that throws never makes the open reject', async () => {
+  const boom = () => { throw new Error('no alert'); };
+  assert.equal(await openDealerLink('https://apmex.com', () => Promise.reject(new Error('no browser')), boom), false);
+  assert.equal(await openDealerLink('javascript:alert(1)', () => {}, boom), false);
+});
+
+test('a bad link with a throwing onFail does not throw before returning', () => {
+  const boom = () => { throw new Error('no alert'); };
+  let result;
+  assert.doesNotThrow(() => { result = openDealerLink('tel:5551234', () => {}, boom); });
+  assert.ok(result instanceof Promise);
+});
