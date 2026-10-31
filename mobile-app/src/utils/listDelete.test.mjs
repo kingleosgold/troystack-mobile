@@ -302,6 +302,17 @@ test('the latest delete marks the holding rowless when its own queue write faile
   assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 0);
 });
 
+test('a rowless delete leaves an earlier queued delete that names a row in the count', async () => {
+  const { ctx, pendingDeletes, marks, queue } = setup({ findRow: async () => null });
+  // An earlier delete queued with its row, which this lookup by local id misses
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: 'row-55', localId: 55, metal: 'silver' }]);
+  assert.equal(await sendListDelete(ctx), 'rowless');
+  assert.deepEqual(queue().map((e) => e.rowId), ['row-55']);
+  assert.equal(marks.rowless.size, 1);
+  // The row is still to send, so Sign Out counts it
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+});
+
 test('a rowless delete whose queue write failed is not marked once a later delete started', async () => {
   const { ctx, storage, turns, marks } = setup({
     findRow: async () => {
