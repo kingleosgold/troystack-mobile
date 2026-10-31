@@ -3815,10 +3815,10 @@ function AppContent() {
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
 
-  // Today's value fits only the metal and weight it was taken for, so a change to either clears it
+  // Today's value fits only the metal and weight it was taken for and no date but today's, so a change clears it
   useEffect(() => {
-    setForm(prev => formAfterTodaysValueChange(prev, metalTab));
-  }, [metalTab, form.ozt]);
+    setForm(prev => formAfterTodaysValueChange(prev, metalTab, localDateString()));
+  }, [metalTab, form.ozt, form.datePurchased]);
 
   // ============================================
   // AUTHENTICATION & DATA

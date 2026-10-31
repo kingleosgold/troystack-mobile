@@ -73,11 +73,11 @@ const taken = () => applyTodaysValue(
 
 test('the price taken stays while its metal and weight do', () => {
   const form = taken();
-  assert.equal(formAfterTodaysValueChange(form, 'silver'), form);
+  assert.equal(formAfterTodaysValueChange(form, 'silver', today), form);
 });
 
 test('a metal change clears the price taken, so gold never saves at silver\'s value', () => {
-  const after = formAfterTodaysValueChange({ ...taken(), productName: 'American Gold Eagle' }, 'gold');
+  const after = formAfterTodaysValueChange({ ...taken(), productName: 'American Gold Eagle' }, 'gold', today);
   assert.equal(after.unitPrice, '');
   assert.equal(after.premium, '0');
   assert.equal(after.todaysValueFor, undefined);
@@ -85,18 +85,36 @@ test('a metal change clears the price taken, so gold never saves at silver\'s va
 });
 
 test('a weight change clears the price taken', () => {
-  const after = formAfterTodaysValueChange({ ...taken(), ozt: '10' }, 'silver');
+  const after = formAfterTodaysValueChange({ ...taken(), ozt: '10' }, 'silver', today);
   assert.equal(after.unitPrice, '');
   assert.equal(after.todaysValueFor, undefined);
 });
 
 test('a price typed over today\'s value stays through a change and loses the mark', () => {
-  const after = formAfterTodaysValueChange({ ...taken(), unitPrice: '30', ozt: '10' }, 'gold');
+  const after = formAfterTodaysValueChange({ ...taken(), unitPrice: '30', ozt: '10' }, 'gold', today);
   assert.equal(after.unitPrice, '30');
   assert.equal(after.todaysValueFor, undefined);
 });
 
 test('a form with no price taken passes through untouched', () => {
   const form = { unitPrice: '30', ozt: '1' };
-  assert.equal(formAfterTodaysValueChange(form, 'gold'), form);
+  assert.equal(formAfterTodaysValueChange(form, 'gold', today), form);
+});
+
+test('a past purchase date clears the price taken, so no made-up premium saves', () => {
+  const after = formAfterTodaysValueChange({ ...taken(), datePurchased: '2019-05-01' }, 'silver', today);
+  assert.equal(after.unitPrice, '');
+  assert.equal(after.premium, '0');
+  assert.equal(after.todaysValueFor, undefined);
+});
+
+test('today\'s date keeps the price taken', () => {
+  const form = { ...taken(), datePurchased: today };
+  assert.equal(formAfterTodaysValueChange(form, 'silver', today), form);
+});
+
+test('a price typed over it stays when a past date is picked', () => {
+  const after = formAfterTodaysValueChange({ ...taken(), unitPrice: '30', datePurchased: '2019-05-01' }, 'silver', today);
+  assert.equal(after.unitPrice, '30');
+  assert.equal(after.todaysValueFor, undefined);
 });

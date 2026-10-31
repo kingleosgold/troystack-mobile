@@ -68,19 +68,23 @@ export function applyTodaysValue(form, { value, spot, metal }) {
 }
 
 /**
- * The add form once its metal or weight may have changed. Today's value was
- * worked out from the metal and ozt it was taken for, so if either changes
+ * The add form once its metal, weight or date may have changed. Today's value
+ * was worked out from the metal and ozt it was taken for, so if either changes
  * while the price is still that value, the price clears and the chip offers a
- * fresh one. A price the user typed over it stays and the mark comes off.
+ * fresh one. So does a purchase date other than today, since that day's spot
+ * against today's value would save as a made-up premium. A price the user
+ * typed over it stays and the mark comes off.
  */
-export function formAfterTodaysValueChange(form, metal) {
+export function formAfterTodaysValueChange(form, metal, today) {
   const mark = form?.todaysValueFor;
   if (!mark) return form;
   if (form.unitPrice !== mark.value) {
     const { todaysValueFor, ...rest } = form;
     return rest;
   }
-  if (mark.metal === metal && form.ozt === mark.ozt) return form;
+  const date = String(form.datePurchased ?? '').trim();
+  const dateFits = !date || date === today;
+  if (mark.metal === metal && form.ozt === mark.ozt && dateFits) return form;
   const { todaysValueFor, ...rest } = form;
   return { ...rest, unitPrice: '', premium: '0' };
 }
