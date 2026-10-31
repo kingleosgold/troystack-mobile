@@ -33,9 +33,14 @@ export function openDealerLink(url, openURL, onFail) {
       onFail();
     } catch (e) {
       // Nothing more to tell the user, but a dev build says why the notice
-      // didn't show. __DEV__ only exists under React Native.
+      // didn't show. __DEV__ only exists under React Native. The log has its
+      // own try, so a log handler that throws can't make the tap reject.
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn('[dealerLink] the failed-link notice threw', e);
+        try {
+          console.warn('[dealerLink] the failed-link notice threw', e);
+        } catch {
+          // Nowhere left to say it
+        }
       }
     }
     return false;
