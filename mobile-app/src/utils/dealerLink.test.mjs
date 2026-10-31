@@ -154,3 +154,48 @@ test('a bad link with a throwing onFail does not throw before returning', () => 
   assert.doesNotThrow(() => { result = openDealerLink('tel:5551234', () => {}, boom); });
   assert.ok(result instanceof Promise);
 });
+
+test('a swallowed onFail error is logged in a dev build only', async () => {
+  const boom = () => { throw new Error('no alert'); };
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => { warned.push(args); };
+  try {
+    delete globalThis.__DEV__;
+    assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
+    assert.equal(warned.length, 0);
+    globalThis.__DEV__ = false;
+    assert.equal(await openDealerLink('tel:5551234', () => {}, boom), false);
+    assert.equal(warned.length, 0);
+    globalThis.__DEV__ = true;
+    assert.equal(await openDealerLink('https://apmex.com', () => Promise.reject(new Error('no browser')), boom), false);
+    assert.equal(warned.length, 1);
+    assert.equal(warned[0][1].message, 'no alert');
+    assert.equal(await openDealerLink('https://apmex.com', () => {}, boom), true);
+    assert.equal(warned.length, 1);
+  } finally {
+    console.warn = realWarn;
+    delete globalThis.__DEV__;
+  }
+});
+
+test('a show that throws still turns an older notice dismiss into a no-op', () => {
+  let t = 0;
+  let calls = 0;
+  const dismissals = [];
+  const notify = onceUntilDismissed((dismiss) => {
+    calls += 1;
+    dismissals.push(dismiss);
+    if (calls === 2) throw new Error('boom');
+  }, { now: () => t, staleMs: 10000 });
+  assert.equal(notify(), true);
+  t = 11000;
+  assert.throws(() => notify());
+  assert.equal(notify(), true);
+  dismissals[0]();
+  dismissals[1]();
+  t = 12000;
+  assert.equal(notify(), false);
+  dismissals[2]();
+  assert.equal(notify(), true);
+});
