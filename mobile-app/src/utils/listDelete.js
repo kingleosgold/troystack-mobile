@@ -149,13 +149,16 @@ export async function sendListDelete({
     try {
       await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
       queued = true;
-      // One that only joined the queue now clears an earlier mark here, or
-      // Sign Out would count it as settled
-      if (!queuedFirst) dropRowlessMarks();
     } catch (err) {
       warn('Failed to queue the delete:', err);
     }
     if (queued) {
+      // It's queued with something still to send, so no rowless mark for the
+      // holding may count it as settled at Sign Out. That covers one that
+      // only joined the queue now, one whose retry write failed but whose
+      // first stands, and a sync that found no row and marked the holding
+      // while this delete was out.
+      dropRowlessMarks();
       noteQueued();
       return 'queued';
     }

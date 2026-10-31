@@ -281,6 +281,60 @@ test('a delete that joins the queue only on the retry clears the earlier rowless
   assert.equal(marks.rowless.size, 0);
 });
 
+test('a delete that goes back on the queue clears a rowless mark a sync set while it was out', async () => {
+  // A sync that outwaited the same hung add found no row and marked the
+  // holding while this delete waited. The delete goes back on the queue
+  // unsent, so the mark can't settle it at Sign Out.
+  let resolveWrites;
+  const earlierWrites = new Promise((resolve) => { resolveWrites = resolve; });
+  const { ctx, marks, queue } = setup({ earlierWrites });
+  const sent = sendListDelete(ctx);
+  await new Promise((resolve) => setImmediate(resolve));
+  marks.rowless.add({ userId: 'u1', rowId: null, localId: 55, metal: 'silver' });
+  resolveWrites(false);
+  assert.equal(await sent, 'queued');
+  assert.equal(marks.rowless.size, 0);
+  assert.deepEqual(queue().map((e) => e.localId), [55]);
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+});
+
+test('a failed send whose retry write fails keeps its first entry and clears the sync\'s mark', async () => {
+  // The lookup finds a row, so the retry writes the row onto the entry, and
+  // that write is the one that fails
+  let resolveDelete;
+  const deleting = new Promise((resolve) => { resolveDelete = resolve; });
+  const { ctx, marks, storage, queue, log, state } = setup({
+    deleteRow: async () => { await deleting; return { error: new Error('500') }; },
+  });
+  const sent = sendListDelete(ctx);
+  await new Promise((resolve) => setImmediate(resolve));
+  marks.rowless.add({ userId: 'u1', rowId: null, localId: 55, metal: 'silver' });
+  storage.failing.set = 1;
+  resolveDelete();
+  assert.equal(await sent, 'queued');
+  assert.ok(log.includes('queue-fail'));
+  assert.equal(storage.failing.set, 0);
+  assert.deepEqual(queue().map((e) => `${e.localId}/${e.rowId || '-'}`), ['55/-']);
+  assert.equal(marks.rowless.size, 0);
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+  assert.equal(state.putBack, 0);
+});
+
+test('a lookup that throws clears a rowless mark a sync set while it was out', async () => {
+  let resolveFind;
+  const finding = new Promise((resolve) => { resolveFind = resolve; });
+  const { ctx, marks, queue } = setup({
+    findRow: async () => { await finding; throw new Error('network'); },
+  });
+  const sent = sendListDelete(ctx);
+  await new Promise((resolve) => setImmediate(resolve));
+  marks.rowless.add({ userId: 'u1', rowId: null, localId: 55, metal: 'silver' });
+  resolveFind();
+  assert.equal(await sent, 'queued');
+  assert.equal(marks.rowless.size, 0);
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+});
+
 test('the latest delete marks the holding rowless when its own queue write failed', async () => {
   const { ctx, storage, pendingDeletes, turns, marks, queue } = setup({ findRow: async () => null });
   // An earlier delete of the holding is queued and left its mark to this one

@@ -3323,8 +3323,9 @@ function AppContent() {
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
     // as does one with no row whose holding found none, which has nothing
-    // left to send. A rowless mark is cleared by a sign out or by a later
-    // list delete that queues, the only kind that adds queue entries. A sync
+    // left to send. A rowless mark is cleared by a sign out, by a later
+    // list delete that queues, the only kind that adds queue entries, or by
+    // a list delete that goes back on the queue unsent. A sync
     // marks only while it holds the delete gate shut, so no list delete can
     // start between its lookup and its mark.
     const deletesLeft = queuedDeletes
