@@ -46,6 +46,7 @@ import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
+import { todaysUnitValue, offersTodaysValue } from './src/utils/todaysValue';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -15609,6 +15610,25 @@ function AppContent() {
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
                     <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
+
+                  {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}
+                  {offersTodaysValue(form, { editing: !!editingItem }) && (() => {
+                    const spot = { silver: silverSpot, gold: goldSpot, platinum: platinumSpot, palladium: palladiumSpot }[metalTab];
+                    const value = todaysUnitValue({ ozt: form.ozt, spot, live: spotPricesLive });
+                    if (!value) return null;
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setForm(p => ({ ...p, unitPrice: value }));
+                          setFormErrors(e => ({ ...e, unitPrice: false }));
+                        }}
+                        style={{ alignSelf: 'flex-start', marginTop: -4, marginBottom: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(212,168,67,0.3)', backgroundColor: 'rgba(212,168,67,0.06)' }}
+                      >
+                        <Text style={{ color: colors.gold, fontSize: scaledFonts.small }}>Not sure what you paid? Use today's value, ${formatCurrency(parseFloat(value))}</Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
 
                   {/* Accuracy indicators for historical spot prices */}
                   {spotPriceSource === 'price_log' && (

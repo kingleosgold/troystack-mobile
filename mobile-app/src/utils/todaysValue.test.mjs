@@ -1,0 +1,41 @@
+// Run with: node --test mobile-app/src/utils/todaysValue.test.mjs
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { todaysUnitValue, offersTodaysValue } from './todaysValue.js';
+
+test('one unit is its weight times live spot, to the cent', () => {
+  assert.equal(todaysUnitValue({ ozt: '1', spot: 77.123, live: true }), '77.12');
+  assert.equal(todaysUnitValue({ ozt: '10', spot: 77.125, live: true }), '771.25');
+  assert.equal(todaysUnitValue({ ozt: '0.1', spot: 4530, live: true }), '453.00');
+  assert.equal(todaysUnitValue({ ozt: 32.1507, spot: 77, live: true }), '2475.60');
+});
+
+test('no offer without a live spot, so the placeholder spot never becomes a price', () => {
+  assert.equal(todaysUnitValue({ ozt: '1', spot: 77, live: false }), null);
+  assert.equal(todaysUnitValue({ ozt: '1', spot: 77, live: undefined }), null);
+});
+
+test('no offer without a positive weight or spot', () => {
+  for (const ozt of ['', ' ', '0', '-1', 'abc', undefined, null, 0, NaN]) {
+    assert.equal(todaysUnitValue({ ozt, spot: 77, live: true }), null, String(ozt));
+  }
+  for (const spot of [0, -5, NaN, Infinity, undefined, null, '77']) {
+    assert.equal(todaysUnitValue({ ozt: '1', spot, live: true }), null, String(spot));
+  }
+});
+
+test('a value that rounds to nothing is not offered', () => {
+  assert.equal(todaysUnitValue({ ozt: '0.0001', spot: 1, live: true }), null);
+});
+
+test('offered on a new add with no positive price typed', () => {
+  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: false }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '0' }, { editing: false }), true);
+  assert.equal(offersTodaysValue({ unitPrice: '.' }, { editing: false }), true);
+  assert.equal(offersTodaysValue({}, { editing: false }), true);
+});
+
+test('not offered once a price is typed, or on any edit', () => {
+  assert.equal(offersTodaysValue({ unitPrice: '32.50' }, { editing: false }), false);
+  assert.equal(offersTodaysValue({ unitPrice: '' }, { editing: true }), false);
+});
