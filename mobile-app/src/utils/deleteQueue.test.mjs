@@ -349,6 +349,9 @@ test('the sync\'s own rowless mark is held by the delete gate', () => {
   const tail = body.lastIndexOf('} finally {');
   const open = body.indexOf('isSyncingRef.current = false;');
   assert.ok(shut > 0 && settled > shut && mark > settled && tail > mark && open > tail);
+  // and that finally waits on nothing before it opens the gate, so no mark
+  // can land while the gate is open and the sync hasn't ended
+  assert.doesNotMatch(body.slice(tail, open), /await/);
   // and only the sync moves it
   assert.equal(app.split('isSyncingRef.current = ').length, 3);
   // A lookup the sync let go of doesn't mark, so no mark lands once the
@@ -357,7 +360,7 @@ test('the sync\'s own rowless mark is held by the delete gate', () => {
   const letGo = body.indexOf('deletesLetGo = true;');
   assert.ok(sends > 0 && mark > sends && letGo > mark && tail > letGo);
   // set in a finally, so the guard holds even if the sends ever throw
-  assert.match(body, /let deletesLetGo = false;\n\s*let unsentDeletes;\n\s*try \{\n\s*unsentDeletes = await sendAllWithin\(/);
+  assert.match(body, /let deletesLetGo = false;\n\s*let unsentDeletes;\n\s*try \{\n(\s*\/\/.*\n)*\s*unsentDeletes = await sendAllWithin\(/);
   assert.equal(body.split('deletesLetGo = true;').length, 2);
   assert.match(body, /if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);/);
   assert.equal(body.split('deletesRowlessRef.current.add(').length, 2);
