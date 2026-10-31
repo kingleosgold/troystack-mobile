@@ -142,18 +142,23 @@ test('a dismiss fired twice still clears only its own notice', () => {
   assert.equal(notify(), false);
 });
 
+// An onFail that throws, and an open that rejects
+const boom = () => { throw new Error('no alert'); };
+const dead = () => Promise.reject(new Error('no browser'));
+
 test('an onFail that throws never makes the open reject', async () => {
-  const boom = () => { throw new Error('no alert'); };
   assert.equal(await openDealerLink('https://apmex.com', () => Promise.reject(new Error('no browser')), boom), false);
   assert.equal(await openDealerLink('javascript:alert(1)', () => {}, boom), false);
 });
 
 test('a bad link with a throwing onFail does not throw before returning', () => {
-  const boom = () => { throw new Error('no alert'); };
   let result;
   assert.doesNotThrow(() => { result = openDealerLink('tel:5551234', () => {}, boom); });
   assert.ok(result instanceof Promise);
 });
+
+// __DEV__ as the runner started, so the helper's test checks it was put back
+const devAtStart = { had: Object.prototype.hasOwnProperty.call(globalThis, '__DEV__'), value: globalThis.__DEV__ };
 
 // Sets __DEV__ for fn and puts back whatever was there before, absent included
 async function withDev(value, fn) {
@@ -182,9 +187,6 @@ async function captureWarn(fn, warn) {
   return warned;
 }
 
-const boom = () => { throw new Error('no alert'); };
-const dead = () => Promise.reject(new Error('no browser'));
-
 test('a swallowed onFail error is logged in a dev build only', async () => {
   for (const dev of [undefined, false]) {
     const warned = await captureWarn(() => withDev(dev, async () => {
@@ -206,13 +208,16 @@ test('a swallowed onFail error is logged in a dev build only', async () => {
 });
 
 test('a dev build log that throws never makes the open throw or reject', async () => {
-  const throwingWarn = () => { throw new Error('log handler'); };
+  let logged = 0;
+  const throwingWarn = () => { logged += 1; throw new Error('log handler'); };
   await captureWarn(() => withDev(true, async () => {
     let result;
     assert.doesNotThrow(() => { result = openDealerLink('tel:5551234', () => {}, boom); });
     assert.equal(await result, false);
     assert.equal(await openDealerLink('https://apmex.com', dead, boom), false);
   }), throwingWarn);
+  // Both reached the log, so the dev build check let them through
+  assert.equal(logged, 2);
 });
 
 test('the __DEV__ helper puts back a prior value', async () => {
@@ -222,7 +227,8 @@ test('the __DEV__ helper puts back a prior value', async () => {
     await withDev(undefined, async () => { assert.equal('__DEV__' in globalThis, false); });
     assert.equal(globalThis.__DEV__, 'outer');
   });
-  assert.equal('__DEV__' in globalThis, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(globalThis, '__DEV__'), devAtStart.had);
+  assert.equal(globalThis.__DEV__, devAtStart.value);
 });
 
 test('a show that throws still turns an older notice dismiss into a no-op', () => {
