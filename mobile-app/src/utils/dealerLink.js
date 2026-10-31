@@ -22,40 +22,46 @@ export function isWebUrl(url) {
 
 /**
  * Opens url with openURL (Linking.openURL in the app) and calls onFail when the
- * URL isn't a web link or the open fails. Never rejects. Resolves true when the
- * link opened and false when it didn't.
+ * URL isn't a web link or the open fails. Never rejects, even when onFail
+ * throws. Resolves true when the link opened and false when it didn't.
  */
 export function openDealerLink(url, openURL, onFail) {
-  if (!isWebUrl(url)) {
-    onFail();
-    return Promise.resolve(false);
-  }
+  // A notice that can't be shown leaves the tap where it was, but never as an
+  // unhandled rejection
+  const fail = () => {
+    try {
+      onFail();
+    } catch {
+      // nothing more to tell the user
+    }
+    return false;
+  };
+  if (!isWebUrl(url)) return Promise.resolve(fail());
   return Promise.resolve()
     .then(() => openURL(url.trim()))
-    .then(
-      () => true,
-      () => {
-        onFail();
-        return false;
-      }
-    );
+    .then(() => true, fail);
 }
 
 /**
  * Wraps show so a burst of failed taps puts up one notice, not a stack of
  * them. show gets a dismiss callback to call when the user closes the notice.
  * Until then, or until staleMs passes in case dismiss never fires, further
- * calls are dropped. Returns true when the notice was shown.
+ * calls are dropped. Each notice's dismiss clears only its own gate, so one
+ * that fires late, after staleMs let a newer notice up, doesn't open the gate
+ * under it. Returns true when the notice was shown.
  */
 export function onceUntilDismissed(show, { now = Date.now, staleMs = 10000 } = {}) {
   let shownAt = null;
-  const dismiss = () => {
-    shownAt = null;
-  };
+  let current = 0;
   return () => {
     const t = now();
     if (shownAt !== null && t - shownAt < staleMs) return false;
     shownAt = t;
+    current += 1;
+    const mine = current;
+    const dismiss = () => {
+      if (mine === current) shownAt = null;
+    };
     try {
       show(dismiss);
     } catch (e) {
