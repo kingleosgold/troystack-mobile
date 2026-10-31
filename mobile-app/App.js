@@ -46,6 +46,7 @@ import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
+import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -2581,6 +2582,8 @@ function AppContent() {
   const [priceSource, setPriceSource] = useState('cached');
   const [priceTimestamp, setPriceTimestamp] = useState(null);
   const [spotPricesLive, setSpotPricesLive] = useState(false); // True after successful API fetch
+  // Which metals took a price from the latest fetch. One the API left out keeps the placeholder or an old cached price
+  const [liveSpotMetals, setLiveSpotMetals] = useState({});
 
   // Spot Price Daily Change
   const [spotChange, setSpotChange] = useState({
@@ -3210,6 +3213,7 @@ function AppContent() {
     priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
     setSpotPricesLive(false);
+    setLiveSpotMetals({});
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
     setTroyMessages([]);
     setTroyInputText('');
@@ -3810,6 +3814,11 @@ function AppContent() {
       setForm(prev => ({ ...prev, premium: Math.max(0, calculatedPremium).toFixed(2) }));
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
+
+  // Today's value fits only the metal and weight it was taken for and no date but today's, so a change clears it
+  useEffect(() => {
+    setForm(prev => formAfterTodaysValueChange(prev, metalTab, localDateString()));
+  }, [metalTab, form.ozt, form.datePurchased]);
 
   // ============================================
   // AUTHENTICATION & DATA
@@ -8586,6 +8595,12 @@ function AppContent() {
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
+        setLiveSpotMetals({
+          silver: !!(silverPrice && silverPrice > 10),
+          gold: !!(goldPrice && goldPrice > 1000),
+          platinum: !!(platinumPrice && platinumPrice > 100),
+          palladium: !!(palladiumPrice && palladiumPrice > 100),
+        });
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
 
@@ -15609,6 +15624,27 @@ function AppContent() {
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
                     <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
+
+                  {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}
+                  {offersTodaysValue(form, { editing: !!editingItem, today: localDateString() }) && (() => {
+                    const spot = { silver: silverSpot, gold: goldSpot, platinum: platinumSpot, palladium: palladiumSpot }[metalTab];
+                    const value = todaysUnitValue({ ozt: form.ozt, spot, live: spotPricesLive && !!liveSpotMetals[metalTab] });
+                    if (!value) return null;
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setForm(p => applyTodaysValue(p, { value, spot, metal: metalTab }));
+                          setSpotPriceSource(null);
+                          setHistoricalSpotSuggestion(null);
+                          setFormErrors(e => ({ ...e, unitPrice: false }));
+                        }}
+                        style={{ alignSelf: 'flex-start', marginTop: -4, marginBottom: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(212,168,67,0.3)', backgroundColor: 'rgba(212,168,67,0.06)' }}
+                      >
+                        <Text style={{ color: colors.gold, fontSize: scaledFonts.small }}>Not sure what you paid? Use today's melt value, ${formatCurrency(parseFloat(value))}</Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
 
                   {/* Accuracy indicators for historical spot prices */}
                   {spotPriceSource === 'price_log' && (
