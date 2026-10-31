@@ -302,6 +302,40 @@ test('the latest delete marks the holding rowless when its own queue write faile
   assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 0);
 });
 
+test('a rowless delete whose queue save failed marks its holding and settles nothing else', async () => {
+  const { ctx, storage, pendingDeletes, marks, queue, log } = setup({ findRow: async () => null });
+  // Another holding's delete is queued. The save that would add this one fails,
+  // so a holding already queued, which saves nothing, can't reach this path
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: null, localId: 56, metal: 'silver' }]);
+  log.length = 0;
+  storage.failing.set = 1;
+  assert.equal(await sendListDelete({ ...ctx, isLatest: () => true }), 'rowless');
+  // Nothing deleted and nothing taken off the queue
+  assert.deepEqual(log, ['queue-fail']);
+  assert.equal(marks.sending.size, 0);
+  assert.equal(marks.rowless.size, 1);
+  // Its mark has no entry to settle, so the other holding's still counts
+  assert.deepEqual(queue().map((e) => e.localId), [56]);
+  assert.equal(queuedNotSending(queue(), marks.sending, 'u1', marks.rowless), 1);
+});
+
+test('a delete whose queue write failed leaves no mark once the account changes during its lookup', async () => {
+  const { ctx, storage, pendingDeletes, marks, queue, state } = setup({
+    findRow: async () => {
+      state.account = false;
+      return null;
+    },
+  });
+  await pendingDeletes.update(() => [{ userId: 'u1', rowId: null, localId: 55, metal: 'silver' }]);
+  storage.failing.set = 1;
+  assert.equal(await sendListDelete({ ...ctx, isLatest: () => true }), 'left');
+  assert.equal(marks.rowless.size, 0);
+  assert.equal(marks.sending.size, 0);
+  assert.equal(state.putBack, 0);
+  assert.equal(state.noted, 0);
+  assert.deepEqual(queue().map((e) => e.localId), [55]);
+});
+
 test('a rowless delete leaves an earlier queued delete that names a row in the count', async () => {
   const { ctx, pendingDeletes, marks, queue } = setup({ findRow: async () => null });
   // An earlier delete queued with its row, which this lookup by local id misses
