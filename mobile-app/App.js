@@ -4503,23 +4503,29 @@ function AppContent() {
       // so it's only asked about once more and the next sync finds no row again.
       const rowless = [];
       let deletesLetGo = false;
-      const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
-        const sending = deletesSendingRef.current;
-        sending.add(entry);
-        try {
-          const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
-          if (!row) {
-            rowless.push(entry);
-            // A sign out since cleared the queue it came from
-            if (!accountChanged() && !deletesLetGo) deletesRowlessRef.current.add(entry);
-            return { error: null };
+      let unsentDeletes;
+      try {
+        unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
+          const sending = deletesSendingRef.current;
+          sending.add(entry);
+          try {
+            const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
+            if (!row) {
+              rowless.push(entry);
+              // A sign out since cleared the queue it came from
+              if (!accountChanged() && !deletesLetGo) deletesRowlessRef.current.add(entry);
+              return { error: null };
+            }
+            return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
+          } finally {
+            sending.delete(entry);
           }
-          return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
-        } finally {
-          sending.delete(entry);
-        }
-      }), resendsBy, accountChanged);
-      deletesLetGo = true;
+        }), resendsBy, accountChanged);
+      } finally {
+        // Let go of every lookup still running however the sends end, so
+        // none marks once the sync stops waiting on it
+        deletesLetGo = true;
+      }
       if (accountChanged()) return false;
       const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
       // A delete that found no row stays queued until the cloud's copy has
