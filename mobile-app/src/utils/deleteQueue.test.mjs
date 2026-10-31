@@ -328,3 +328,38 @@ test('a delete knows when a later one of the same holding has started', () => {
   assert.equal(turns.isLatest('u1', 'silver', 55, second), true);
 });
 
+
+// The sync marks a holding rowless without asking whether a later delete of
+// it has started, since no list delete can start while the sync runs: the
+// delete gate refuses one at the tap and again at the confirm. These hold
+// that gate, so a change that opens it fails here rather than let a sync's
+// mark hide a later delete from the Sign Out count.
+test('the sync\'s own rowless mark is held by the delete gate', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
+  // The sync shuts the gate before its sends and opens it only in its finally
+  const shut = body.indexOf('isSyncingRef.current = true;');
+  const mark = body.indexOf('deletesRowlessRef.current.add(entry);');
+  const tail = body.lastIndexOf('} finally {');
+  const open = body.indexOf('isSyncingRef.current = false;');
+  assert.ok(shut > 0 && mark > shut && tail > mark && open > tail);
+  // and only the sync moves it
+  assert.equal(app.split('isSyncingRef.current = ').length, 3);
+
+  // The list delete is the only delete that starts a turn or joins the queue
+  assert.equal(app.split('sendListDelete(').length, 2);
+  assert.equal(app.split('deleteTurnsRef.current.start(').length, 2);
+  assert.doesNotMatch(app, /withQueuedDelete\(/);
+
+  // Its gate reads the sync's ref and is checked at the tap and the confirm,
+  // each before the delete takes its turn or is sent
+  const handler = app.slice(app.indexOf('const deleteItem = (id, metal) => {'));
+  assert.match(handler, /const syncing = \(\) => \{\n\s*if \(!userIdRef\.current \|\| !isSyncingRef\.current\) return false;\n\s*Alert\.alert\('Syncing'/);
+  const ask = handler.indexOf("Alert.alert(\n      'Delete Item',");
+  const confirm = handler.indexOf('onPress: async () => {', ask);
+  const turn = handler.indexOf('deleteTurnsRef.current.start(');
+  const send = handler.indexOf('sendListDelete(');
+  assert.ok(ask > 0 && confirm > ask && turn > confirm && send > turn);
+  assert.match(handler.slice(0, ask), /\n\s*if \(syncing\(\)\) return;\n/);
+  assert.match(handler.slice(confirm, turn), /\n\s*if \(syncing\(\)\) return;\n/);
+});
