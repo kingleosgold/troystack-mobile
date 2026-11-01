@@ -73,3 +73,20 @@ export const premiumForSave = ({ spotPrice, premium, premiumFromSpot, premiumBef
   const derived = premiumFromSpot !== undefined && String(premium ?? '').trim() === String(premiumFromSpot).trim();
   return derived ? amount(premiumBeforeSpot) : amount(premium);
 };
+
+// The form after its unit price, spot or weight changes, which is the auto
+// premium step App.js runs. With all three above 0 the premium is worked out
+// as the unit price less the spot times the weight, never below 0, since a
+// negative one means the spot is likely wrong. With no spot the premium that
+// saves comes back through formAfterSpotCleared. Anything else leaves the form
+// as it was, the same object.
+export const formAfterPriceChange = (form) => {
+  const unitPrice = parseFloat(form.unitPrice) || 0;
+  const spotPrice = parseFloat(form.spotPrice) || 0;
+  const ozt = parseFloat(form.ozt) || 0;
+  if (unitPrice > 0 && spotPrice > 0 && ozt > 0) {
+    return formWithSpotPremium(form, Math.max(0, unitPrice - spotPrice * ozt).toFixed(2));
+  }
+  if (spotPrice <= 0) return formAfterSpotCleared(form);
+  return form;
+};

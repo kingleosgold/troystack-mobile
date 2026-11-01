@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { spotForSave, premiumForSave, formWithSpotPremium, formWithTypedPremium, openedPremium, formAfterSpotCleared } from './spotSave.js';
+import { spotForSave, premiumForSave, formWithSpotPremium, formWithTypedPremium, openedPremium, formAfterSpotCleared, formAfterPriceChange } from './spotSave.js';
 
 test('a blank, zero, negative or unreadable spot saves as no spot', () => {
   for (const spot of ['', '   ', '0', '0.00', '.', '-5', 'abc', undefined, null]) {
@@ -140,11 +140,39 @@ test('editItem and editScannedItem open the premium through openedPremium', () =
   assert.ok(!app.includes('premium: item.premium.toString(),'));
 });
 
-test('the worked out premium is marked, and typing a premium clears the mark', () => {
-  assert.match(app, /setForm\(prev => formWithSpotPremium\(prev, premium\)\)/);
+test('the auto premium effect runs formAfterPriceChange, and typing a premium clears the mark', () => {
+  assert.match(app, /useEffect\(\(\) => \{\s*setForm\(prev => formAfterPriceChange\(prev\)\);\s*\}, \[form\.unitPrice, form\.spotPrice, form\.ozt\]\);/);
   assert.match(app, /label="Per Unit" value=\{form\.premium\} onChangeText=\{v => setForm\(p => formWithTypedPremium\(p, v\)\)\}/);
 });
 
-test('the auto premium effect gives back the premium that saves when the spot is cleared', () => {
-  assert.match(app, /\} else if \(spotPrice <= 0\) \{[\s\S]{0,200}?setForm\(prev => formAfterSpotCleared\(prev\)\);/);
+test('a unit price, spot and weight work the premium out to the cent and mark it', () => {
+  const after = formAfterPriceChange({ unitPrice: '85', spotPrice: '77.125', ozt: '1', premium: '2' });
+  assert.equal(after.premium, '7.88');
+  assert.equal(after.premiumFromSpot, '7.88');
+  assert.equal(after.premiumBeforeSpot, '2');
+  assert.equal(formAfterPriceChange({ unitPrice: '1600', spotPrice: '77', ozt: '20', premium: '0' }).premium, '60.00');
+});
+
+test('a spot above the unit price works out a premium of 0, never below', () => {
+  assert.equal(formAfterPriceChange({ unitPrice: '70', spotPrice: '77', ozt: '1', premium: '0' }).premium, '0.00');
+});
+
+test('a cleared spot gives back the premium from before it', () => {
+  const worked = formAfterPriceChange({ unitPrice: '85', spotPrice: '77', ozt: '1', premium: '5' });
+  const cleared = formAfterPriceChange({ ...worked, spotPrice: '' });
+  assert.equal(cleared.premium, '5');
+  assert.equal(cleared.premiumFromSpot, undefined);
+  assert.equal(premiumForSave(cleared), 5);
+});
+
+test('a spot with no unit price or weight leaves the form as it was', () => {
+  const noPrice = { unitPrice: '', spotPrice: '77', ozt: '1', premium: '4' };
+  assert.equal(formAfterPriceChange(noPrice), noPrice);
+  const noWeight = { unitPrice: '85', spotPrice: '77', ozt: '', premium: '4' };
+  assert.equal(formAfterPriceChange(noWeight), noWeight);
+});
+
+test('a typed premium stays when the spot is cleared', () => {
+  const form = formWithTypedPremium(formAfterPriceChange({ unitPrice: '85', spotPrice: '77', ozt: '1', premium: '0' }), '9');
+  assert.equal(formAfterPriceChange({ ...form, spotPrice: '' }).premium, '9');
 });
