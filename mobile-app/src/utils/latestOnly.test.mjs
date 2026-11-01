@@ -45,6 +45,47 @@ test('a reset with no lookup still drops a pending reply', async () => {
   assert.equal(spot, '');
 });
 
+test('a typed spot keeps the ticket current but stops it filling the spot', () => {
+  const gate = createLatestOnly();
+  const t = gate.begin();
+  assert.equal(gate.mayFill(t), true);
+  gate.keepSpot();
+  assert.equal(gate.isCurrent(t), true);
+  assert.equal(gate.mayFill(t), false);
+});
+
+test('a typed spot still gets the comparison suggestion from a pending reply', async () => {
+  const gate = createLatestOnly();
+  let spot = '';
+  let suggestion = null;
+  const ticket = gate.begin();
+  const pending = new Promise((r) => setTimeout(r, 5)).then(() => {
+    if (!gate.isCurrent(ticket)) return;
+    suggestion = '2000.00';
+    if (gate.mayFill(ticket)) spot = '2000.00';
+  });
+  gate.keepSpot();
+  spot = '2500.00';
+  await pending;
+  assert.equal(spot, '2500.00');
+  assert.equal(suggestion, '2000.00');
+});
+
+test('a new lookup after a typed spot may fill again', () => {
+  const gate = createLatestOnly();
+  gate.begin();
+  gate.keepSpot();
+  const t = gate.begin();
+  assert.equal(gate.mayFill(t), true);
+});
+
+test('mayFill is false for a stale ticket', () => {
+  const gate = createLatestOnly();
+  const old = gate.begin();
+  gate.begin();
+  assert.equal(gate.mayFill(old), false);
+});
+
 test('separate gates do not affect each other', () => {
   const a = createLatestOnly();
   const b = createLatestOnly();
@@ -73,7 +114,24 @@ for (const name of ['handleDateChange', 'handleTimeChange', 'handleMetalTabChang
       'ticket must be taken before the lookup starts',
     );
   });
+
+  test(`${name} fills the spot only through mayFill`, () => {
+    const src = body(name);
+    // handleMetalTabChange's no-date branch sets the live spot with no lookup
+    const end = src.indexOf('// No date');
+    const after = src.slice(src.indexOf('await fetchHistoricalSpot'), end > 0 ? end : undefined);
+    const fills = after.split('spotPrice:').length - 1;
+    const guards = after.split('spotLookupGate.current.mayFill(ticket)').length - 1;
+    assert.ok(fills > 0, 'expected a spot fill after the lookup');
+    assert.equal(guards, fills, 'every spot fill after the lookup needs a mayFill guard');
+  });
 }
+
+test('editItem auto-fills an unrecorded spot only through mayFill', () => {
+  const src = body('editItem');
+  assert.match(src, /spotLookupGate\.current\.isCurrent\(ticket\)/);
+  assert.match(src, /spotPrice === 0 && spotLookupGate\.current\.mayFill\(ticket\)/);
+});
 
 test('resetForm drops any pending spot lookup', () => {
   const start = app.indexOf('const resetForm = () =>');
@@ -81,7 +139,7 @@ test('resetForm drops any pending spot lookup', () => {
   assert.match(src, /spotLookupGate\.current\.begin\(\)/);
 });
 
-test('typing a spot or taking today\'s value drops a pending lookup', () => {
-  assert.match(app, /onChangeText=\{v => \{ spotLookupGate\.current\.begin\(\); setForm\(p => \(\{ \.\.\.p, spotPrice: v \}\)\)/);
+test('typing a spot keeps it from a pending lookup, taking today\'s value drops the lookup', () => {
+  assert.match(app, /onChangeText=\{v => \{ spotLookupGate\.current\.keepSpot\(\); setForm\(p => \(\{ \.\.\.p, spotPrice: v \}\)\)/);
   assert.match(app, /spotLookupGate\.current\.begin\(\);\n\s*setForm\(p => applyTodaysValue\(/);
 });

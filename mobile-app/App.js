@@ -9179,8 +9179,10 @@ function AppContent() {
       if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
@@ -9201,8 +9203,10 @@ function AppContent() {
       if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
@@ -9225,10 +9229,12 @@ function AppContent() {
       const result = await fetchHistoricalSpot(form.datePurchased, newMetal, form.timePurchased || null);
       if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-      } else {
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
+      } else if (spotLookupGate.current.mayFill(ticket)) {
         // Fallback to current live spot
         setForm(prev => ({ ...prev, spotPrice: String(liveSpots[newMetal] || 0) }));
         setSpotPriceSource('current-fallback');
@@ -10637,8 +10643,8 @@ function AppContent() {
           date: item.datePurchased,
         });
 
-        // Auto-fill only if no spot price recorded
-        if (spotPrice === 0) {
+        // Auto-fill only if no spot price recorded and none typed meanwhile
+        if (spotPrice === 0 && spotLookupGate.current.mayFill(ticket)) {
           setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
           setSpotPriceSource(result.source);
         }
@@ -15636,7 +15642,7 @@ function AppContent() {
 
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
-                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.begin(); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
+                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.keepSpot(); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
 
                   {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}
