@@ -119,16 +119,8 @@ test('a price typed over it stays when a past date is picked', () => {
   assert.equal(after.todaysValueFor, undefined);
 });
 
-// The add form as App.js runs it: the auto premium effect after each change.
-import { formWithSpotPremium, formWithTypedPremium, premiumForSave } from './spotSave.js';
-
-const autoPremium = (form) => {
-  const unit = parseFloat(form.unitPrice) || 0;
-  const spot = parseFloat(form.spotPrice) || 0;
-  const ozt = parseFloat(form.ozt) || 0;
-  if (unit > 0 && spot > 0 && ozt > 0) return formWithSpotPremium(form, Math.max(0, unit - spot * ozt).toFixed(2));
-  return form;
-};
+// The add form as App.js runs it: the auto premium step after each change.
+import { formWithTypedPremium, premiumForSave, formAfterPriceChange as autoPremium } from './spotSave.js';
 
 test('today\'s value then a cleared spot saves no premium, not one typed before it', () => {
   let form = { ozt: '1', quantity: '1', unitPrice: '', spotPrice: '', premium: '0', costBasis: '' };
