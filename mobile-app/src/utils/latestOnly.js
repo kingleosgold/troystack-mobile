@@ -5,8 +5,9 @@
 // that ticket is still the newest.
 // When the user types a spot while a lookup is pending, the reply still lands
 // as the comparison suggestion (so the over 10% warning can show) but it no
-// longer fills the spot they typed. Clearing the field back to empty lets a
-// pending reply fill it again, so clearing mid-lookup doesn't leave it blank.
+// longer fills the spot they typed. Clearing the field back to empty, or to
+// something that isn't a price yet like "0" or ".", lets a pending reply fill
+// it again, so clearing mid-lookup doesn't leave it blank or at zero.
 // Nothing here imports React Native, so it runs under `node --test`.
 
 export const createLatestOnly = () => {
@@ -22,9 +23,11 @@ export const createLatestOnly = () => {
     },
     isCurrent: (ticket) => ticket === newest,
     // Call with what the user typed in the spot field, so a pending reply
-    // won't overwrite it. An empty field keeps nothing.
+    // won't overwrite it. Only a price above zero is kept, so an empty
+    // field, "0", "." or "0." keeps nothing.
     keepSpot: (value) => {
-      kept = String(value ?? '').trim() !== '';
+      const typed = parseFloat(String(value ?? '').trim());
+      kept = Number.isFinite(typed) && typed > 0;
     },
     // Whether the current reply may fill the spot field.
     mayFill: (ticket) => ticket === newest && !kept,
