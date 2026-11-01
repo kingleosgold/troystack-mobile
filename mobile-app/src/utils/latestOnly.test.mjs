@@ -117,6 +117,7 @@ test('leading zeros keep a spot only when the price reads above zero', () => {
   for (const v of ['000.00', '000', '00.', '00.00']) {
     const gate = createLatestOnly();
     const t = gate.begin();
+    gate.keepSpot('25');
     gate.keepSpot(v);
     assert.equal(gate.mayFill(t), true, `"${v}" should not keep the spot`);
   }
