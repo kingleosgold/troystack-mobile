@@ -58,11 +58,15 @@ export function offersTodaysValue(form, { editing, today }) {
 /**
  * The add form with today's value taken as the price. The spot at purchase
  * becomes today's spot so the auto premium works out to nothing, and a total
- * typed earlier is cleared so the cost basis follows the new price.
+ * typed earlier is cleared so the cost basis follows the new price. The
+ * premium is set to 0 outright, so the marks spotSave.js keeps for a premium
+ * worked out from the spot come off. Otherwise clearing the spot after this
+ * would give back a premium typed before it.
  */
 export function applyTodaysValue(form, { value, spot, metal }) {
   return {
     ...form, unitPrice: value, spotPrice: String(spot), premium: '0', costBasis: '',
+    premiumFromSpot: undefined, premiumBeforeSpot: undefined,
     todaysValueFor: { metal, ozt: form.ozt, value },
   };
 }
@@ -73,7 +77,8 @@ export function applyTodaysValue(form, { value, spot, metal }) {
  * while the price is still that value, the price clears and the chip offers a
  * fresh one. So does a purchase date other than today, since that day's spot
  * against today's value would save as a made-up premium. A price the user
- * typed over it stays and the mark comes off.
+ * typed over it stays and the mark comes off. Clearing the price sets the
+ * premium to 0 outright, so the spot premium marks come off with it.
  */
 export function formAfterTodaysValueChange(form, metal, today) {
   const mark = form?.todaysValueFor;
@@ -86,5 +91,5 @@ export function formAfterTodaysValueChange(form, metal, today) {
   const dateFits = !date || date === today;
   if (mark.metal === metal && form.ozt === mark.ozt && dateFits) return form;
   const { todaysValueFor, ...rest } = form;
-  return { ...rest, unitPrice: '', premium: '0' };
+  return { ...rest, unitPrice: '', premium: '0', premiumFromSpot: undefined, premiumBeforeSpot: undefined };
 }
