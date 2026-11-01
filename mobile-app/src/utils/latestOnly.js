@@ -6,7 +6,7 @@
 // When the user types a spot while a lookup is pending, the reply still lands
 // as the comparison suggestion (so the over 10% warning can show) but it no
 // longer fills the spot they typed. Clearing the field back to empty lets a
-// pending reply fill it again, so an empty spot can't save as $0.
+// pending reply fill it again, so clearing mid-lookup doesn't leave it blank.
 // Nothing here imports React Native, so it runs under `node --test`.
 
 export const createLatestOnly = () => {
