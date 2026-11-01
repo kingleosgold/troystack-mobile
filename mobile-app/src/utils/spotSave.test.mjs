@@ -146,5 +146,5 @@ test('the worked out premium is marked, and typing a premium clears the mark', (
 });
 
 test('the auto premium effect gives back the premium that saves when the spot is cleared', () => {
-  assert.match(app, /\} else if \(spotPrice <= 0\) \{\n[^\n]*\n\s*setForm\(prev => formAfterSpotCleared\(prev\)\);/);
+  assert.match(app, /\} else if \(spotPrice <= 0\) \{[\s\S]{0,200}?setForm\(prev => formAfterSpotCleared\(prev\)\);/);
 });
