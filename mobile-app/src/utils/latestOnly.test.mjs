@@ -91,8 +91,39 @@ test('a blank or whitespace spot keeps nothing', () => {
   assert.equal(gate.mayFill(t), true);
   gate.keepSpot(undefined);
   assert.equal(gate.mayFill(t), true);
+  gate.keepSpot(null);
+  assert.equal(gate.mayFill(t), true);
+});
+
+test('a spot that is not a price above zero yet keeps nothing', () => {
+  const gate = createLatestOnly();
+  const t = gate.begin();
+  for (const v of ['0', '.', '0.', '0.00', '00', ' 0 ']) {
+    gate.keepSpot(v);
+    assert.equal(gate.mayFill(t), true, `"${v}" should not keep the spot`);
+  }
+});
+
+test('any price above zero keeps the spot', () => {
+  for (const v of ['1', '.5', '0.5', '4500', '4500.25', ' 25 ']) {
+    const gate = createLatestOnly();
+    const t = gate.begin();
+    gate.keepSpot(v);
+    assert.equal(gate.mayFill(t), false, `"${v}" should keep the spot`);
+  }
+});
+
+test('typing a price then backing it down to "0" lets a pending reply fill', async () => {
+  const gate = createLatestOnly();
+  let spot = '';
+  const ticket = gate.begin();
+  const pending = new Promise((r) => setTimeout(r, 5)).then(() => {
+    if (gate.mayFill(ticket)) spot = '2000.00';
+  });
+  gate.keepSpot('25');
   gate.keepSpot('0');
-  assert.equal(gate.mayFill(t), false);
+  await pending;
+  assert.equal(spot, '2000.00');
 });
 
 test('a new lookup after a typed spot may fill again', () => {
