@@ -47,7 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
-import { spotForSave, premiumForSave, formWithSpotPremium, formWithTypedPremium, openedPremium } from './src/utils/spotSave';
+import { spotForSave, premiumForSave, formWithSpotPremium, formWithTypedPremium, openedPremium, formAfterSpotCleared } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -3817,6 +3817,9 @@ function AppContent() {
       // Only auto-fill positive premiums; negative means spot data is likely wrong
       const premium = Math.max(0, calculatedPremium).toFixed(2);
       setForm(prev => formWithSpotPremium(prev, premium));
+    } else if (spotPrice <= 0) {
+      // A cleared spot gives back the premium that will save, so the card matches it
+      setForm(prev => formAfterSpotCleared(prev));
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
 

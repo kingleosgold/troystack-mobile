@@ -46,6 +46,26 @@ export const formWithTypedPremium = (form, premium) => ({
   premiumBeforeSpot: undefined,
 });
 
+// The premium from before the spot as the field shows it, or '0' when there
+// was none or it can't be read.
+const givenBack = (value) => (Number.isFinite(parseFloat(value)) ? String(value).trim() : '0');
+
+// The form after its spot changes. Once the spot is cleared while the premium
+// is still the one worked out from it, the field shows what would save: the
+// premium from before the spot, or 0. The marks go with it, so a new spot
+// works its premium out over the given-back one. Any other form comes back
+// as the same object, so React skips the render.
+export const formAfterSpotCleared = (form) => {
+  if (spotForSave(form.spotPrice) > 0 || form.premiumFromSpot === undefined) return form;
+  const derived = String(form.premium ?? '').trim() === String(form.premiumFromSpot).trim();
+  return {
+    ...form,
+    premium: derived ? givenBack(form.premiumBeforeSpot) : form.premium,
+    premiumFromSpot: undefined,
+    premiumBeforeSpot: undefined,
+  };
+};
+
 // The premium to save from the form's spotPrice, premium, premiumFromSpot
 // and premiumBeforeSpot.
 export const premiumForSave = ({ spotPrice, premium, premiumFromSpot, premiumBeforeSpot }) => {
