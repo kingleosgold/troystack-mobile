@@ -11,6 +11,7 @@ import {
   withoutQueuedDeletes,
   queuedNotSending,
   deleteQueueStore,
+  deleteTurns,
 } from './deleteQueue.js';
 
 const byRow = { userId: 'u1', rowId: 'row-1', localId: 11, metal: 'silver' };
@@ -201,31 +202,6 @@ test('a delete still out from before a sign out takes nothing off a new one', ()
 
 const app = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
-test('a signed-in delete is queued before it is sent and taken off once it lands', () => {
-  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
-  assert.ok(start > 0);
-  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  const queued = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
-  const sent = body.indexOf('await deleteHoldingFromSupabase(');
-  const unqueued = body.indexOf('await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))');
-  assert.ok(queued > 0 && sent > queued && unqueued > sent);
-  // Not queued under an account that has left, and counted once by a sign out
-  assert.match(body, /if \(sameAccount\(\)\) \{\n\s*try \{\n\s*await pendingDeletes\.update\(\(queue\) => withQueuedDelete\(queue, entry\)\);\n\s*queuedFirst = true;/);
-  assert.match(body, /if \(queuedFirst\) sending\.add\(entry\);/);
-  assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);/);
-});
-
-test('a failed signed-in delete is queued and the holding stays off, falling back to the notice only when the queue fails', () => {
-  const at = app.indexOf('if (reached) {', app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };'));
-  assert.ok(at > 0);
-  const tail = app.slice(at, app.indexOf('// Close detail view if open', at));
-  const queue = tail.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));');
-  const notice = tail.indexOf("noteCloudMiss('edit', supabaseUser.id);");
-  const restore = tail.indexOf('setter(prev => withHoldingRestored(prev, removed, removedIndex));');
-  assert.ok(queue > 0 && notice > queue && restore > notice);
-  assert.match(tail, /if \(queued\) \{\n\s*noteCloudMiss\('edit', supabaseUser\.id\);\n\s*return;\n\s*\}/);
-});
-
 test('the sync sends queued deletes after the edits and before it fetches, and keeps the rest out of the cloud copy', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
@@ -233,7 +209,7 @@ test('the sync sends queued deletes after the edits and before it fetches, and k
   const send = body.indexOf('await sendAllWithin(toDelete,');
   const fetch = body.indexOf('const runSync = () => fullSync(');
   assert.ok(edits > 0 && send > edits && fetch > send);
-  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*if \(accountChanged\(\)\) return false;/);
+  assert.match(body, /\}\), resendsBy, accountChanged\);\n\s*\} finally \{\n(\s*\/\/.*\n)*\s*deletesLetGo = true;\n\s*\}\n\s*if \(accountChanged\(\)\) return false;/);
   assert.match(body, /unsent \+= unsentDeletes\.length;/);
   // Each send is marked on its way, so a sign out counts it once
   const sendBody = body.slice(send, body.indexOf('resendsBy, accountChanged);', send));
@@ -259,7 +235,7 @@ test('a holding whose delete was queued never goes up, even once the delete is d
 test('a delete that found no row leaves the queue only once the stack without its holding is stored', () => {
   const start = app.indexOf('const syncHoldingsWithSupabase = async');
   const body = app.slice(start, app.indexOf('// A change away from a signed-in account stops', start));
-  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n(\s*\/\/.*\n)*\s*if \(!accountChanged\(\)\) deletesRowlessRef\.current\.add\(entry\);\n\s*return \{ error: null \};/);
+  assert.match(body, /if \(!row\) \{\n\s*rowless\.push\(entry\);\n(\s*\/\/.*\n)*\s*if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);\n\s*return \{ error: null \};/);
   // dropped from the queue at once are only the deletes that went to a row
   assert.match(body, /const dropNow = doneDeletes\.filter\(\(entry\) => !rowlessDone\.includes\(entry\)\);/);
   assert.match(body, /withoutDeletes\(queue, dropNow\)/);
@@ -272,25 +248,26 @@ test('a delete that found no row leaves the queue only once the stack without it
   assert.ok(body.indexOf('if ((putBack > 0 || holdsDeletes) && restoreLanded()) return false;') < write);
 });
 
-test('a delete from the list that finds no row stays queued for the sync', () => {
-  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
-  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  assert.match(body, /let rowless = false;/);
-  assert.match(body, /if \(existingHolding\) \{[\s\S]*?\} else \{\n\s*rowless = true;\n\s*\}/);
-  // Only a delete that went to a row comes off the queue at once
-  assert.match(body, /if \(queuedFirst && !rowless\) \{\n\s*await pendingDeletes\.update\(\(queue\) => withoutDeleteOf\(queue, entry\)\)/);
-  assert.doesNotMatch(body, /if \(queuedFirst\) \{\n\s*await pendingDeletes\.update\(\(queue\) => withoutDeleteOf/);
-});
-
 test('a sign out leaves out a queued delete that found no row', () => {
   const rowlessEntry = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
   const queue = [byRow, { ...rowlessEntry }];
   // Matched by holding, not by object
-  assert.equal(queuedNotSending(queue, new Set([rowlessEntry]), 'u1'), 1);
-  // And the handler marks one only once it's known to have found no row
-  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
-  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  assert.match(body, /if \(reached\) \{[\s\S]*?if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);/);
+  assert.equal(queuedNotSending(queue, new Set(), 'u1', new Set([rowlessEntry])), 1);
+});
+
+test('a rowless mark settles only a queued delete with no row', () => {
+  const mark = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
+  // An earlier delete of the holding named its row, which a lookup by local
+  // id missed, so that row is still to send
+  const named = { userId: 'u1', rowId: 'row-55', localId: 55, metal: 'silver' };
+  assert.equal(queuedNotSending([named], new Set(), 'u1', new Set([mark])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([mark])), 0);
+  // One on its way still settles it, row or not
+  assert.equal(queuedNotSending([named], new Set([mark]), 'u1', new Set([mark])), 0);
+  // Another account's mark, or another holding's, settles nothing
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([{ ...mark, userId: 'u2' }])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], new Set(), 'u1', new Set([{ ...mark, metal: 'gold' }])), 1);
+  assert.equal(queuedNotSending([{ ...named, rowId: null }], null, 'u1', null), 1);
 });
 
 test('the sync takes a rowless delete off the queue only past the restore check and with the cloud copy in state', () => {
@@ -307,7 +284,7 @@ test('the sync takes a rowless delete off the queue only past the restore check 
 });
 
 test('a sign out counts queued deletes and clears them with the stack', () => {
-  assert.match(app, /const settledDeletes = new Set\(\[\.\.\.deletesSendingRef\.current, \.\.\.deletesRowlessRef\.current\]\);\n\s*const deletesLeft = queuedDeletes \? queuedNotSending\(queuedDeletes, settledDeletes, userId\) : 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
+  assert.match(app, /const deletesLeft = queuedDeletes\n\s*\? queuedNotSending\(queuedDeletes, deletesSendingRef\.current, userId, deletesRowlessRef\.current\)\n\s*: 1;\n\s*return unsentCount\(lists, userId, \{ owner, firstSync, inFlight: holdingWrites\.countFor\(userId\) \}\)\n\s*\+ deletesLeft;/);
   const start = app.indexOf('const performSignOut = async');
   const userKeys = app.slice(app.indexOf('const userKeys = [', start), app.indexOf('];', app.indexOf('const userKeys = [', start)));
   assert.match(userKeys, /PENDING_DELETES_KEY,/);
@@ -315,24 +292,6 @@ test('a sign out counts queued deletes and clears them with the stack', () => {
   assert.match(app, /await AsyncStorage\.clear\(\);\n\s*await clearPendingDeletes\(\);/);
   // Every clear of the queue goes through the one that resets its marks
   assert.equal(app.split('pendingDeletes.clear()').length, 2);
-});
-
-test('a delete that fails after its account left is not queued under the next one', () => {
-  assert.match(app, /if \(!sameAccount\(\)\) return;\n\s*let queued = queuedFirst;/);
-});
-
-test('a delete from before a sign out is not queued again when the same account signs back in', () => {
-  // The queue's clears are counted as the delete starts, and every queue
-  // write and the put back check them, since a sign out clears the queue
-  // while the user id can come back the same. A failed sign out clears
-  // nothing, so it doesn't drop the delete.
-  const start = app.indexOf('const deleteGen = stackGenRef.current;');
-  assert.ok(start > 0);
-  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  assert.match(body, /const deleteQueueClears = pendingDeletes\.clears\(\);\n(\s*\/\/.*\n)*?\s*const sameAccount = \(\) => userIdRef\.current === supabaseUser\?\.id && pendingDeletes\.clears\(\) === deleteQueueClears;/);
-  assert.ok(body.indexOf('const deleteQueueClears') < body.indexOf('await '));
-  assert.doesNotMatch(body, /if \(userIdRef\.current [!=]== supabaseUser\.id/);
-  assert.match(body, /if \(sameAccount\(\) && stackGenRef\.current === deleteGen\) \{/);
 });
 
 test('a restore never overrides a queued delete', () => {
@@ -348,20 +307,85 @@ test('a sign out starts the marks on queued deletes afresh', () => {
   // A stale mark from before the clear would hide a delete queued after it
   const before = { userId: 'u1', rowId: null, localId: 55, metal: 'silver' };
   const after = [{ userId: 'u1', rowId: null, localId: 55, metal: 'silver' }];
-  assert.equal(queuedNotSending(after, new Set([before]), 'u1'), 0);
+  assert.equal(queuedNotSending(after, new Set(), 'u1', new Set([before])), 0);
   assert.equal(queuedNotSending(after, new Set(), 'u1'), 1);
 });
 
-test('a delete from the list that lands after a sign out touches nothing the new session queued', () => {
-  const start = app.indexOf('const entry = { userId: supabaseUser.id, rowId, localId: id, metal };');
-  const body = app.slice(start, app.indexOf('// Close detail view if open', start));
-  // The account check comes before both the rowless mark and the unqueue
-  assert.match(body, /if \(reached\) \{(\n\s*\/\/.*)*\n\s*if \(!sameAccount\(\)\) return;\n\s*if \(queuedFirst && rowless\) deletesRowlessRef\.current\.add\(entry\);\n\s*if \(queuedFirst && !rowless\) \{/);
-  // and the sending mark it took still comes off the set it went on
-  // taken before the queue write, so a sign out while it waits can't move it
-  const taken = body.indexOf('const sending = deletesSendingRef.current;');
-  const write = body.indexOf('await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));');
-  assert.ok(taken > 0 && write > taken);
-  assert.match(body, /\n\s*\}\n\s*if \(queuedFirst\) sending\.add\(entry\);/);
-  assert.match(body, /\} finally \{\n\s*if \(queuedFirst\) sending\.delete\(entry\);\n\s*\}/);
+test('a delete knows when a later one of the same holding has started', () => {
+  const turns = deleteTurns();
+  const first = turns.start('u1', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 55, first), true);
+  const second = turns.start('u1', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 55, first), false);
+  assert.equal(turns.isLatest('u1', 'silver', 55, second), true);
+  // Another holding, metal or account keeps its own count
+  const otherHolding = turns.start('u1', 'silver', 56);
+  const otherMetal = turns.start('u1', 'gold', 55);
+  const otherAccount = turns.start('u2', 'silver', 55);
+  assert.equal(turns.isLatest('u1', 'silver', 56, otherHolding), true);
+  assert.equal(turns.isLatest('u1', 'gold', 55, otherMetal), true);
+  assert.equal(turns.isLatest('u2', 'silver', 55, otherAccount), true);
+  assert.equal(turns.isLatest('u1', 'silver', 55, second), true);
+});
+
+
+// The sync marks a holding rowless without asking whether a later delete of
+// it has started, since no list delete can start while the sync holds the
+// delete gate shut: the gate refuses one at the tap and again at the confirm,
+// and the sync waits for one already out. A lookup the sync let go of could
+// land past the sync's end, so it doesn't mark. These hold all of that, so a
+// change that opens the gate fails here rather than let a sync's mark hide a
+// later delete from the Sign Out count.
+test('the sync\'s own rowless mark is held by the delete gate', () => {
+  const start = app.indexOf('const syncHoldingsWithSupabase = async');
+  const end = app.indexOf('// A change away from a signed-in account stops', start);
+  assert.ok(start > 0 && end > start);
+  const body = app.slice(start, end);
+  // The sync shuts the gate, waits for the writes already out, and only then
+  // sends and marks, opening the gate only in its finally
+  const shut = body.indexOf('isSyncingRef.current = true;');
+  const settled = body.indexOf('await holdingWrites.settled(');
+  const mark = body.indexOf('deletesRowlessRef.current.add(entry);');
+  const tail = body.lastIndexOf('} finally {');
+  const open = body.indexOf('isSyncingRef.current = false;');
+  assert.ok(shut > 0 && settled > shut && mark > settled && tail > mark && open > tail);
+  // and that finally waits on nothing before it opens the gate, so no mark
+  // can land while the gate is open and the sync hasn't ended
+  assert.doesNotMatch(body.slice(tail, open), /await/);
+  // and only the sync moves it
+  assert.equal(app.split('isSyncingRef.current = ').length, 3);
+  // A lookup the sync let go of doesn't mark, so no mark lands once the
+  // gate is open
+  const sends = body.indexOf('await sendAllWithin(toDelete,');
+  const letGo = body.indexOf('deletesLetGo = true;');
+  assert.ok(sends > 0 && mark > sends && letGo > mark && tail > letGo);
+  // set in a finally, so the guard holds even if the sends ever throw
+  assert.match(body, /let deletesLetGo = false;\n\s*let unsentDeletes;\n\s*try \{\n(\s*\/\/.*\n)*\s*unsentDeletes = await sendAllWithin\(/);
+  assert.equal(body.split('deletesLetGo = true;').length, 2);
+  assert.match(body, /if \(!accountChanged\(\) && !deletesLetGo\) deletesRowlessRef\.current\.add\(entry\);/);
+  assert.equal(body.split('deletesRowlessRef.current.add(').length, 2);
+
+  // The list delete is the only delete that starts a turn or joins the
+  // queue, and it's a tracked write, so a sync waits for one already out
+  assert.equal(app.split('sendListDelete(').length, 2);
+  assert.equal(app.split('deleteTurnsRef.current.start(').length, 2);
+  assert.doesNotMatch(app, /withQueuedDelete\(/);
+  assert.match(app, /await trackHoldingWrite\(\(\) => sendListDelete\(\{/);
+
+  // Its gate reads the sync's ref and is checked at the tap and the confirm,
+  // each before the delete takes its turn or is sent, with nothing awaited
+  // between the confirm's check and the tracked write
+  const handlerAt = app.indexOf('const deleteItem = (id, metal) => {');
+  assert.ok(handlerAt > 0);
+  const handler = app.slice(handlerAt);
+  assert.match(handler, /const syncing = \(\) => \{\s*if \(!userIdRef\.current \|\| !isSyncingRef\.current\) return false;\s*Alert\.alert\('Syncing'/);
+  const ask = handler.search(/Alert\.alert\(\s*'Delete Item',/);
+  const confirm = handler.indexOf('onPress: async () => {', ask);
+  const turn = handler.indexOf('deleteTurnsRef.current.start(');
+  const track = handler.indexOf('await trackHoldingWrite(() => sendListDelete(');
+  assert.ok(ask > 0 && confirm > ask && turn > confirm && track > turn);
+  assert.match(handler.slice(0, ask), /\n\s*if \(syncing\(\)\) return;\n/);
+  const check = handler.indexOf('if (syncing()) return;', confirm);
+  assert.ok(check > confirm && turn > check);
+  assert.doesNotMatch(handler.slice(check, track), /\bawait\b/);
 });

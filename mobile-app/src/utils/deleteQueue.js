@@ -82,11 +82,16 @@ export function withoutDeleteOf(queue, { userId, localId, metal } = {}) {
 // since one on its way is counted among the writes on their way. A delete is
 // matched to the one sending by account, local id and metal, so a sending one
 // the queue read missed, or one left from before a sign out, takes nothing
-// off another.
-export function queuedNotSending(queue, sending, userId) {
-  const out = [...(sending || [])].filter((entry) => entry?.userId === userId);
-  return deletesFor(queue, userId).filter((entry) => !out.some((s) => s.localId === entry.localId
-    && s.metal === entry.metal)).length;
+// off another. A delete that found no row settles only a queued one with no
+// row too. One that names a row still has that row to send, which a lookup by
+// local id can miss.
+export function queuedNotSending(queue, sending, userId, rowless = null) {
+  const mine = (marks) => [...(marks || [])].filter((entry) => entry?.userId === userId);
+  const out = mine(sending);
+  const found = mine(rowless);
+  const sameHolding = (a, b) => a.localId === b.localId && a.metal === b.metal;
+  return deletesFor(queue, userId).filter((entry) => !out.some((s) => sameHolding(s, entry))
+    && !(!entry.rowId && found.some((r) => sameHolding(r, entry)))).length;
 }
 
 // The cloud's copy, one array per metal in METALS order, without the
@@ -136,5 +141,22 @@ export function deleteQueueStore(storage, key = PENDING_DELETES_KEY) {
       return run(() => storage.removeItem(key));
     },
     clears: () => clears,
+  };
+}
+
+// Numbers each delete started for a holding, keyed by account, metal and
+// local id, so a delete that ends can tell whether a later one of the same
+// holding has started since.
+export function deleteTurns() {
+  const latest = new Map();
+  const keyOf = (userId, metal, localId) => `${userId}:${metal}:${localId}`;
+  return {
+    start: (userId, metal, localId) => {
+      const key = keyOf(userId, metal, localId);
+      const turn = (latest.get(key) || 0) + 1;
+      latest.set(key, turn);
+      return turn;
+    },
+    isLatest: (userId, metal, localId, turn) => latest.get(keyOf(userId, metal, localId)) === turn,
   };
 }

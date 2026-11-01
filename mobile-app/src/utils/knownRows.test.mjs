@@ -52,5 +52,6 @@ test('every successful add notes its row', () => {
 
 test('an edit and a delete with no row use the known row before a lookup', () => {
   assert.match(appSource, /const knownRow = knownRowsRef\.current\.rowFor\(item\.id, userId\);\n\s+const existingHolding = knownRow \? \{ id: knownRow \} : await findHoldingByLocalId\(/);
-  assert.match(appSource, /const knownRow = knownRowsRef\.current\.rowFor\(id, supabaseUser\.id\);\n\s+const existingHolding = knownRow \? \{ id: knownRow \} : await findHoldingByLocalId\(/);
+  // The list delete's, in sendListDelete, is tested there by behaviour
+  assert.match(appSource, /knownRow: \(\) => knownRowsRef\.current\.rowFor\(id, supabaseUser\.id\),/);
 });

@@ -46,6 +46,8 @@ import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
+import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
+import { createLatestOnly } from './src/utils/latestOnly';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -57,10 +59,12 @@ import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
-import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withQueuedDelete, withoutDeleteOf, withoutDeletes, withoutQueuedDeletes, queuedNotSending } from './src/utils/deleteQueue';
+import { sendListDelete } from './src/utils/listDelete';
+import { PENDING_DELETES_KEY, deleteQueueStore, deletesFor, withoutDeletes, withoutQueuedDeletes, queuedNotSending, deleteTurns } from './src/utils/deleteQueue';
 import { cloudMissAlert, cloudMissDue } from './src/utils/cloudMiss';
 import { pendingWrites, sendAllWithin, settleWithin, HOLDING_WRITES_WAIT_MS, SYNC_UPLOAD_WAIT_MS } from './src/utils/pendingWrites';
 import { knownRows } from './src/utils/knownRows';
+import { openDealerLink, onceUntilDismissed, DEALER_LINK_FAILED } from './src/utils/dealerLink';
 import PieChart from './src/components/PieChart';
 import ProgressBar from './src/components/ProgressBar';
 import FloatingInput from './src/components/FloatingInput';
@@ -824,6 +828,19 @@ function InlinePurchasingPowerCard({ data, onExpand }) {
   );
 }
 
+// Linking.openURL reads this, so it's never passed bare.
+const openInBrowser = (url) => Linking.openURL(url);
+
+// Repeated taps on a dead link put up one alert, not a stack of them.
+const showDealerLinkFailed = onceUntilDismissed((dismiss) => {
+  Alert.alert(
+    DEALER_LINK_FAILED.title,
+    DEALER_LINK_FAILED.message,
+    [{ text: 'OK', onPress: dismiss }],
+    { cancelable: true, onDismiss: dismiss }
+  );
+});
+
 function InlineDealerCard({ data }) {
   if (!data) return null;
   // Support new shape (data.dealers array) and legacy shape (single data.dealer/url)
@@ -837,7 +854,7 @@ function InlineDealerCard({ data }) {
       {dealers.map((d, i) => (
         <TouchableOpacity
           key={i}
-          onPress={() => Linking.openURL(d.url)}
+          onPress={() => openDealerLink(d.url, openInBrowser, showDealerLinkFailed)}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -2481,10 +2498,17 @@ function AppContent() {
   // They're kept by holding rather than counted, so one queued or sent while
   // the count reads, or one still out after a sign out, can't offset another.
   const deletesSendingRef = useRef(new Set());
-  // Queued deletes from the list that found no row, each with its account.
-  // They wait for the sync only so a kill can't upload their holding again,
-  // and a sign out loses nothing with them, so it doesn't count them.
+  // Queued deletes with no row whose lookup found none, from the list or the
+  // sync, each with its account. They wait for the sync only so a kill can't
+  // upload their holding again, and a sign out loses nothing with them, so it
+  // doesn't count them. A queued delete that names a row still counts.
   const deletesRowlessRef = useRef(new Set());
+  // Numbers the deletes started for each holding. A delete still out when a
+  // later one of the same holding starts, as after a restore brought it back,
+  // leaves the rowless mark to the later one, or its mark would hide the
+  // later delete from the Sign Out count.
+  const deleteTurnsRef = useRef(null);
+  if (!deleteTurnsRef.current) deleteTurnsRef.current = deleteTurns();
   // Clears the queue along with what's kept about its deletes. One still on
   // its way or one that found no row belonged to the queue being cleared, so
   // neither hides a delete queued after it from the count. A delete still out
@@ -2559,6 +2583,8 @@ function AppContent() {
   const [priceSource, setPriceSource] = useState('cached');
   const [priceTimestamp, setPriceTimestamp] = useState(null);
   const [spotPricesLive, setSpotPricesLive] = useState(false); // True after successful API fetch
+  // Which metals took a price from the latest fetch. One the API left out keeps the placeholder or an old cached price
+  const [liveSpotMetals, setLiveSpotMetals] = useState({});
 
   // Spot Price Daily Change
   const [spotChange, setSpotChange] = useState({
@@ -2967,6 +2993,8 @@ function AppContent() {
   });
   const [formErrors, setFormErrors] = useState({});
   const [spotPriceSource, setSpotPriceSource] = useState(null); // Tracks data source for spot price warnings
+  // Only the newest spot lookup on the add form may fill the spot
+  const spotLookupGate = useRef(createLatestOnly());
   const [historicalSpotSuggestion, setHistoricalSpotSuggestion] = useState(null); // Suggested historical spot price for comparison
 
   // Speculation State
@@ -3188,6 +3216,7 @@ function AppContent() {
     priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
     setSpotPricesLive(false);
+    setLiveSpotMetals({});
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
     setTroyMessages([]);
     setTroyInputText('');
@@ -3300,9 +3329,15 @@ function AppContent() {
       .map((items) => withRetryMarks(items, retryMarksRef.current, userId))
       .map((items) => withEditMarks(items, editMarksRef.current, userId));
     // A queued delete still on its way counts among the writes on their way
-    // as does one that found no row, which has nothing left to send
-    const settledDeletes = new Set([...deletesSendingRef.current, ...deletesRowlessRef.current]);
-    const deletesLeft = queuedDeletes ? queuedNotSending(queuedDeletes, settledDeletes, userId) : 1;
+    // as does one with no row whose holding found none, which has nothing
+    // left to send. A rowless mark is cleared by a sign out, by a later
+    // list delete that queues, the only kind that adds queue entries, or by
+    // a list delete that goes back on the queue unsent. A sync
+    // marks only while it holds the delete gate shut, so no list delete can
+    // start between its lookup and its mark.
+    const deletesLeft = queuedDeletes
+      ? queuedNotSending(queuedDeletes, deletesSendingRef.current, userId, deletesRowlessRef.current)
+      : 1;
     return unsentCount(lists, userId, { owner, firstSync, inFlight: holdingWrites.countFor(userId) })
       + deletesLeft;
   };
@@ -3782,6 +3817,11 @@ function AppContent() {
       setForm(prev => ({ ...prev, premium: Math.max(0, calculatedPremium).toFixed(2) }));
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
+
+  // Today's value fits only the metal and weight it was taken for and no date but today's, so a change clears it
+  useEffect(() => {
+    setForm(prev => formAfterTodaysValueChange(prev, metalTab, localDateString()));
+  }, [metalTab, form.ozt, form.datePurchased]);
 
   // ============================================
   // AUTHENTICATION & DATA
@@ -4469,24 +4509,36 @@ function AppContent() {
       // Each is marked on its way, as a delete from the list is, so a sign out
       // counts it once among the writes on their way and not again as queued
       // One that finds no row is noted, since its holding may still be in the
-      // stack on disk
+      // stack on disk. Only a lookup the sync still waits on marks it, since
+      // the sync holds the delete gate shut only that long: one it let go of
+      // could land past the sync's end and hide a later delete of the same
+      // holding from the Sign Out count. Its delete stays queued as unsent,
+      // so it's only asked about once more and the next sync finds no row again.
       const rowless = [];
-      const unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
-        const sending = deletesSendingRef.current;
-        sending.add(entry);
-        try {
-          const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
-          if (!row) {
-            rowless.push(entry);
-            // A sign out since cleared the queue it came from
-            if (!accountChanged()) deletesRowlessRef.current.add(entry);
-            return { error: null };
+      let deletesLetGo = false;
+      let unsentDeletes;
+      try {
+        unsentDeletes = await sendAllWithin(toDelete, (entry) => trackHoldingWrite(async () => {
+          const sending = deletesSendingRef.current;
+          sending.add(entry);
+          try {
+            const row = entry.rowId ? { id: entry.rowId } : await findHoldingByLocalId(supabaseUser.id, entry.localId, entry.metal);
+            if (!row) {
+              rowless.push(entry);
+              // A sign out since cleared the queue it came from
+              if (!accountChanged() && !deletesLetGo) deletesRowlessRef.current.add(entry);
+              return { error: null };
+            }
+            return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
+          } finally {
+            sending.delete(entry);
           }
-          return await deleteHoldingFromSupabase(supabaseUser.id, row.id);
-        } finally {
-          sending.delete(entry);
-        }
-      }), resendsBy, accountChanged);
+        }), resendsBy, accountChanged);
+      } finally {
+        // Let go of every lookup still running however the sends end, so
+        // none marks once the sync stops waiting on it
+        deletesLetGo = true;
+      }
       if (accountChanged()) return false;
       const doneDeletes = toDelete.filter((entry) => !unsentDeletes.includes(entry));
       // A delete that found no row stays queued until the cloud's copy has
@@ -8546,6 +8598,12 @@ function AppContent() {
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
+        setLiveSpotMetals({
+          silver: !!(silverPrice && silverPrice > 10),
+          gold: !!(goldPrice && goldPrice > 1000),
+          platinum: !!(platinumPrice && platinumPrice > 100),
+          palladium: !!(palladiumPrice && palladiumPrice > 100),
+        });
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
 
@@ -9111,22 +9169,27 @@ function AppContent() {
   };
 
   const handleDateChange = async (date) => {
+    const ticket = spotLookupGate.current.begin();
     setForm(prev => ({ ...prev, datePurchased: date }));
     setSpotPriceSource(null);
     setHistoricalSpotSuggestion(null);
 
     if (date.length === 10) {
       const result = await fetchHistoricalSpot(date, metalTab, form.timePurchased || null);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
 
   // Handle time change - refetch historical spot with time for minute-level precision
   const handleTimeChange = async (time) => {
+    const ticket = spotLookupGate.current.begin();
     setForm(prev => ({ ...prev, timePurchased: time }));
 
     const timeValid = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time);
@@ -9137,10 +9200,13 @@ function AppContent() {
       setHistoricalSpotSuggestion(null);
 
       const result = await fetchHistoricalSpot(form.datePurchased, metalTab, time);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
@@ -9148,6 +9214,7 @@ function AppContent() {
   // Handle metal tab change — auto-update spot price for the new metal
   const handleMetalTabChange = async (newMetal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const ticket = spotLookupGate.current.begin();
     // A quick pick from the old metal would save under the new one, so it clears
     if (!editingItem && newMetal !== metalTab) setForm(prev => formAfterMetalChange(prev, metalTab));
     setMetalTab(newMetal);
@@ -9160,11 +9227,14 @@ function AppContent() {
       setSpotPriceSource(null);
       setHistoricalSpotSuggestion(null);
       const result = await fetchHistoricalSpot(form.datePurchased, newMetal, form.timePurchased || null);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-      } else {
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
+      } else if (spotLookupGate.current.mayFill(ticket)) {
         // Fallback to current live spot
         setForm(prev => ({ ...prev, spotPrice: String(liveSpots[newMetal] || 0) }));
         setSpotPriceSource('current-fallback');
@@ -10006,6 +10076,7 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
+    spotLookupGate.current.begin();
     setSpotPriceSource(null); // Clear source warning when editing
 
     // Set metal tab
@@ -10043,6 +10114,7 @@ function AppContent() {
       premium: '0',
       costBasis: defaultCostBasis.toString(),
     });
+    spotLookupGate.current.begin();
     setSpotPriceSource(null); // Clear source warning when editing
 
     // Set metal tab
@@ -10373,6 +10445,7 @@ function AppContent() {
       quantity: '', unitPrice: '', taxes: '', shipping: '',
       spotPrice: '', premium: '0', costBasis: '',
     });
+    spotLookupGate.current.begin();
     setEditingItem(null);
     setSpotPriceSource(null);
     setHistoricalSpotSuggestion(null);
@@ -10440,6 +10513,7 @@ function AppContent() {
             const removedIndex = committed.findIndex(i => i.id === id);
             const removed = removedIndex >= 0 ? committed[removedIndex] : itemToDelete;
             const deleteGen = stackGenRef.current;
+            const deleteTurn = deleteTurnsRef.current.start(supabaseUser?.id, metal, id);
             // The queue as the delete starts. A sign out clears it even when
             // the same account signs back in, so a delete from before never
             // lands in the queue that sign out cleared. A sign out that failed
@@ -10456,122 +10530,27 @@ function AppContent() {
               const earlierWrites = itemToDelete.supabase_id
                 ? null
                 : holdingWrites.settled(HOLDING_WRITES_WAIT_MS, supabaseUser.id, () => userIdRef.current !== supabaseUser.id);
-              await trackHoldingWrite(async () => {
-                // deleteHolding answers its error rather than throwing, and a
-                // lookup that fails throws, since a row may still be there
-                let reached = true;
-                // The row the delete went to, when it's known
-                let rowId = itemToDelete.supabase_id || null;
-                const entry = { userId: supabaseUser.id, rowId, localId: id, metal };
-                // Set when the lookup finds no row, so the holding may still
-                // be in the stack on disk
-                let rowless = false;
-                // The delete is queued before it's sent, so an app closed
-                // mid-request leaves it for the next sync rather than lose
-                // it. Sending it twice is harmless, since a deleted row stays
-                // deleted and isn't found by local id. A sign out or account
-                // change since has cleared the queue, so it isn't written
-                // back under it. A queue that can't be saved still sends.
-                // Its mark goes on the set of the queue it joins, taken now
-                // since a sign out while the queue write waits swaps the set
-                const sending = deletesSendingRef.current;
-                let queuedFirst = false;
-                if (sameAccount()) {
-                  try {
-                    await pendingDeletes.update((queue) => withQueuedDelete(queue, entry));
-                    queuedFirst = true;
-                  } catch (err) {
-                    if (__DEV__) console.error('Failed to queue the delete:', err);
-                  }
-                }
-                if (queuedFirst) sending.add(entry);
-                // A holding deleted again, as after a restore brought it back,
-                // is counted afresh rather than as the one that found no row
-                for (const done of deletesRowlessRef.current) {
-                  if (done.userId === entry.userId && done.localId === entry.localId && done.metal === entry.metal) {
-                    deletesRowlessRef.current.delete(done);
-                  }
-                }
-                try {
-                  if (itemToDelete.supabase_id) {
-                    const { error } = await deleteHoldingFromSupabase(supabaseUser.id, itemToDelete.supabase_id);
-                    if (error) reached = false;
-                    else if (__DEV__) console.log('Deleted holding from Supabase');
-                  } else if (!(await earlierWrites) && !knownRowsRef.current.rowFor(id, supabaseUser.id)) {
-                    // A write before it still out may yet make this holding's
-                    // row, so a lookup now could miss it and the row would
-                    // come back. The delete is queued below for the sync to
-                    // find. One whose add landed this session has its row.
-                    reached = false;
-                  } else {
-                    // By the row its add went to if it landed this session,
-                    // else find it in Supabase by local_id
-                    const knownRow = knownRowsRef.current.rowFor(id, supabaseUser.id);
-                    const existingHolding = knownRow ? { id: knownRow } : await findHoldingByLocalId(supabaseUser.id, id, metal);
-                    if (existingHolding) {
-                      rowId = existingHolding.id;
-                      const { error } = await deleteHoldingFromSupabase(supabaseUser.id, existingHolding.id);
-                      if (error) reached = false;
-                      else if (__DEV__) console.log('Deleted holding from Supabase (found by local_id)');
-                    } else {
-                      rowless = true;
-                    }
-                  }
-                } catch (err) {
-                  if (__DEV__) console.error('Failed to delete holding from Supabase:', err);
-                  reached = false;
-                }
-                try {
-                  if (reached) {
-                    // Off the queue once it's landed. One that can't be taken
-                    // off is sent again by the next sync, which does no harm.
-                    // One that found no row stays for the sync, which takes it
-                    // off once the stack without its holding is stored, or a
-                    // kill before the save effect lands would upload it again.
-                    // A sign out since cleared the queue it was in, so it
-                    // touches nothing a delete queued after it may have left.
-                    if (!sameAccount()) return;
-                    if (queuedFirst && rowless) deletesRowlessRef.current.add(entry);
-                    if (queuedFirst && !rowless) {
-                      await pendingDeletes.update((queue) => withoutDeleteOf(queue, entry))
-                        .catch((err) => { if (__DEV__) console.error('Failed to unqueue the delete:', err); });
-                    }
-                    return;
-                  }
-                  // The row is still live, so the next sync would bring the
-                  // holding back. The delete stays queued for the next sync
-                  // to send, taking the row if one was found since, and the
-                  // holding stays off the phone, with the notice a change
-                  // saved on this phone only gets. With no row known, as when
-                  // a write before it was still out, the sync finds it by
-                  // local id once those writes land.
-                  // A sign out or account change since has cleared the queue,
-                  // so the delete isn't written back under it
-                  if (!sameAccount()) return;
-                  let queued = queuedFirst;
-                  try {
-                    await pendingDeletes.update((queue) => withQueuedDelete(queue, { ...entry, rowId }));
-                    queued = true;
-                  } catch (err) {
-                    if (__DEV__) console.error('Failed to queue the delete:', err);
-                  }
-                  if (queued) {
-                    noteCloudMiss('edit', supabaseUser.id);
-                    return;
-                  }
-                  // A queue that couldn't be saved can't hold it, so the
-                  // holding goes back now with a notice, while the same
-                  // account holds the same stack. After a swap the stack came
-                  // from the cloud, which still has it.
-                  if (sameAccount() && stackGenRef.current === deleteGen) {
-                    setter(prev => withHoldingRestored(prev, removed, removedIndex));
-                    const { title, message } = deleteMissAlert(removed?.productName);
-                    Alert.alert(title, message);
-                  }
-                } finally {
-                  if (queuedFirst) sending.delete(entry);
-                }
-              });
+              await trackHoldingWrite(() => sendListDelete({
+                entry: { userId: supabaseUser.id, rowId: itemToDelete.supabase_id || null, localId: id, metal },
+                pendingDeletes,
+                sendingSet: () => deletesSendingRef.current,
+                rowlessSet: () => deletesRowlessRef.current,
+                sameAccount,
+                isLatest: () => deleteTurnsRef.current.isLatest(supabaseUser.id, metal, id, deleteTurn),
+                earlierWrites,
+                knownRow: () => knownRowsRef.current.rowFor(id, supabaseUser.id),
+                findRow: (localId, rowMetal) => findHoldingByLocalId(supabaseUser.id, localId, rowMetal),
+                deleteRow: (rowId) => deleteHoldingFromSupabase(supabaseUser.id, rowId),
+                noteQueued: () => noteCloudMiss('edit', supabaseUser.id),
+                // After a swap the stack came from the cloud, which still has it
+                putBack: () => {
+                  if (stackGenRef.current !== deleteGen) return;
+                  setter(prev => withHoldingRestored(prev, removed, removedIndex));
+                  const { title, message } = deleteMissAlert(removed?.productName);
+                  Alert.alert(title, message);
+                },
+                warn: (...args) => { if (__DEV__) console.error(...args); },
+              }));
             }
 
             // Close detail view if open
@@ -10653,7 +10632,9 @@ function AppContent() {
     const hasDate = item.datePurchased && item.datePurchased.length === 10;
 
     if (hasDate) {
+      const ticket = spotLookupGate.current.begin();
       const result = await fetchHistoricalSpot(item.datePurchased, metal, item.timePurchased);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         // Always store suggestion for comparison (enables warning display)
         setHistoricalSpotSuggestion({
@@ -10662,8 +10643,8 @@ function AppContent() {
           date: item.datePurchased,
         });
 
-        // Auto-fill only if no spot price recorded
-        if (spotPrice === 0) {
+        // Auto-fill only if no spot price recorded and none typed meanwhile
+        if (spotPrice === 0 && spotLookupGate.current.mayFill(ticket)) {
           setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
           setSpotPriceSource(result.source);
         }
@@ -15661,8 +15642,30 @@ function AppContent() {
 
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
-                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
+                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.keepSpot(); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
+
+                  {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}
+                  {offersTodaysValue(form, { editing: !!editingItem, today: localDateString() }) && (() => {
+                    const spot = { silver: silverSpot, gold: goldSpot, platinum: platinumSpot, palladium: palladiumSpot }[metalTab];
+                    const value = todaysUnitValue({ ozt: form.ozt, spot, live: spotPricesLive && !!liveSpotMetals[metalTab] });
+                    if (!value) return null;
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          spotLookupGate.current.begin();
+                          setForm(p => applyTodaysValue(p, { value, spot, metal: metalTab }));
+                          setSpotPriceSource(null);
+                          setHistoricalSpotSuggestion(null);
+                          setFormErrors(e => ({ ...e, unitPrice: false }));
+                        }}
+                        style={{ alignSelf: 'flex-start', marginTop: -4, marginBottom: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(212,168,67,0.3)', backgroundColor: 'rgba(212,168,67,0.06)' }}
+                      >
+                        <Text style={{ color: colors.gold, fontSize: scaledFonts.small }}>Not sure what you paid? Use today's melt value, ${formatCurrency(parseFloat(value))}</Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
 
                   {/* Accuracy indicators for historical spot prices */}
                   {spotPriceSource === 'price_log' && (
@@ -17027,7 +17030,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={i}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
@@ -17055,7 +17058,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={`sd-${i}`}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
@@ -17083,7 +17086,7 @@ function AppContent() {
                       ].map((link, i) => (
                         <TouchableOpacity
                           key={`mm-${i}`}
-                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); Linking.openURL(link.url); }}
+                          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); openDealerLink(link.url, openInBrowser, showDealerLinkFailed); }}
                           style={{
                             backgroundColor: colors.cardBg, borderRadius: 12, padding: 14, marginBottom: 10,
                             borderWidth: 1, borderColor: colors.border,
