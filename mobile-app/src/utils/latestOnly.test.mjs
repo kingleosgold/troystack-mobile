@@ -113,6 +113,32 @@ test('any price above zero keeps the spot', () => {
   }
 });
 
+test('leading zeros keep a spot only when the price reads above zero', () => {
+  for (const v of ['000.00', '000', '00.', '00.00']) {
+    const gate = createLatestOnly();
+    const t = gate.begin();
+    gate.keepSpot(v);
+    assert.equal(gate.mayFill(t), true, `"${v}" should not keep the spot`);
+  }
+  for (const v of ['075', '0075', '007.50', '00.5']) {
+    const gate = createLatestOnly();
+    const t = gate.begin();
+    gate.keepSpot(v);
+    assert.equal(gate.mayFill(t), false, `"${v}" should keep the spot`);
+  }
+});
+
+test('the newest keystroke decides, so "0" then "075" keeps and "1000.00" backed to "000.00" lets a reply fill', () => {
+  const gate = createLatestOnly();
+  const t = gate.begin();
+  gate.keepSpot('0');
+  gate.keepSpot('075');
+  assert.equal(gate.mayFill(t), false);
+  gate.keepSpot('1000.00');
+  gate.keepSpot('000.00');
+  assert.equal(gate.mayFill(t), true);
+});
+
 test('typing a price then backing it down to "0" lets a pending reply fill', async () => {
   const gate = createLatestOnly();
   let spot = '';
