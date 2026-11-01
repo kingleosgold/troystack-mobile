@@ -15642,7 +15642,7 @@ function AppContent() {
 
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
-                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.keepSpot(); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
+                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.keepSpot(v); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
 
                   {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}

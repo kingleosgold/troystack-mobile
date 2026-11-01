@@ -49,7 +49,7 @@ test('a typed spot keeps the ticket current but stops it filling the spot', () =
   const gate = createLatestOnly();
   const t = gate.begin();
   assert.equal(gate.mayFill(t), true);
-  gate.keepSpot();
+  gate.keepSpot('2500.00');
   assert.equal(gate.isCurrent(t), true);
   assert.equal(gate.mayFill(t), false);
 });
@@ -64,17 +64,41 @@ test('a typed spot still gets the comparison suggestion from a pending reply', a
     suggestion = '2000.00';
     if (gate.mayFill(ticket)) spot = '2000.00';
   });
-  gate.keepSpot();
+  gate.keepSpot('2500.00');
   spot = '2500.00';
   await pending;
   assert.equal(spot, '2500.00');
   assert.equal(suggestion, '2000.00');
 });
 
+test('clearing a typed spot lets a pending reply fill it again', async () => {
+  const gate = createLatestOnly();
+  let spot = '';
+  const ticket = gate.begin();
+  const pending = new Promise((r) => setTimeout(r, 5)).then(() => {
+    if (gate.mayFill(ticket)) spot = '2000.00';
+  });
+  gate.keepSpot('25');
+  gate.keepSpot('');
+  await pending;
+  assert.equal(spot, '2000.00');
+});
+
+test('a blank or whitespace spot keeps nothing', () => {
+  const gate = createLatestOnly();
+  const t = gate.begin();
+  gate.keepSpot('   ');
+  assert.equal(gate.mayFill(t), true);
+  gate.keepSpot(undefined);
+  assert.equal(gate.mayFill(t), true);
+  gate.keepSpot('0');
+  assert.equal(gate.mayFill(t), false);
+});
+
 test('a new lookup after a typed spot may fill again', () => {
   const gate = createLatestOnly();
   gate.begin();
-  gate.keepSpot();
+  gate.keepSpot('2500.00');
   const t = gate.begin();
   assert.equal(gate.mayFill(t), true);
 });
@@ -140,6 +164,6 @@ test('resetForm drops any pending spot lookup', () => {
 });
 
 test('typing a spot keeps it from a pending lookup, taking today\'s value drops the lookup', () => {
-  assert.match(app, /onChangeText=\{v => \{ spotLookupGate\.current\.keepSpot\(\); setForm\(p => \(\{ \.\.\.p, spotPrice: v \}\)\)/);
+  assert.match(app, /onChangeText=\{v => \{ spotLookupGate\.current\.keepSpot\(v\); setForm\(p => \(\{ \.\.\.p, spotPrice: v \}\)\)/);
   assert.match(app, /spotLookupGate\.current\.begin\(\);\n\s*setForm\(p => applyTodaysValue\(/);
 });
