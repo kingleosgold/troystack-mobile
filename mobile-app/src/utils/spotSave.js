@@ -3,7 +3,8 @@
 // screen already reads it. The form works the premium out from the spot,
 // so when the spot is cleared before saving, the premium worked out from the
 // old spot would otherwise save with no spot behind it. That premium is
-// dropped. A premium the user typed themselves is kept as typed.
+// dropped, and the form saves the premium it held before a spot first worked
+// one out, such as one the user typed or the holding already had.
 // Nothing here imports React Native, so it runs under `node --test`.
 
 // A blank, zero, negative or unreadable spot saves as 0, meaning no spot.
@@ -12,12 +13,43 @@ export const spotForSave = (spot) => {
   return Number.isFinite(value) && value > 0 ? value : 0;
 };
 
-// premium is what the form's premium field holds now. premiumFromSpot is the
-// value the form last worked out from a spot, or undefined when it hasn't.
-export const premiumForSave = ({ spot, premium, premiumFromSpot }) => {
-  const value = parseFloat(premium);
-  const typed = Number.isFinite(value) ? value : 0;
-  if (spotForSave(spot) > 0) return typed;
+const amount = (value) => {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// The form after the premium is worked out from its spot. premiumFromSpot
+// marks the worked-out value. premiumBeforeSpot keeps what the field held
+// before the first one, so clearing the spot can give it back.
+export const formWithSpotPremium = (form, premium) => ({
+  ...form,
+  premium,
+  premiumFromSpot: premium,
+  premiumBeforeSpot: form.premiumFromSpot === undefined ? form.premium : form.premiumBeforeSpot,
+});
+
+// The premium fields for a form opened on a saved or scanned holding. One with
+// a recorded spot had its premium worked out from that spot, so clearing the
+// spot gives back no premium rather than that one.
+export const openedPremium = (spotPrice, premium) => {
+  const value = String(premium ?? 0);
+  return spotForSave(spotPrice) > 0
+    ? { premium: value, premiumFromSpot: value, premiumBeforeSpot: '0' }
+    : { premium: value };
+};
+
+// The form after the user types a premium, which is theirs from then on.
+export const formWithTypedPremium = (form, premium) => ({
+  ...form,
+  premium,
+  premiumFromSpot: undefined,
+  premiumBeforeSpot: undefined,
+});
+
+// The premium to save from the form's spotPrice, premium, premiumFromSpot
+// and premiumBeforeSpot.
+export const premiumForSave = ({ spotPrice, premium, premiumFromSpot, premiumBeforeSpot }) => {
+  if (spotForSave(spotPrice) > 0) return amount(premium);
   const derived = premiumFromSpot !== undefined && String(premium ?? '').trim() === String(premiumFromSpot).trim();
-  return derived ? 0 : typed;
+  return derived ? amount(premiumBeforeSpot) : amount(premium);
 };

@@ -47,7 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
-import { spotForSave, premiumForSave } from './src/utils/spotSave';
+import { spotForSave, premiumForSave, formWithSpotPremium, formWithTypedPremium, openedPremium } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
@@ -3815,9 +3815,8 @@ function AppContent() {
     if (unitPrice > 0 && spotPrice > 0 && ozt > 0) {
       const calculatedPremium = unitPrice - (spotPrice * ozt);
       // Only auto-fill positive premiums; negative means spot data is likely wrong
-      // premiumFromSpot marks the premium as worked out, so clearing the spot before a save doesn't keep it
       const premium = Math.max(0, calculatedPremium).toFixed(2);
-      setForm(prev => ({ ...prev, premium, premiumFromSpot: premium }));
+      setForm(prev => formWithSpotPremium(prev, premium));
     }
   }, [form.unitPrice, form.spotPrice, form.ozt]);
 
@@ -10076,7 +10075,7 @@ function AppContent() {
       taxes: item.taxes.toString(),
       shipping: item.shipping.toString(),
       spotPrice: item.spotPrice.toString(),
-      premium: item.premium.toString(),
+      ...openedPremium(item.spotPrice, item.premium),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
     spotLookupGate.current.begin();
@@ -10173,7 +10172,7 @@ function AppContent() {
       ozt: parseFloat(form.ozt) || 0, quantity: parseInt(form.quantity) || 1,
       unitPrice: parseFloat(form.unitPrice) || 0, taxes: parseFloat(form.taxes) || 0,
       shipping: parseFloat(form.shipping) || 0, spotPrice: spotForSave(form.spotPrice),
-      premium: premiumForSave({ spot: form.spotPrice, premium: form.premium, premiumFromSpot: form.premiumFromSpot }),
+      premium: premiumForSave(form),
       costBasis: form.costBasis ? parseFloat(form.costBasis) : undefined,
       // An account's holding keeps its cloud row through an edit, so the next
       // edit updates that row, and one that fails takes an edit mark rather
@@ -10617,7 +10616,7 @@ function AppContent() {
       timePurchased: item.timePurchased || '',
       ozt: item.ozt.toString(), quantity: item.quantity.toString(), unitPrice: item.unitPrice.toString(),
       taxes: item.taxes.toString(), shipping: item.shipping.toString(), spotPrice: item.spotPrice.toString(),
-      premium: item.premium.toString(),
+      ...openedPremium(item.spotPrice, item.premium),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
     // The holding comes from the detail view, so it counts from when that
@@ -15764,7 +15763,7 @@ function AppContent() {
                   <View style={[styles.card, { backgroundColor: `${colors.gold}15` }]}>
                     <Text style={{ color: colors.gold, fontWeight: '600', marginBottom: 8, fontSize: scaledFonts.normal }}>Premium (Auto-calculated)</Text>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <View style={{ flex: 1 }}><FloatingInput label="Per Unit" value={form.premium} onChangeText={v => setForm(p => ({ ...p, premium: v, premiumFromSpot: undefined }))} keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
+                      <View style={{ flex: 1 }}><FloatingInput label="Per Unit" value={form.premium} onChangeText={v => setForm(p => formWithTypedPremium(p, v))} keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                         {(() => {
                           const totalPremium = parseFloat(form.premium || 0) * parseInt(form.quantity || 1);
