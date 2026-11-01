@@ -118,3 +118,43 @@ test('a price typed over it stays when a past date is picked', () => {
   assert.equal(after.unitPrice, '30');
   assert.equal(after.todaysValueFor, undefined);
 });
+
+// The add form as App.js runs it: the auto premium effect after each change.
+import { formWithSpotPremium, formWithTypedPremium, premiumForSave } from './spotSave.js';
+
+const autoPremium = (form) => {
+  const unit = parseFloat(form.unitPrice) || 0;
+  const spot = parseFloat(form.spotPrice) || 0;
+  const ozt = parseFloat(form.ozt) || 0;
+  if (unit > 0 && spot > 0 && ozt > 0) return formWithSpotPremium(form, Math.max(0, unit - spot * ozt).toFixed(2));
+  return form;
+};
+
+test('today\'s value then a cleared spot saves no premium, not one typed before it', () => {
+  let form = { ozt: '1', quantity: '1', unitPrice: '', spotPrice: '', premium: '0', costBasis: '' };
+  form = formWithTypedPremium(form, '5');
+  form = autoPremium({ ...form, unitPrice: '80', spotPrice: '70' });
+  assert.equal(form.premium, '10.00');
+  form = autoPremium(applyTodaysValue(form, { value: '77.12', spot: 77.12, metal: 'silver' }));
+  assert.equal(form.premium, '0.00');
+  assert.equal(premiumForSave({ ...form, spotPrice: '' }), 0);
+});
+
+test('today\'s value drops the spot premium marks', () => {
+  const after = applyTodaysValue(
+    { ozt: '1', unitPrice: '', spotPrice: '70', premium: '3.00', premiumFromSpot: '3.00', premiumBeforeSpot: '5' },
+    { value: '77.12', spot: 77.12, metal: 'silver' },
+  );
+  assert.equal(after.premiumFromSpot, undefined);
+  assert.equal(after.premiumBeforeSpot, undefined);
+  assert.equal(premiumForSave({ ...after, spotPrice: '' }), 0);
+});
+
+test('clearing the price taken drops the spot premium marks too', () => {
+  const form = { ...taken(), premium: '0.00', premiumFromSpot: '0.00', premiumBeforeSpot: '5' };
+  const after = formAfterTodaysValueChange({ ...form, ozt: '10' }, 'silver', today);
+  assert.equal(after.premium, '0');
+  assert.equal(after.premiumFromSpot, undefined);
+  assert.equal(after.premiumBeforeSpot, undefined);
+  assert.equal(premiumForSave({ ...after, spotPrice: '' }), 0);
+});
