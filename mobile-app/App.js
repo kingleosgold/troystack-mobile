@@ -47,6 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
+import { createLatestOnly } from './src/utils/latestOnly';
 import { clearDataPrompt, clearDataDone } from './src/utils/clearData';
 import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DELAY_MS, isFirstHolding, freeWeekOfferMoment, freeWeekOfferBlocker, freeWeekOfferCopy, watchAlerts } from './src/utils/freeWeekOffer';
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
@@ -2992,6 +2993,8 @@ function AppContent() {
   });
   const [formErrors, setFormErrors] = useState({});
   const [spotPriceSource, setSpotPriceSource] = useState(null); // Tracks data source for spot price warnings
+  // Only the newest spot lookup on the add form may fill the spot
+  const spotLookupGate = useRef(createLatestOnly());
   const [historicalSpotSuggestion, setHistoricalSpotSuggestion] = useState(null); // Suggested historical spot price for comparison
 
   // Speculation State
@@ -9166,22 +9169,27 @@ function AppContent() {
   };
 
   const handleDateChange = async (date) => {
+    const ticket = spotLookupGate.current.begin();
     setForm(prev => ({ ...prev, datePurchased: date }));
     setSpotPriceSource(null);
     setHistoricalSpotSuggestion(null);
 
     if (date.length === 10) {
       const result = await fetchHistoricalSpot(date, metalTab, form.timePurchased || null);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
 
   // Handle time change - refetch historical spot with time for minute-level precision
   const handleTimeChange = async (time) => {
+    const ticket = spotLookupGate.current.begin();
     setForm(prev => ({ ...prev, timePurchased: time }));
 
     const timeValid = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time);
@@ -9192,10 +9200,13 @@ function AppContent() {
       setHistoricalSpotSuggestion(null);
 
       const result = await fetchHistoricalSpot(form.datePurchased, metalTab, time);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
       }
     }
   };
@@ -9203,6 +9214,7 @@ function AppContent() {
   // Handle metal tab change — auto-update spot price for the new metal
   const handleMetalTabChange = async (newMetal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const ticket = spotLookupGate.current.begin();
     // A quick pick from the old metal would save under the new one, so it clears
     if (!editingItem && newMetal !== metalTab) setForm(prev => formAfterMetalChange(prev, metalTab));
     setMetalTab(newMetal);
@@ -9215,11 +9227,14 @@ function AppContent() {
       setSpotPriceSource(null);
       setHistoricalSpotSuggestion(null);
       const result = await fetchHistoricalSpot(form.datePurchased, newMetal, form.timePurchased || null);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
-        setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
-        setSpotPriceSource(result.source);
         setHistoricalSpotSuggestion({ price: result.price, source: result.source, date: form.datePurchased });
-      } else {
+        if (spotLookupGate.current.mayFill(ticket)) {
+          setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
+          setSpotPriceSource(result.source);
+        }
+      } else if (spotLookupGate.current.mayFill(ticket)) {
         // Fallback to current live spot
         setForm(prev => ({ ...prev, spotPrice: String(liveSpots[newMetal] || 0) }));
         setSpotPriceSource('current-fallback');
@@ -10061,6 +10076,7 @@ function AppContent() {
       premium: item.premium.toString(),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
+    spotLookupGate.current.begin();
     setSpotPriceSource(null); // Clear source warning when editing
 
     // Set metal tab
@@ -10098,6 +10114,7 @@ function AppContent() {
       premium: '0',
       costBasis: defaultCostBasis.toString(),
     });
+    spotLookupGate.current.begin();
     setSpotPriceSource(null); // Clear source warning when editing
 
     // Set metal tab
@@ -10428,6 +10445,7 @@ function AppContent() {
       quantity: '', unitPrice: '', taxes: '', shipping: '',
       spotPrice: '', premium: '0', costBasis: '',
     });
+    spotLookupGate.current.begin();
     setEditingItem(null);
     setSpotPriceSource(null);
     setHistoricalSpotSuggestion(null);
@@ -10614,7 +10632,9 @@ function AppContent() {
     const hasDate = item.datePurchased && item.datePurchased.length === 10;
 
     if (hasDate) {
+      const ticket = spotLookupGate.current.begin();
       const result = await fetchHistoricalSpot(item.datePurchased, metal, item.timePurchased);
+      if (!spotLookupGate.current.isCurrent(ticket)) return;
       if (result.price) {
         // Always store suggestion for comparison (enables warning display)
         setHistoricalSpotSuggestion({
@@ -10623,8 +10643,8 @@ function AppContent() {
           date: item.datePurchased,
         });
 
-        // Auto-fill only if no spot price recorded
-        if (spotPrice === 0) {
+        // Auto-fill only if no spot price recorded and none typed meanwhile
+        if (spotPrice === 0 && spotLookupGate.current.mayFill(ticket)) {
           setForm(prev => ({ ...prev, spotPrice: result.price.toString() }));
           setSpotPriceSource(result.source);
         }
@@ -15622,7 +15642,7 @@ function AppContent() {
 
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={{ flex: 1 }}><FloatingInput label="Unit Price" value={form.unitPrice} onChangeText={v => { setForm(p => ({ ...p, unitPrice: v })); if (v && parseFloat(v) > 0) setFormErrors(e => ({ ...e, unitPrice: false })); }} placeholder="0.00" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} required error={formErrors.unitPrice} /></View>
-                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
+                    <View style={{ flex: 1 }}><FloatingInput label="Spot at Purchase" value={form.spotPrice} onChangeText={v => { spotLookupGate.current.keepSpot(); setForm(p => ({ ...p, spotPrice: v })); setSpotPriceSource(null); }} placeholder="Auto" keyboardType="decimal-pad" prefix="$" colors={colors} isDarkMode={isDarkMode} scaledFonts={scaledFonts} /></View>
                   </View>
 
                   {/* A new user who can't recall what they paid can take today's value as the price, so the holding saves and its gain starts at zero */}
@@ -15634,6 +15654,7 @@ function AppContent() {
                       <TouchableOpacity
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          spotLookupGate.current.begin();
                           setForm(p => applyTodaysValue(p, { value, spot, metal: metalTab }));
                           setSpotPriceSource(null);
                           setHistoricalSpotSuggestion(null);
