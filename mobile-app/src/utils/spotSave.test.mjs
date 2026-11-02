@@ -136,7 +136,7 @@ test('savePurchase saves the spot and premium through the guard', () => {
 });
 
 test('editItem and editScannedItem open the premium through openedPremium', () => {
-  assert.equal(app.match(/\.\.\.openedPremium\(item\.spotPrice, item\.premium\),/g)?.length, 2);
+  assert.equal(app.match(/\.\.\.openedPremium\(item\.spotPrice, item\.premium, item\.unitPrice, item\.ozt\),/g)?.length, 2);
   assert.ok(!app.includes('premium: item.premium.toString(),'));
 });
 
@@ -175,4 +175,74 @@ test('a spot with no unit price or weight leaves the form as it was', () => {
 test('a typed premium stays when the spot is cleared', () => {
   const form = formWithTypedPremium(formAfterPriceChange({ unitPrice: '85', spotPrice: '77', ozt: '1', premium: '0' }), '9');
   assert.equal(formAfterPriceChange({ ...form, spotPrice: '' }).premium, '9');
+});
+
+// A holding opened for editing, as editItem and editScannedItem build the form
+const opened = (item) => ({
+  unitPrice: item.unitPrice.toString(),
+  spotPrice: item.spotPrice.toString(),
+  ozt: item.ozt.toString(),
+  ...openedPremium(item.spotPrice, item.premium, item.unitPrice, item.ozt),
+});
+
+test('opening a holding keeps a typed premium the spot would rework', () => {
+  // Saved at $85 on a $77 spot with a typed premium of $5, not the $8 the spot gives
+  const form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  const after = formAfterPriceChange(form);
+  assert.equal(after, form);
+  assert.equal(after.premium, '5');
+  assert.equal(premiumForSave(after), 5);
+});
+
+test('opening a holding saved below spot keeps its premium rather than 0', () => {
+  // A scan saves a negative premium when the price came in under spot
+  const form = opened({ unitPrice: 70, spotPrice: 77, ozt: 1, premium: -7 });
+  const after = formAfterPriceChange(form);
+  assert.equal(after.premium, '-7');
+  assert.equal(premiumForSave(after), -7);
+});
+
+test('the same values written another way still count as unchanged', () => {
+  const form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  const after = formAfterPriceChange({ ...form, unitPrice: '85.00', ozt: '1.0' });
+  assert.equal(after.premium, '5');
+});
+
+test('changing the unit price, spot or weight works the premium out again', () => {
+  const form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  for (const change of [{ unitPrice: '90' }, { spotPrice: '76' }, { ozt: '0.5' }]) {
+    const after = formAfterPriceChange({ ...form, ...change });
+    const expected = Math.max(0, parseFloat(change.unitPrice ?? 85) - parseFloat(change.spotPrice ?? 77) * parseFloat(change.ozt ?? 1)).toFixed(2);
+    assert.equal(after.premium, expected, JSON.stringify(change));
+    assert.equal(after.premiumOpenedOn, undefined);
+  }
+});
+
+test('changing a value and back works the premium out from the values shown', () => {
+  let form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  form = formAfterPriceChange({ ...form, unitPrice: '86' });
+  assert.equal(form.premium, '9.00');
+  form = formAfterPriceChange({ ...form, unitPrice: '85' });
+  assert.equal(form.premium, '8.00');
+});
+
+test('clearing the spot on an opened holding still saves no premium', () => {
+  const form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  const after = formAfterPriceChange({ ...form, spotPrice: '' });
+  assert.equal(after.premium, '0');
+  assert.equal(premiumForSave(after), 0);
+});
+
+test('a premium typed on an opened holding stays while the values do', () => {
+  const form = formWithTypedPremium(opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 }), '6');
+  assert.equal(formAfterPriceChange(form).premium, '6');
+  assert.equal(premiumForSave(formAfterPriceChange(form)), 6);
+});
+
+test('a holding opened with no spot takes no mark and fills from a looked-up spot', () => {
+  const form = opened({ unitPrice: 85, spotPrice: 0, ozt: 1, premium: 6 });
+  assert.equal(form.premiumOpenedOn, undefined);
+  const filled = formAfterPriceChange({ ...form, spotPrice: '77' });
+  assert.equal(filled.premium, '8.00');
+  assert.equal(premiumForSave({ ...filled, spotPrice: '' }), 6);
 });
