@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetTime, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetTime, heldFromStored, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
 
 const spotChange = {
   silver: { amount: 1, percent: 2 },
@@ -145,7 +145,9 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
 test('the background task builds from the saved picture, not a key nothing writes', () => {
   const bg = read('./backgroundTasks.js');
-  assert.match(bg, /backgroundWidgetPayload\(\{ saved, prices: priceData\.prices \}\)/);
+  assert.match(bg, /backgroundWidgetPayload\(\{ saved, prices: priceData\.prices, held \}\)/);
+  assert.match(bg, /AsyncStorage\.getItem\('stack_platinum'\)/);
+  assert.match(bg, /AsyncStorage\.getItem\('stack_palladium'\)/);
   assert.match(bg, /prices: raw\.prices,/);
   assert.doesNotMatch(bg, /stack_has_gold/);
 });
@@ -185,4 +187,42 @@ test('the widget gets times without fractional seconds, which its decoder refuse
   const kit = read('./widgetKit.js');
   assert.match(kit, /lastUpdated: widgetTime\(\),/);
   assert.doesNotMatch(kit, /toISOString/);
+});
+
+test('stored holdings total their ounces the way the app does', () => {
+  const held = heldFromStored({
+    silver: JSON.stringify([{ ozt: 1, quantity: 20 }, { ozt: 10, quantity: 1 }]),
+    gold: JSON.stringify([{ ozt: 0.1, quantity: 10 }]),
+    platinum: null,
+    palladium: JSON.stringify([]),
+  });
+  near(held.silver, 30);
+  near(held.gold, 1);
+  assert.equal(held.platinum, 0);
+  assert.equal(held.palladium, 0);
+});
+
+test('a stored list that cannot be read keeps the saved ounces', () => {
+  assert.equal(heldFromStored({ silver: '{bad', gold: null }), null);
+  assert.equal(heldFromStored({ silver: '{"a":1}' }), null);
+  const out = backgroundWidgetPayload({ saved, prices, held: undefined });
+  assert.equal(out.silverOzt, 100);
+});
+
+test('a stack changed while prices were not live is valued as it is now', () => {
+  const out = backgroundWidgetPayload({ saved, prices, held: { silver: 50, gold: 0, platinum: 0, palladium: 3 } });
+  assert.equal(out.silverOzt, 50);
+  assert.equal(out.goldOzt, 0);
+  assert.equal(out.palladiumOzt, 3);
+  near(out.silverValue, 4000);
+  near(out.goldValue, 0);
+  near(out.palladiumValue, 3900);
+  near(out.portfolioValue, 7900);
+  const yesterday = 50 * 80 + 3 * (1300 / 1.02);
+  near(out.dailyChangeAmount, 7900 - yesterday);
+});
+
+test('bad item numbers count as no ounces, never NaN', () => {
+  const held = heldFromStored({ silver: JSON.stringify([{ ozt: 'x', quantity: 2 }, { ozt: 1 }, null]) });
+  assert.equal(held.silver, 0);
 });

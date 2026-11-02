@@ -9,7 +9,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload } from './widgetRefresh';
+import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -100,10 +100,19 @@ const updateWidgetBackground = async (priceData) => {
   }
 
   try {
-    const savedStr = await AsyncStorage.getItem(WIDGET_PAYLOAD_KEY);
+    const [savedStr, silverStr, goldStr, platinumStr, palladiumStr] = await Promise.all([
+      AsyncStorage.getItem(WIDGET_PAYLOAD_KEY),
+      AsyncStorage.getItem('stack_silver'),
+      AsyncStorage.getItem('stack_gold'),
+      AsyncStorage.getItem('stack_platinum'),
+      AsyncStorage.getItem('stack_palladium'),
+    ]);
     let saved = null;
     try { saved = savedStr ? JSON.parse(savedStr) : null; } catch { saved = null; }
-    const widgetData = backgroundWidgetPayload({ saved, prices: priceData.prices });
+    // The holdings as stored now, since they can change while prices aren't
+    // live and the app hasn't synced the widget since
+    const held = heldFromStored({ silver: silverStr, gold: goldStr, platinum: platinumStr, palladium: palladiumStr }) || undefined;
+    const widgetData = backgroundWidgetPayload({ saved, prices: priceData.prices, held });
     if (!widgetData) {
       if (__DEV__) console.log('[BackgroundFetch] Widget update skipped (no saved widget picture or no usable price)');
       return;

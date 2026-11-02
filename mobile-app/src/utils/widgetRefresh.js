@@ -60,13 +60,32 @@ export const widgetChanges = ({ live, liveMetals, held, dailyChange, dailyChange
   return out;
 };
 
+// The ounces each metal's stored holdings add up to, the same way the app
+// totals them (ozt times quantity), from the four saved holdings lists as
+// strings. A missing list is an empty stack. Null when any list can't be
+// read, so the caller keeps the saved picture's ounces.
+export const heldFromStored = (stored) => {
+  const held = {};
+  for (const metal of METALS) {
+    const raw = stored?.[metal];
+    let items = [];
+    if (raw != null) {
+      try { items = JSON.parse(raw); } catch { return null; }
+      if (!Array.isArray(items)) return null;
+    }
+    held[metal] = items.reduce((sum, i) => sum + num(Number(i?.ozt) * Number(i?.quantity)), 0);
+  }
+  return held;
+};
+
 // The widget picture after a background fetch, or null to leave the widget as
 // it is. `saved` is the last picture the app sent and `prices` maps each metal
 // to { price, change_pct } from /v1/prices. A metal whose price fails its
 // check keeps the saved price and sends no change of its own. The stack's day
 // change is figured only when every held metal got a price and a change, and
-// is 0 otherwise.
-export const backgroundWidgetPayload = ({ saved, prices, now = new Date() }) => {
+// is 0 otherwise. `held`, when given, is the ounces in the stored holdings now,
+// so a stack changed while prices weren't live is valued as it is today.
+export const backgroundWidgetPayload = ({ saved, prices, held: current, now = new Date() }) => {
   if (!saved || typeof saved !== 'object' || !prices || typeof prices !== 'object') return null;
   const next = { ...saved };
   const held = {};
@@ -75,8 +94,9 @@ export const backgroundWidgetPayload = ({ saved, prices, now = new Date() }) => 
   let allHeldLive = true;
   let anyLive = false;
   for (const metal of METALS) {
-    const ozt = num(saved[`${metal}Ozt`]);
+    const ozt = current ? num(current[metal]) : num(saved[`${metal}Ozt`]);
     held[metal] = ozt;
+    next[`${metal}Ozt`] = ozt;
     const fetched = prices[metal];
     const live = priceOk(metal, fetched?.price);
     const spot = live ? Number(fetched.price) : num(saved[`${metal}Spot`]);
