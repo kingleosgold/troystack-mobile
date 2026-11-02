@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { spotHeader, spotNote, savedWhen, metalNotLive } from './spotNote.js';
+import { spotHeader, spotNote, savedWhen, metalNotLive, heldNotLive, partialNote, liveMovers } from './spotNote.js';
 
 // Local times, so the checks hold in any time zone
 const now = new Date(2026, 10, 2, 9, 5);
@@ -63,9 +63,43 @@ test('App.js wires the note, the header and the tile mark on the Dashboard', () 
   assert.match(app, /\{spotHeader\(effSpotLive\)\}/);
   assert.doesNotMatch(app, />Live Spot</);
   assert.match(app, /metalNotLive\(\{ live: effSpotLive, liveMetals: liveSpotMetals, metal: m\.key \}\)/);
-  assert.match(app, /!effMarketsClosed && effSpotLive && \(\(\) => \{/);
-  assert.match(app, /const aiSummary = !effSpotLive\s*\? null/);
+  assert.match(app, /effLiveMovers\.length > 0 && !effMarketsClosed && effSpotLive && \(\(\) => \{/);
+  assert.match(app, /const sorted = \[\.\.\.effLiveMovers\]/);
+  assert.match(app, /const aiSummary = !effSpotLive\s*\? null\s*: effMarketsClosed\s*\? 'Markets are closed[^']*'\s*: !effStackChangeLive\s*\? null/);
+  assert.match(app, /Markets Closed<\/Text>\s*<\/View>\s*\) : !effStackChangeLive \? \(/);
+  assert.match(app, /\{effValueNote && \(/);
+  assert.match(app, /const effValueNote = effSpotNote \|\| partialNote\(effHeldNotLive\);/);
   assert.match(app, /\{aiSummary && \(/);
   assert.match(app, /No live price yet/);
   assert.match(app, /holdingsImpact\.every\(m => !metalNotLive\(/);
+});
+
+test('held metals the live fetch left out, only once a fetch has landed', () => {
+  const held = { silver: 100, gold: 2, platinum: 1, palladium: 0 };
+  assert.deepEqual(heldNotLive({ live: false, liveMetals: {}, held }), []);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: { silver: true, gold: true, platinum: true, palladium: true }, held }), []);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: { silver: true, gold: true, platinum: false }, held }), ['platinum']);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: { gold: true }, held }), ['silver', 'platinum']);
+  // A metal the stack doesn't hold never counts, live or not
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: { silver: true, gold: true, platinum: true }, held }), []);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: undefined, held: { gold: '0.5' } }), ['gold']);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: {}, held: undefined }), []);
+  assert.deepEqual(heldNotLive({ live: true, liveMetals: {}, held: { gold: NaN, silver: -1 } }), []);
+});
+
+test('the stack note names the held metals that are not live', () => {
+  assert.equal(partialNote([]), null);
+  assert.equal(partialNote(undefined), null);
+  assert.equal(partialNote(['platinum']), "Platinum price isn't live yet");
+  assert.equal(partialNote(['platinum', 'palladium']), "Platinum and palladium prices aren't live yet");
+  assert.equal(partialNote(['silver', 'platinum', 'palladium']), "Silver, platinum and palladium prices aren't live yet");
+  assert.equal(partialNote(['silver', 'gold', 'platinum', 'palladium']), "Silver, gold, platinum and palladium prices aren't live yet");
+});
+
+test('Troy only talks about movers with a live price', () => {
+  const movers = [{ key: 'silver' }, { key: 'gold' }, { key: 'platinum' }, { key: 'palladium' }];
+  assert.deepEqual(liveMovers({ live: false, liveMetals: { gold: true }, movers }), []);
+  assert.deepEqual(liveMovers({ live: true, liveMetals: { gold: true, palladium: true }, movers }).map(m => m.key), ['gold', 'palladium']);
+  assert.deepEqual(liveMovers({ live: true, liveMetals: { silver: true, gold: true, platinum: true, palladium: true }, movers }).length, 4);
+  assert.deepEqual(liveMovers({ live: true, liveMetals: {}, movers: undefined }), []);
 });
