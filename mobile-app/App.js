@@ -10068,7 +10068,7 @@ function AppContent() {
       taxes: item.taxes.toString(),
       shipping: item.shipping.toString(),
       spotPrice: item.spotPrice.toString(),
-      ...openedPremium(item.spotPrice, item.premium),
+      ...openedPremium(item.spotPrice, item.premium, item.unitPrice, item.ozt),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
     spotLookupGate.current.begin();
@@ -10609,7 +10609,7 @@ function AppContent() {
       timePurchased: item.timePurchased || '',
       ozt: item.ozt.toString(), quantity: item.quantity.toString(), unitPrice: item.unitPrice.toString(),
       taxes: item.taxes.toString(), shipping: item.shipping.toString(), spotPrice: item.spotPrice.toString(),
-      ...openedPremium(item.spotPrice, item.premium),
+      ...openedPremium(item.spotPrice, item.premium, item.unitPrice, item.ozt),
       costBasis: item.costBasis ? item.costBasis.toString() : defaultCostBasis.toString(),
     });
     // The holding comes from the detail view, so it counts from when that
