@@ -214,16 +214,85 @@ test('changing the unit price, spot or weight works the premium out again', () =
     const after = formAfterPriceChange({ ...form, ...change });
     const expected = Math.max(0, parseFloat(change.unitPrice ?? 85) - parseFloat(change.spotPrice ?? 77) * parseFloat(change.ozt ?? 1)).toFixed(2);
     assert.equal(after.premium, expected, JSON.stringify(change));
-    assert.equal(after.premiumOpenedOn, undefined);
+    assert.equal(premiumForSave(after), parseFloat(expected), JSON.stringify(change));
   }
 });
 
-test('changing a value and back works the premium out from the values shown', () => {
+test('changing a value and back gives back the stored premium', () => {
+  // 85 to 855 to 85 on a holding with a typed $5 premium saves $5, not the $8 the spot gives
   let form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
-  form = formAfterPriceChange({ ...form, unitPrice: '86' });
-  assert.equal(form.premium, '9.00');
+  form = formAfterPriceChange({ ...form, unitPrice: '855' });
+  assert.equal(form.premium, '778.00');
   form = formAfterPriceChange({ ...form, unitPrice: '85' });
-  assert.equal(form.premium, '8.00');
+  assert.equal(form.premium, '5');
+  assert.equal(premiumForSave(form), 5);
+});
+
+test('each of the unit price, spot and weight changed and back gives back the stored premium', () => {
+  const start = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  for (const [field, away] of [['unitPrice', '90'], ['spotPrice', '76'], ['ozt', '0.5']]) {
+    let form = formAfterPriceChange({ ...start, [field]: away });
+    assert.notEqual(form.premium, '5', field);
+    form = formAfterPriceChange({ ...form, [field]: start[field] });
+    assert.equal(form.premium, '5', field);
+    assert.equal(premiumForSave(form), 5, field);
+  }
+});
+
+test('a premium saved below spot comes back after a change and back', () => {
+  let form = opened({ unitPrice: 70, spotPrice: 77, ozt: 1, premium: -7 });
+  form = formAfterPriceChange({ ...form, unitPrice: '80' });
+  assert.equal(form.premium, '3.00');
+  form = formAfterPriceChange({ ...form, unitPrice: '70' });
+  assert.equal(form.premium, '-7');
+  assert.equal(premiumForSave(form), -7);
+});
+
+test('clearing the spot and typing it back gives back the stored premium', () => {
+  let form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  form = formAfterPriceChange({ ...form, spotPrice: '' });
+  assert.equal(form.premium, '0');
+  assert.equal(premiumForSave(form), 0);
+  form = formAfterPriceChange({ ...form, spotPrice: '7' });
+  assert.equal(form.premium, '78.00');
+  form = formAfterPriceChange({ ...form, spotPrice: '77' });
+  assert.equal(form.premium, '5');
+  assert.equal(premiumForSave(form), 5);
+  // and clearing it again still saves no premium
+  form = formAfterPriceChange({ ...form, spotPrice: '' });
+  assert.equal(premiumForSave(form), 0);
+});
+
+test('a premium typed while the values are as opened is the one that comes back', () => {
+  let form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  form = formWithTypedPremium(form, '6');
+  form = formAfterPriceChange({ ...form, unitPrice: '90' });
+  assert.equal(form.premium, '13.00');
+  form = formAfterPriceChange({ ...form, unitPrice: '85' });
+  assert.equal(form.premium, '6');
+  assert.equal(premiumForSave(form), 6);
+  // it's typed, so clearing the spot keeps it
+  form = formAfterPriceChange({ ...form, spotPrice: '' });
+  assert.equal(form.premium, '6');
+  assert.equal(premiumForSave(form), 6);
+});
+
+test('a premium typed after a change is worked over by the next change as before', () => {
+  let form = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  form = formAfterPriceChange({ ...form, unitPrice: '90' });
+  form = formWithTypedPremium(form, '12');
+  assert.equal(premiumForSave(form), 12);
+  form = formAfterPriceChange({ ...form, unitPrice: '85' });
+  assert.equal(form.premium, '5');
+});
+
+test('a form away from its opened values with nothing to work out comes back as the same object', () => {
+  const start = opened({ unitPrice: 85, spotPrice: 77, ozt: 1, premium: 5 });
+  const form = formAfterPriceChange({ ...start, unitPrice: '' });
+  assert.equal(formAfterPriceChange(form), form);
+  const worked = formAfterPriceChange({ ...start, unitPrice: '90' });
+  const again = formAfterPriceChange(worked);
+  assert.equal(again.premium, worked.premium);
 });
 
 test('clearing the spot on an opened holding still saves no premium', () => {

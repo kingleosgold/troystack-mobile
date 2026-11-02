@@ -39,20 +39,20 @@ const priceBasis = (unitPrice, spotPrice, ozt) => ({
 // The premium fields for a form opened on a saved or scanned holding. One with
 // a recorded spot had its premium worked out from that spot, so clearing the
 // spot gives back no premium rather than that one. premiumOpenedOn keeps the
-// unit price, spot and weight it opened with, so the auto premium step leaves
-// the stored premium alone until one of them changes. Without it, opening a
-// holding would rework a premium the user typed, or one saved below spot, and
-// that reworked one would save.
+// unit price, spot and weight it opened with, and premiumAsOpened the premium
+// fields that go with them, so the auto premium step leaves the stored premium
+// alone while those values hold and gives it back when they return to them.
+// Without it, opening a holding would rework a premium the user typed, or one
+// saved below spot, and that reworked one would save.
 export const openedPremium = (spotPrice, premium, unitPrice, ozt) => {
   const value = String(premium ?? 0);
-  return spotForSave(spotPrice) > 0
-    ? {
-      premium: value,
-      premiumFromSpot: value,
-      premiumBeforeSpot: '0',
-      premiumOpenedOn: priceBasis(unitPrice, spotPrice, ozt),
-    }
-    : { premium: value };
+  if (spotForSave(spotPrice) <= 0) return { premium: value };
+  const premiumAsOpened = { premium: value, premiumFromSpot: value, premiumBeforeSpot: '0' };
+  return {
+    ...premiumAsOpened,
+    premiumOpenedOn: priceBasis(unitPrice, spotPrice, ozt),
+    premiumAsOpened,
+  };
 };
 
 // True while the form's unit price, spot and weight are still the ones it
@@ -65,12 +65,14 @@ const stillAsOpened = (form) => {
 };
 
 // The form after the user types a premium, which is theirs from then on.
-export const formWithTypedPremium = (form, premium) => ({
-  ...form,
-  premium,
-  premiumFromSpot: undefined,
-  premiumBeforeSpot: undefined,
-});
+// Typed while the values are the ones the form opened on, it's the premium
+// those values give back from then on.
+export const formWithTypedPremium = (form, premium) => {
+  const typed = { premium, premiumFromSpot: undefined, premiumBeforeSpot: undefined };
+  return stillAsOpened(form)
+    ? { ...form, ...typed, premiumAsOpened: typed }
+    : { ...form, ...typed };
+};
 
 // The premium from before the spot as the field shows it, or '0' when there
 // was none or it can't be read.
@@ -106,13 +108,21 @@ export const premiumForSave = ({ spotPrice, premium, premiumFromSpot, premiumBef
 // negative one means the spot is likely wrong. With no spot the premium that
 // saves comes back through formAfterSpotCleared. Anything else leaves the form
 // as it was, the same object. A form opened on a holding keeps its stored
-// premium until the unit price, spot or weight changes from what it opened
-// with. The first change drops that mark, so changing a value back works the
-// premium out again.
+// premium while the unit price, spot and weight are the ones it opened with,
+// and gets it back when a change returns them there, so changing a value and
+// changing it back saves the premium the holding had.
 export const formAfterPriceChange = (form) => {
   if (form.premiumOpenedOn !== undefined) {
-    if (stillAsOpened(form)) return form;
-    return formAfterPriceChange({ ...form, premiumOpenedOn: undefined });
+    const asOpened = form.premiumAsOpened;
+    if (stillAsOpened(form)) {
+      const same = form.premium === asOpened.premium
+        && form.premiumFromSpot === asOpened.premiumFromSpot
+        && form.premiumBeforeSpot === asOpened.premiumBeforeSpot;
+      return same ? form : { ...form, ...asOpened };
+    }
+    const { premiumOpenedOn, premiumAsOpened, ...rest } = form;
+    const worked = formAfterPriceChange(rest);
+    return worked === rest ? form : { ...worked, premiumOpenedOn, premiumAsOpened };
   }
   const unitPrice = parseFloat(form.unitPrice) || 0;
   const spotPrice = parseFloat(form.spotPrice) || 0;
