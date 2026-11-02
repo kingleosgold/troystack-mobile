@@ -5376,12 +5376,12 @@ function AppContent() {
     }
   };
 
-  // Initialize RevenueCat (non-blocking, runs after authentication)
-  // IMPORTANT: Uses setTimeout to ensure this doesn't block the main render
   useEffect(() => {
     if (!authLoading) setSessionRestored(true);
   }, [authLoading]);
 
+  // Initialize RevenueCat (non-blocking, runs after authentication)
+  // IMPORTANT: Uses setTimeout to ensure this doesn't block the main render
   useEffect(() => {
     if (!isAuthenticated) return; // Wait for auth to complete first
     if (!sessionRestored) return; // and for the saved session, so the account's own plan is read
