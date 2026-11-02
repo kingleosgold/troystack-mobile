@@ -58,6 +58,7 @@ import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
+import { WIDGET_PAYLOAD_KEY, widgetChanges } from './src/utils/widgetRefresh';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
@@ -3439,6 +3440,7 @@ function AppContent() {
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
         'stack_midnight_snapshot',
+        WIDGET_PAYLOAD_KEY,
         'stack_advisor_count',
         'stack_price_alerts',
         'stack_icloud_sync_enabled', 'stack_last_sync_time', 'stack_last_modified',
@@ -7613,17 +7615,27 @@ function AppContent() {
     try {
       // Daily change for the widget mirrors the Dashboard "Today's change" headline.
       // Top-level dailyChange / dailyChangePct are computed from spotChange.{metal}.percent
-      // on a yesterday-close basis (see compute block earlier in AppContent).
+      // on a yesterday-close basis (see compute block earlier in AppContent). A metal's
+      // change goes out only while its price is live, and the stack's only while every
+      // held metal is live, as the Dashboard does.
+      const changes = widgetChanges({
+        live: spotPricesLive,
+        liveMetals: liveSpotMetals,
+        held: { silver: totalSilverOzt, gold: totalGoldOzt, platinum: totalPlatinumOzt, palladium: totalPalladiumOzt },
+        dailyChange,
+        dailyChangePct,
+        spotChange,
+      });
       const widgetPayload = {
         portfolioValue: totalMeltValue,
-        dailyChangeAmount: spotPricesLive ? dailyChange : 0,
-        dailyChangePercent: spotPricesLive ? dailyChangePct : 0,
+        dailyChangeAmount: changes.dailyChangeAmount,
+        dailyChangePercent: changes.dailyChangePercent,
         goldSpot: goldSpot,
         silverSpot: silverSpot,
-        goldChangeAmount: spotChange?.gold?.amount || 0,
-        goldChangePercent: spotChange?.gold?.percent || 0,
-        silverChangeAmount: spotChange?.silver?.amount || 0,
-        silverChangePercent: spotChange?.silver?.percent || 0,
+        goldChangeAmount: changes.goldChangeAmount,
+        goldChangePercent: changes.goldChangePercent,
+        silverChangeAmount: changes.silverChangeAmount,
+        silverChangePercent: changes.silverChangePercent,
         goldValue: totalGoldOzt * goldSpot,
         silverValue: totalSilverOzt * silverSpot,
         platinumValue: totalPlatinumOzt * platinumSpot,
@@ -7634,10 +7646,10 @@ function AppContent() {
         palladiumOzt: totalPalladiumOzt,
         platinumSpot: platinumSpot,
         palladiumSpot: palladiumSpot,
-        platinumChangeAmount: spotChange?.platinum?.amount || 0,
-        platinumChangePercent: spotChange?.platinum?.percent || 0,
-        palladiumChangeAmount: spotChange?.palladium?.amount || 0,
-        palladiumChangePercent: spotChange?.palladium?.percent || 0,
+        platinumChangeAmount: changes.platinumChangeAmount,
+        platinumChangePercent: changes.platinumChangePercent,
+        palladiumChangeAmount: changes.palladiumChangeAmount,
+        palladiumChangePercent: changes.palladiumChangePercent,
         hasSubscription: hasGold || hasLifetimeAccess,
         hideValues: hideWidgetValues,
         goldSparkline: sparklineData?.gold || [],
@@ -7649,7 +7661,9 @@ function AppContent() {
 
       if (__DEV__) console.log('📱 [syncWidget] Sending payload:', widgetPayload);
 
-      await syncWidgetData(widgetPayload);
+      const synced = await syncWidgetData(widgetPayload);
+      // The background fetch refreshes prices on top of this picture
+      if (synced) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
 
       if (__DEV__) console.log('✅ [syncWidget] Widget data synced successfully');
     } catch (error) {
@@ -7662,7 +7676,13 @@ function AppContent() {
     if (dataLoaded && spotPricesLive && (hasGold || hasLifetimeAccess)) {
       syncWidget();
     }
-  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
+  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
+
+  // Without Gold the background fetch has no saved widget picture to refresh,
+  // so a lapsed plan's widget stops getting new values from it
+  useEffect(() => {
+    if (!hasGold && !hasLifetimeAccess) AsyncStorage.removeItem(WIDGET_PAYLOAD_KEY).catch(() => {});
+  }, [hasGold, hasLifetimeAccess]);
 
   // Sync widget when app comes to foreground
   useEffect(() => {
