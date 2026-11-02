@@ -20,7 +20,10 @@ test('no note once prices are live', () => {
 test('a new install with nothing saved says it is waiting, never a saved time', () => {
   assert.equal(spotNote({ live: false, timestamp: null, now }), 'Waiting for live prices');
   assert.equal(spotNote({ live: false, timestamp: undefined, now }), 'Waiting for live prices');
-  assert.equal(spotNote({ live: false, timestamp: 'not a date', now }), 'Waiting for live prices');
+});
+
+test('a saved time that cannot be read still says the prices are saved', () => {
+  assert.equal(spotNote({ live: false, timestamp: 'not a date', now }), 'Saved prices');
 });
 
 test('saved prices name when they were fetched', () => {
@@ -61,4 +64,8 @@ test('App.js wires the note, the header and the tile mark on the Dashboard', () 
   assert.doesNotMatch(app, />Live Spot</);
   assert.match(app, /metalNotLive\(\{ live: effSpotLive, liveMetals: liveSpotMetals, metal: m\.key \}\)/);
   assert.match(app, /!effMarketsClosed && effSpotLive && \(\(\) => \{/);
+  assert.match(app, /const aiSummary = !effSpotLive\s*\? null/);
+  assert.match(app, /\{aiSummary && \(/);
+  assert.match(app, /No live price yet/);
+  assert.match(app, /holdingsImpact\.every\(m => !metalNotLive\(/);
 });

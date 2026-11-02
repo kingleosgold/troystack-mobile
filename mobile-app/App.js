@@ -11521,7 +11521,10 @@ function AppContent() {
           const effDailyChange = demoData ? demoData.dailyChange : dailyChange;
           const gainedLost = effDailyChange >= 0 ? 'gained' : 'lost';
           const rallyDecline = biggestMover?.pct >= 0 ? 'rally' : 'decline';
-          const aiSummary = effMarketsClosed
+          // No line about today's move until live prices land, since the change is unknown
+          const aiSummary = !effSpotLive
+            ? null
+            : effMarketsClosed
             ? 'Markets are closed. Prices reflect Friday\u2019s close.'
             : effTotalMeltValue > 0 && effDailyChange !== 0
             ? `Your stack ${gainedLost} $${formatCurrency(Math.abs(effDailyChange), 0)} today, driven by ${biggestMover?.label}'s ${Math.abs(biggestMover?.pct || 0).toFixed(1)}% ${rallyDecline}.`
@@ -11664,10 +11667,12 @@ function AppContent() {
                   </View>
                 )}
 
+                {aiSummary && (
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
                   <Image source={TROY_AVATAR} style={{ width: 14, height: 14, borderRadius: 7 }} />
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{aiSummary}</Text>
                 </View>
+                )}
                 </>
                 )}
               </View>
@@ -11945,7 +11950,11 @@ function AppContent() {
                                     Your {m.label.toLowerCase()} ({formatOunces(m.ozt, m.label === 'Silver' ? 0 : 2)} oz)
                                   </Text>
                                 </View>
-                                {marketsClosed ? (
+                                {!demoData && metalNotLive({ live: effSpotLive, liveMetals: liveSpotMetals, metal: m.label.toLowerCase() }) ? (
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, fontWeight: '600', marginLeft: 16, marginTop: 4 }}>
+                                    No live price yet
+                                  </Text>
+                                ) : marketsClosed ? (
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, fontWeight: '600', marginLeft: 16, marginTop: 4 }}>
                                     No change (markets closed)
                                   </Text>
@@ -11994,7 +12003,7 @@ function AppContent() {
                   </>
                 )}
                 {/* Troy one-liner — Metal Movers */}
-                {holdingsImpact.length > 0 && !effMarketsClosed && (() => {
+                {holdingsImpact.length > 0 && !effMarketsClosed && (demoData || holdingsImpact.every(m => !metalNotLive({ live: effSpotLive, liveMetals: liveSpotMetals, metal: m.label.toLowerCase() }))) && (() => {
                   const totalChange = holdingsImpact.reduce((s, m) => s + m.dollarChange, 0);
                   const allGreen = holdingsImpact.every(m => m.dollarChange >= 0);
                   const allRed = holdingsImpact.every(m => m.dollarChange <= 0);

@@ -32,13 +32,14 @@ export const savedWhen = (timestamp, now = new Date()) => {
 };
 
 // The note under the spot header and the stack's value, or null once live
-// prices have landed this session. Saved prices name when they were fetched.
-// With nothing saved the prices on screen are placeholders, so it says the
-// app is still waiting.
+// prices have landed this session. Saved prices name when they were fetched,
+// or just say saved when that time can't be read. With nothing saved the
+// prices on screen are placeholders, so it says the app is still waiting.
 export const spotNote = ({ live, timestamp, now = new Date() }) => {
   if (live) return null;
+  if (!timestamp) return 'Waiting for live prices';
   const when = savedWhen(timestamp, now);
-  return when ? `Saved prices from ${when}` : 'Waiting for live prices';
+  return when ? `Saved prices from ${when}` : 'Saved prices';
 };
 
 // Whether one metal's tile shows a price no live fetch this session sent, so
