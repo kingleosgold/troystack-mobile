@@ -226,3 +226,7 @@ test('bad item numbers count as no ounces, never NaN', () => {
   const held = heldFromStored({ silver: JSON.stringify([{ ozt: 'x', quantity: 2 }, { ozt: 1 }, null]) });
   assert.equal(held.silver, 0);
 });
+
+test('stored holdings with no saved picture never reach the widget', () => {
+  assert.equal(backgroundWidgetPayload({ saved: null, prices, held: { silver: 50, gold: 1, platinum: 0, palladium: 0 } }), null);
+});
