@@ -126,6 +126,12 @@ export const backgroundWidgetPayload = ({ saved, prices, held: current, now = ne
     next.dailyChangeAmount = 0;
     next.dailyChangePercent = 0;
   }
+  // The saved sparklines are older than these prices. The widget checks its
+  // day change against the sparkline's trend and, when the signs differ, swaps
+  // in the sparkline's own move, so old points could turn a fresh loss into a
+  // gain. Clearing them leaves the fresh change standing until the widget's
+  // own fetch brings new points.
+  for (const metal of METALS) next[`${metal}Sparkline`] = [];
   next.lastUpdated = widgetTime(now);
   return next;
 };

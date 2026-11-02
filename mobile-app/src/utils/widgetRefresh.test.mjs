@@ -77,11 +77,11 @@ const prices = {
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
 
-test('a background refresh keeps Gold, Hide Values and the sparklines from the app', () => {
+test('a background refresh keeps Gold and Hide Values from the app and drops the old sparklines', () => {
   const out = backgroundWidgetPayload({ saved, prices, now: new Date('2026-11-02T15:00:00Z') });
   assert.equal(out.hasSubscription, true);
   assert.equal(out.hideValues, true);
-  assert.deepEqual(out.goldSparkline, [1, 2, 3]);
+  assert.deepEqual(out.goldSparkline, []);
   assert.equal(out.lastUpdated, '2026-11-02T15:00:00Z');
 });
 
@@ -229,4 +229,12 @@ test('bad item numbers count as no ounces, never NaN', () => {
 
 test('stored holdings with no saved picture never reach the widget', () => {
   assert.equal(backgroundWidgetPayload({ saved: null, prices, held: { silver: 50, gold: 1, platinum: 0, palladium: 0 } }), null);
+});
+
+test('old sparklines never ride with a fresh day change, so the widget cannot flip its sign', () => {
+  const withLines = { ...saved, goldSparkline: [4400, 4500], silverSparkline: [60, 70], platinumSparkline: [1, 2], palladiumSparkline: [3, 4] };
+  const out = backgroundWidgetPayload({ saved: withLines, prices: { ...prices, gold: { price: 4500, change_pct: -1 } } });
+  assert.ok(out.dailyChangeAmount !== 0);
+  for (const m of ['gold', 'silver', 'platinum', 'palladium']) assert.deepEqual(out[`${m}Sparkline`], []);
+  assert.deepEqual(withLines.goldSparkline, [4400, 4500]);
 });
