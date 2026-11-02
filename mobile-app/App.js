@@ -47,6 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
+import { readSpotReply } from './src/utils/spotReply';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8623,56 +8624,36 @@ function AppContent() {
       const raw = await response.json();
       if (__DEV__) console.log('📊 API Response Data:', JSON.stringify(raw).substring(0, 300));
 
-      if (raw.prices) {
-        // Transform v1 nested response: { prices: { gold: { price, change_pct }, ... } }
-        const goldPrice = raw.prices.gold?.price;
-        const silverPrice = raw.prices.silver?.price;
-        const platinumPrice = raw.prices.platinum?.price;
-        const palladiumPrice = raw.prices.palladium?.price;
-
-        if (silverPrice && silverPrice > 10) {
-          setSilverSpot(silverPrice);
-          await AsyncStorage.setItem('stack_silver_spot', silverPrice.toString());
+      // A reply where no metal clears its floor counts as a failed fetch, so
+      // the saved prices stay as they are and aren't called live.
+      const reply = readSpotReply(raw);
+      if (reply) {
+        const { spots, liveMetals, change } = reply;
+        if (liveMetals.silver) {
+          setSilverSpot(spots.silver);
+          await AsyncStorage.setItem('stack_silver_spot', spots.silver.toString());
         }
-        if (goldPrice && goldPrice > 1000) {
-          setGoldSpot(goldPrice);
-          await AsyncStorage.setItem('stack_gold_spot', goldPrice.toString());
+        if (liveMetals.gold) {
+          setGoldSpot(spots.gold);
+          await AsyncStorage.setItem('stack_gold_spot', spots.gold.toString());
         }
-        if (platinumPrice && platinumPrice > 100) {
-          setPlatinumSpot(platinumPrice);
-          await AsyncStorage.setItem('stack_platinum_spot', platinumPrice.toString());
+        if (liveMetals.platinum) {
+          setPlatinumSpot(spots.platinum);
+          await AsyncStorage.setItem('stack_platinum_spot', spots.platinum.toString());
         }
-        if (palladiumPrice && palladiumPrice > 100) {
-          setPalladiumSpot(palladiumPrice);
-          await AsyncStorage.setItem('stack_palladium_spot', palladiumPrice.toString());
+        if (liveMetals.palladium) {
+          setPalladiumSpot(spots.palladium);
+          await AsyncStorage.setItem('stack_palladium_spot', spots.palladium.toString());
         }
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(raw.timestamp || new Date().toISOString());
-        setLiveSpotMetals({
-          silver: !!(silverPrice && silverPrice > 10),
-          gold: !!(goldPrice && goldPrice > 1000),
-          platinum: !!(platinumPrice && platinumPrice > 100),
-          palladium: !!(palladiumPrice && palladiumPrice > 100),
-        });
+        setLiveSpotMetals(liveMetals);
         setSpotPricesLive(true);
         await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
 
-        // Compute daily change data from change_pct
-        const computeChange = (metalData) => {
-          if (!metalData) return { amount: null, percent: null, prevClose: null };
-          const pct = metalData.change_pct || 0;
-          const price = metalData.price || 0;
-          const prevClose = pct !== 0 ? price / (1 + pct / 100) : price;
-          return { amount: price - prevClose, percent: pct, prevClose };
-        };
-
-        setSpotChange({
-          gold: computeChange(raw.prices.gold),
-          silver: computeChange(raw.prices.silver),
-          platinum: computeChange(raw.prices.platinum),
-          palladium: computeChange(raw.prices.palladium),
-        });
+        // Day change from change_pct, and none for a metal whose price was thrown out
+        setSpotChange(change);
         if (__DEV__) console.log('📈 Change data computed from change_pct');
 
         // Capture markets closed status (client-side fallback since v1 doesn't send marketsClosed)
@@ -8682,9 +8663,9 @@ function AppContent() {
           if (__DEV__) console.log(`🔒 Markets closed — client: ${clientClosed}`);
         }
 
-        if (__DEV__) console.log(`💰 Prices updated: Gold $${goldPrice}, Silver $${silverPrice} (Source: ${raw.source})`);
+        if (__DEV__) console.log(`💰 Prices updated: Gold $${spots.gold}, Silver $${spots.silver} (Source: ${raw.source})`);
       } else {
-        if (__DEV__) console.log('⚠️  API returned no prices data');
+        if (__DEV__) console.log('⚠️  API returned no usable prices');
         setPriceSource('cached');
         priceSourceRef.current = 'cached';
       }
