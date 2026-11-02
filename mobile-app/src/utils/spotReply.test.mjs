@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply } from './spotReply.js';
+import { readSpotReply, spotSavePairs, spotWidgetPrices } from './spotReply.js';
 
 const full = {
   prices: {
@@ -85,4 +85,45 @@ test('App.js reads the reply through readSpotReply and keeps a failed read off L
   const liveAt = body.indexOf('setSpotPricesLive(true)');
   const elseAt = body.indexOf('} else {', ifAt);
   assert.ok(ifAt > 0 && liveAt > ifAt && liveAt < elseAt);
+});
+
+test('hex and exponent strings never read as a price', () => {
+  assert.equal(readSpotReply({ prices: { gold: { price: '0x1F40' } } }), null);
+  assert.equal(readSpotReply({ prices: { gold: { price: '5e3' } } }), null);
+  assert.equal(readSpotReply({ prices: { gold: { price: 'Infinity' } } }), null);
+  assert.equal(readSpotReply({ prices: { gold: { price: ' 4500.25 ' } } }).spots.gold, 4500.25);
+  assert.equal(readSpotReply({ prices: { gold: { price: 4500, change_pct: '1e2' } } }).change.gold.percent, 0);
+  assert.equal(readSpotReply({ prices: { gold: { price: 4500, change_pct: '-.5' } } }).change.gold.percent, -0.5);
+});
+
+test('a failed read saves nothing, and a good one saves each live spot and the time', () => {
+  assert.deepEqual(spotSavePairs(null, 't'), []);
+  const r = readSpotReply({ prices: { gold: { price: 4500 }, silver: { price: 3 }, platinum: { price: 2100 } } });
+  assert.deepEqual(spotSavePairs(r, '2026-11-02T12:00:00Z'), [
+    ['stack_gold_spot', '4500'],
+    ['stack_platinum_spot', '2100'],
+    ['stack_price_timestamp', '2026-11-02T12:00:00Z'],
+  ]);
+  const now = new Date('2026-11-02T13:00:00.000Z');
+  for (const ts of [undefined, null, '', 5]) {
+    assert.deepEqual(spotSavePairs(r, ts, now).at(-1), ['stack_price_timestamp', now.toISOString()]);
+  }
+});
+
+test('the widget only gets the metals that passed, with change_pct only when usable', () => {
+  assert.equal(spotWidgetPrices(null, {}), null);
+  const raw = { prices: { gold: { price: 4500, change_pct: '1.5' }, silver: { price: 80 }, platinum: { price: 50, change_pct: 3 }, palladium: { price: 1700, change_pct: -120 } } };
+  assert.deepEqual(spotWidgetPrices(readSpotReply(raw), raw), {
+    gold: { price: 4500, change_pct: 1.5 },
+    silver: { price: 80 },
+    palladium: { price: 1700 },
+  });
+});
+
+test('the background task reads the reply the way the app does', () => {
+  const bg = readFileSync(new URL('./backgroundTasks.js', import.meta.url), 'utf8');
+  assert.match(bg, /const reply = readSpotReply\(raw\);\n\s+if \(reply\) \{/);
+  assert.match(bg, /await AsyncStorage\.multiSet\(spotSavePairs\(reply, raw\.timestamp\)\);/);
+  assert.doesNotMatch(bg, /AsyncStorage\.setItem\('stack_price_timestamp'/);
+  assert.doesNotMatch(bg, /change_pct \|\| 0/);
 });
