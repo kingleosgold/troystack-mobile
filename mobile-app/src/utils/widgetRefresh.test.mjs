@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetTime, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
 
 const spotChange = {
   silver: { amount: 1, percent: 2 },
@@ -82,7 +82,7 @@ test('a background refresh keeps Gold, Hide Values and the sparklines from the a
   assert.equal(out.hasSubscription, true);
   assert.equal(out.hideValues, true);
   assert.deepEqual(out.goldSparkline, [1, 2, 3]);
-  assert.equal(out.lastUpdated, '2026-11-02T15:00:00.000Z');
+  assert.equal(out.lastUpdated, '2026-11-02T15:00:00Z');
 });
 
 test('a background refresh values every metal, platinum and palladium included', () => {
@@ -177,4 +177,12 @@ test('the app saves what it sends, and locks the widget when free, at sign out a
   assert.match(app, /dailyChangeAmount: changes\.dailyChangeAmount,/);
   assert.doesNotMatch(app, /if \(!hasGold && !hasLifetimeAccess\) AsyncStorage\.removeItem/);
   assert.equal(WIDGET_PAYLOAD_KEY, 'stack_widget_payload');
+});
+
+test('the widget gets times without fractional seconds, which its decoder refuses', () => {
+  assert.equal(widgetTime(new Date('2026-11-02T15:04:05.123Z')), '2026-11-02T15:04:05Z');
+  assert.match(widgetTime(), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  const kit = read('./widgetKit.js');
+  assert.match(kit, /lastUpdated: widgetTime\(\),/);
+  assert.doesNotMatch(kit, /toISOString/);
 });

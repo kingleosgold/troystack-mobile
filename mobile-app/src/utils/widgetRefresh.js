@@ -10,6 +10,11 @@
 
 export const WIDGET_PAYLOAD_KEY = 'stack_widget_payload';
 
+// A time the widget can read. Its decoder takes ISO 8601 without fractional
+// seconds, and toISOString() always adds them (".000Z"), which fails the
+// whole decode and leaves the widget on its locked placeholder.
+export const widgetTime = (date = new Date()) => date.toISOString().replace(/\.\d+Z$/, 'Z');
+
 // What the widget is sent once the plan is known to be free or the account
 // signs out: the locked view, with no values or ounces in it.
 export const LOCKED_WIDGET = Object.freeze({ hasSubscription: false, hideValues: true });
@@ -101,6 +106,6 @@ export const backgroundWidgetPayload = ({ saved, prices, now = new Date() }) => 
     next.dailyChangeAmount = 0;
     next.dailyChangePercent = 0;
   }
-  next.lastUpdated = now.toISOString();
+  next.lastUpdated = widgetTime(now);
   return next;
 };
