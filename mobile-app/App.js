@@ -46,6 +46,7 @@ import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
+import { spotHeader, spotNote, metalNotLive } from './src/utils/spotNote';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -11479,13 +11480,16 @@ function AppContent() {
           const effSparklineData = demoData ? demoData.sparklineData : sparklineData;
           const effHasGoldAccess = demoData ? true : hasGoldAccess;
           const effHasPaidAccess = demoData ? true : hasPaidAccess;
+          // Until a live fetch lands this session, the prices on screen are saved or placeholders, and the note says so
+          const effSpotLive = demoData ? true : spotPricesLive;
+          const effSpotNote = spotNote({ live: effSpotLive, timestamp: priceTimestamp, now: todayDate });
 
           // Metal movers data (fixed grid: Ag top-left, Au top-right, Pt bottom-left, Pd bottom-right)
           const metalMovers = [
-            { symbol: 'Ag', label: 'Silver', spot: effSilverSpot, change: effSpotChange?.silver?.amount || 0, pct: effSpotChange?.silver?.percent || 0, color: '#9ca3af' },
-            { symbol: 'Au', label: 'Gold', spot: effGoldSpot, change: effSpotChange?.gold?.amount || 0, pct: effSpotChange?.gold?.percent || 0, color: '#D4A843' },
-            { symbol: 'Pt', label: 'Platinum', spot: effPlatinumSpot, change: effSpotChange?.platinum?.amount || 0, pct: effSpotChange?.platinum?.percent || 0, color: '#7BB3D4' },
-            { symbol: 'Pd', label: 'Palladium', spot: effPalladiumSpot, change: effSpotChange?.palladium?.amount || 0, pct: effSpotChange?.palladium?.percent || 0, color: '#6BBF8A' },
+            { symbol: 'Ag', key: 'silver', label: 'Silver', spot: effSilverSpot, change: effSpotChange?.silver?.amount || 0, pct: effSpotChange?.silver?.percent || 0, color: '#9ca3af' },
+            { symbol: 'Au', key: 'gold', label: 'Gold', spot: effGoldSpot, change: effSpotChange?.gold?.amount || 0, pct: effSpotChange?.gold?.percent || 0, color: '#D4A843' },
+            { symbol: 'Pt', key: 'platinum', label: 'Platinum', spot: effPlatinumSpot, change: effSpotChange?.platinum?.amount || 0, pct: effSpotChange?.platinum?.percent || 0, color: '#7BB3D4' },
+            { symbol: 'Pd', key: 'palladium', label: 'Palladium', spot: effPalladiumSpot, change: effSpotChange?.palladium?.amount || 0, pct: effSpotChange?.palladium?.percent || 0, color: '#6BBF8A' },
           ];
           const biggestMoverSymbol = metalMovers.reduce((best, m) => Math.abs(m.pct) > Math.abs(best.pct) ? m : best, metalMovers[0]).symbol;
 
@@ -11517,7 +11521,10 @@ function AppContent() {
           const effDailyChange = demoData ? demoData.dailyChange : dailyChange;
           const gainedLost = effDailyChange >= 0 ? 'gained' : 'lost';
           const rallyDecline = biggestMover?.pct >= 0 ? 'rally' : 'decline';
-          const aiSummary = effMarketsClosed
+          // No line about today's move until live prices land, since the change is unknown
+          const aiSummary = !effSpotLive
+            ? null
+            : effMarketsClosed
             ? 'Markets are closed. Prices reflect Friday\u2019s close.'
             : effTotalMeltValue > 0 && effDailyChange !== 0
             ? `Your stack ${gainedLost} $${formatCurrency(Math.abs(effDailyChange), 0)} today, driven by ${biggestMover?.label}'s ${Math.abs(biggestMover?.pct || 0).toFixed(1)}% ${rallyDecline}.`
@@ -11609,6 +11616,9 @@ function AppContent() {
                 ) : (
                 <>
                 <Text style={{ color: colors.text, fontSize: scaledFonts.huge, fontWeight: '700', marginBottom: 2 }}>${formatCurrency(effTotalMeltValue, 0)}</Text>
+                {effSpotNote && (
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.small, marginBottom: 6 }}>{effSpotNote}</Text>
+                )}
 
                 {effSparklineData && effSparklineData.gold.length >= 2 && effTotalMeltValue > 0 && (() => {
                   const goldPts = effSparklineData.gold;
@@ -11640,7 +11650,9 @@ function AppContent() {
                   );
                 })()}
 
-                {effMarketsClosed ? (
+                {!effSpotLive ? (
+                  <View style={{ marginBottom: 6 }} />
+                ) : effMarketsClosed ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>Markets Closed</Text>
                   </View>
@@ -11655,10 +11667,12 @@ function AppContent() {
                   </View>
                 )}
 
+                {aiSummary && (
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
                   <Image source={TROY_AVATAR} style={{ width: 14, height: 14, borderRadius: 7 }} />
                   <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{aiSummary}</Text>
                 </View>
+                )}
                 </>
                 )}
               </View>
@@ -11807,7 +11821,10 @@ function AppContent() {
 
               {/* ===== SECTION 2: LIVE SPOT (2x2 Grid) ===== */}
               <View onLayout={(e) => { sectionOffsets.current['metalMovers'] = e.nativeEvent.layout.y; }} style={{ marginBottom: 16 }}>
-                <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10, marginLeft: 4 }}>Live Spot</Text>
+                <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: effSpotNote ? 2 : 10, marginLeft: 4 }}>{spotHeader(effSpotLive)}</Text>
+                {effSpotNote && (
+                  <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginBottom: 10, marginLeft: 4 }}>{effSpotNote}</Text>
+                )}
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                   {metalMovers.map((m, idx) => {
                     const metalKey = m.label.toLowerCase();
@@ -11863,7 +11880,9 @@ function AppContent() {
                         </Text>
 
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          {effMarketsClosed ? (
+                          {!demoData && metalNotLive({ live: effSpotLive, liveMetals: liveSpotMetals, metal: m.key }) ? (
+                            <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>Not live</Text>
+                          ) : effMarketsClosed ? (
                             <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>Closed</Text>
                           ) : (
                             <>
@@ -11881,7 +11900,7 @@ function AppContent() {
                   })}
                 </View>
                 {/* Troy one-liner — Live Spot */}
-                {metalMovers.length > 0 && !effMarketsClosed && (() => {
+                {metalMovers.length > 0 && !effMarketsClosed && effSpotLive && (() => {
                   const sorted = [...metalMovers].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
                   const best = sorted[0];
                   const worst = sorted[sorted.length - 1];
@@ -11931,7 +11950,11 @@ function AppContent() {
                                     Your {m.label.toLowerCase()} ({formatOunces(m.ozt, m.label === 'Silver' ? 0 : 2)} oz)
                                   </Text>
                                 </View>
-                                {marketsClosed ? (
+                                {!demoData && metalNotLive({ live: effSpotLive, liveMetals: liveSpotMetals, metal: m.label.toLowerCase() }) ? (
+                                  <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, fontWeight: '600', marginLeft: 16, marginTop: 4 }}>
+                                    No live price yet
+                                  </Text>
+                                ) : marketsClosed ? (
                                   <Text style={{ color: colors.muted, fontSize: scaledFonts.normal, fontWeight: '600', marginLeft: 16, marginTop: 4 }}>
                                     No change (markets closed)
                                   </Text>
@@ -11980,7 +12003,7 @@ function AppContent() {
                   </>
                 )}
                 {/* Troy one-liner — Metal Movers */}
-                {holdingsImpact.length > 0 && !effMarketsClosed && (() => {
+                {holdingsImpact.length > 0 && !effMarketsClosed && (demoData || holdingsImpact.every(m => !metalNotLive({ live: effSpotLive, liveMetals: liveSpotMetals, metal: m.label.toLowerCase() }))) && (() => {
                   const totalChange = holdingsImpact.reduce((s, m) => s + m.dollarChange, 0);
                   const allGreen = holdingsImpact.every(m => m.dollarChange >= 0);
                   const allRed = holdingsImpact.every(m => m.dollarChange <= 0);
