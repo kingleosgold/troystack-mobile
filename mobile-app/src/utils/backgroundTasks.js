@@ -10,6 +10,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
+import { readSpotReply, spotSavePairs, spotWidgetPrices } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -37,49 +38,22 @@ const fetchSpotPricesBackground = async () => {
 
     const raw = await response.json();
 
-    if (raw.prices) {
-      const goldPrice = raw.prices.gold?.price;
-      const silverPrice = raw.prices.silver?.price;
+    // The same read the app does. A reply where no metal clears its floor is
+    // a failed fetch: no spot, no time and no widget change is saved from it.
+    const reply = readSpotReply(raw);
+    if (reply) {
+      if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${reply.spots.gold}, Silver $${reply.spots.silver}`);
 
-      if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${goldPrice}, Silver $${silverPrice}`);
-
-      // Save to AsyncStorage for app to use on next open
-      if (silverPrice && silverPrice > 10) {
-        await AsyncStorage.setItem('stack_silver_spot', silverPrice.toString());
-      }
-      if (goldPrice && goldPrice > 1000) {
-        await AsyncStorage.setItem('stack_gold_spot', goldPrice.toString());
-      }
-      if (raw.timestamp) {
-        await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp);
-      }
-
-      // Compute and save change data from change_pct
-      const computeChange = (metalData) => {
-        if (!metalData) return { amount: 0, percent: 0, prevClose: 0 };
-        const pct = metalData.change_pct || 0;
-        const price = metalData.price || 0;
-        const prevClose = pct !== 0 ? price / (1 + pct / 100) : price;
-        return { amount: price - prevClose, percent: pct, prevClose };
-      };
-      const change = {
-        gold: computeChange(raw.prices.gold),
-        silver: computeChange(raw.prices.silver),
-        platinum: computeChange(raw.prices.platinum),
-        palladium: computeChange(raw.prices.palladium),
-      };
-      await AsyncStorage.setItem('stack_spot_change', JSON.stringify(change));
+      // Saved for the app to use on next open
+      await AsyncStorage.multiSet(spotSavePairs(reply, raw.timestamp));
 
       return {
-        gold: goldPrice,
-        silver: silverPrice,
-        change,
-        prices: raw.prices,
+        prices: spotWidgetPrices(reply, raw),
         timestamp: raw.timestamp,
       };
     }
 
-    if (__DEV__) console.log('[BackgroundFetch] API returned no prices data');
+    if (__DEV__) console.log('[BackgroundFetch] API returned no usable prices');
     return null;
   } catch (error) {
     if (__DEV__) console.error('[BackgroundFetch] Failed to fetch prices:', error.message);

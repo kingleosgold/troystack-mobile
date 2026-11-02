@@ -11,9 +11,13 @@ export const SPOT_FLOORS = { silver: 10, gold: 1000, platinum: 100, palladium: 1
 
 const NO_CHANGE = { amount: null, percent: null, prevClose: null };
 
+// A plain decimal only, so a string like '0x1F40' or '8e3' never reads as a
+// price. Number() alone would take both.
+const DECIMAL = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)\s*$/;
+
 const toNum = (v) => {
   if (typeof v === 'number') return v;
-  if (typeof v === 'string' && v.trim() !== '') return Number(v);
+  if (typeof v === 'string' && DECIMAL.test(v)) return Number(v);
   return NaN;
 };
 
@@ -47,4 +51,30 @@ export const readSpotReply = (raw) => {
   }
   if (!SPOT_METALS.some((m) => liveMetals[m])) return null;
   return { spots, liveMetals, change };
+};
+
+// What a read reply saves on the phone, as [key, value] pairs for
+// AsyncStorage.multiSet: each live metal's spot and the time of the reply.
+// Nothing for a failed read, so the saved prices and their time stay put.
+export const spotSavePairs = (reply, timestamp, now = new Date()) => {
+  if (!reply) return [];
+  const pairs = SPOT_METALS.filter((m) => reply.liveMetals[m]).map((m) => [`stack_${m}_spot`, String(reply.spots[m])]);
+  const time = typeof timestamp === 'string' && timestamp ? timestamp : now.toISOString();
+  pairs.push(['stack_price_timestamp', time]);
+  return pairs;
+};
+
+// The prices the widget is built from: only the metals that passed, so the
+// widget never takes a price the app threw out. change_pct goes along only
+// when the reply carried a usable one, so the widget still reads a missing
+// change as unknown and leaves the stack's day change at 0, as it did before.
+export const spotWidgetPrices = (reply, raw) => {
+  if (!reply) return null;
+  const out = {};
+  for (const m of SPOT_METALS) {
+    if (!reply.liveMetals[m]) continue;
+    const pct = toNum(raw?.prices?.[m]?.change_pct);
+    out[m] = Number.isFinite(pct) && pct > -100 ? { price: reply.spots[m], change_pct: pct } : { price: reply.spots[m] };
+  }
+  return out;
 };
