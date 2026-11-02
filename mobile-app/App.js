@@ -2770,6 +2770,11 @@ function AppContent() {
   const [hasGold, setHasGold] = useState(__DEV__ ? true : false);
   const [userTier, setUserTier] = useState(__DEV__ ? 'gold' : 'free'); // 'free' or 'gold'
   const [subscriptionLoading, setSubscriptionLoading] = useState(true); // Don't show upgrade prompts until loaded
+  // True once the saved Supabase session has been read at launch. RevenueCat
+  // setup waits for it, or a slow restore lets setup read the anonymous
+  // customer as free and lock a Gold member's widget until the account loads.
+  // It latches, so a sign out's own loading doesn't rerun setup.
+  const [sessionRestored, setSessionRestored] = useState(false);
 
   // Server-side scan tracking
   const [scanUsage, setScanUsage] = useState({
@@ -5371,10 +5376,15 @@ function AppContent() {
     }
   };
 
+  useEffect(() => {
+    if (!authLoading) setSessionRestored(true);
+  }, [authLoading]);
+
   // Initialize RevenueCat (non-blocking, runs after authentication)
   // IMPORTANT: Uses setTimeout to ensure this doesn't block the main render
   useEffect(() => {
     if (!isAuthenticated) return; // Wait for auth to complete first
+    if (!sessionRestored) return; // and for the saved session, so the account's own plan is read
 
     // Delay RevenueCat setup slightly to ensure UI renders first
     const timeoutId = setTimeout(() => {
@@ -5468,7 +5478,7 @@ function AppContent() {
     }, 500); // 500ms delay to let UI settle
 
     return () => clearTimeout(timeoutId);
-  }, [isAuthenticated, supabaseUser?.id, guestMode]); // Re-run when user changes
+  }, [isAuthenticated, sessionRestored, supabaseUser?.id, guestMode]); // Re-run when user changes
 
   // RevenueCat real-time listener — updates tier immediately on purchase/restore/expiry
   useEffect(() => {
