@@ -9,6 +9,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -73,6 +74,7 @@ const fetchSpotPricesBackground = async () => {
         gold: goldPrice,
         silver: silverPrice,
         change,
+        prices: raw.prices,
         timestamp: raw.timestamp,
       };
     }
@@ -86,7 +88,10 @@ const fetchSpotPricesBackground = async () => {
 };
 
 /**
- * Update the widget with fresh data
+ * Update the widget with fresh prices. Starts from the last picture the app
+ * sent, so the subscription, Hide Values, every metal's ounces and the
+ * sparklines stay as the app set them. With no saved picture (the app hasn't
+ * synced the widget yet, or the user signed out) the widget is left alone.
  */
 const updateWidgetBackground = async (priceData) => {
   if (Platform.OS !== 'ios' || !WidgetKitModule) {
@@ -95,58 +100,30 @@ const updateWidgetBackground = async (priceData) => {
   }
 
   try {
-    // Load portfolio data from AsyncStorage
-    const [silverItemsStr, goldItemsStr, hasGoldStr, hasLifetimeStr] = await Promise.all([
+    const [savedStr, silverStr, goldStr, platinumStr, palladiumStr] = await Promise.all([
+      AsyncStorage.getItem(WIDGET_PAYLOAD_KEY),
       AsyncStorage.getItem('stack_silver'),
       AsyncStorage.getItem('stack_gold'),
-      AsyncStorage.getItem('stack_has_gold'),
-      AsyncStorage.getItem('stack_has_lifetime'),
+      AsyncStorage.getItem('stack_platinum'),
+      AsyncStorage.getItem('stack_palladium'),
     ]);
-
-    const silverItems = silverItemsStr ? JSON.parse(silverItemsStr) : [];
-    const goldItems = goldItemsStr ? JSON.parse(goldItemsStr) : [];
-    const hasGold = hasGoldStr === 'true';
-    const hasLifetime = hasLifetimeStr === 'true';
-
-    // Calculate totals
-    const totalSilverOzt = silverItems.reduce((sum, item) => sum + (item.ozt * (item.quantity || 1)), 0);
-    const totalGoldOzt = goldItems.reduce((sum, item) => sum + (item.ozt * (item.quantity || 1)), 0);
-
-    const silverValue = totalSilverOzt * priceData.silver;
-    const goldValue = totalGoldOzt * priceData.gold;
-    const totalMeltValue = silverValue + goldValue;
-
-    // Daily change: derive from priceData.change.{metal}.percent on a yesterday-close basis.
-    // Mirrors the Dashboard "Today's change" headline (App.js compute block). Pre-today
-    // purchase filtering is unavailable in background context, so this uses all current items.
-    const silverPctChange = priceData.change?.silver?.percent || 0;
-    const goldPctChange = priceData.change?.gold?.percent || 0;
-    const silverPrevClose = silverPctChange !== 0 ? priceData.silver / (1 + silverPctChange / 100) : priceData.silver;
-    const goldPrevClose = goldPctChange !== 0 ? priceData.gold / (1 + goldPctChange / 100) : priceData.gold;
-    const yesterdayStackValue = (totalSilverOzt * silverPrevClose) + (totalGoldOzt * goldPrevClose);
-    const dailyChangeAmount = totalMeltValue - yesterdayStackValue;
-    const dailyChangePercent = yesterdayStackValue > 0 ? (dailyChangeAmount / yesterdayStackValue) * 100 : 0;
-
-    // Prepare widget data
-    const widgetData = {
-      portfolioValue: totalMeltValue,
-      dailyChangeAmount: dailyChangeAmount,
-      dailyChangePercent: dailyChangePercent,
-      goldSpot: priceData.gold,
-      silverSpot: priceData.silver,
-      goldChangeAmount: priceData.change?.gold?.amount || 0,
-      goldChangePercent: priceData.change?.gold?.percent || 0,
-      silverChangeAmount: priceData.change?.silver?.amount || 0,
-      silverChangePercent: priceData.change?.silver?.percent || 0,
-      lastUpdated: new Date().toISOString(),
-      hasSubscription: hasGold || hasLifetime,
-    };
+    let saved = null;
+    try { saved = savedStr ? JSON.parse(savedStr) : null; } catch { saved = null; }
+    // The holdings as stored now, since they can change while prices aren't
+    // live and the app hasn't synced the widget since
+    const held = heldFromStored({ silver: silverStr, gold: goldStr, platinum: platinumStr, palladium: palladiumStr }) || undefined;
+    const widgetData = backgroundWidgetPayload({ saved, prices: priceData.prices, held });
+    if (!widgetData) {
+      if (__DEV__) console.log('[BackgroundFetch] Widget update skipped (no saved widget picture or no usable price)');
+      return;
+    }
 
     // Send to native module
     const jsonData = JSON.stringify(widgetData);
     if (__DEV__) console.log('[BackgroundFetch] Updating widget with data');
     WidgetKitModule.setWidgetData(jsonData);
     WidgetKitModule.reloadAllTimelines();
+    await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, jsonData);
 
     if (__DEV__) console.log('[BackgroundFetch] Widget updated successfully');
   } catch (error) {

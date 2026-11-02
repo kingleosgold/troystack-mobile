@@ -58,6 +58,7 @@ import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetChanges, widgetPlanKnownFree } from './src/utils/widgetRefresh';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
@@ -2815,6 +2816,9 @@ function AppContent() {
   // can't put the last account's owner or stack back on the phone. Unlike
   // signedInIdRef it never reads null while the same account stays signed in.
   const accountGenRef = useRef(0);
+  // Bumped each time the widget locks, and the latest widget sync
+  const widgetGenRef = useRef(0);
+  const syncWidgetRef = useRef(() => {});
   // The account the last account change left signed in, or null.
   const lastAccountIdRef = useRef(null);
   // The sync after Purchases.logIn runs at most once per account per launch.
@@ -3281,6 +3285,8 @@ function AppContent() {
       await AsyncStorage.clear();
       await clearPendingDeletes();
       accountGenRef.current += 1;
+      // The home screen widget held this stack too
+      lockWidget();
       resetAllState();
       // A guest stays a guest, as on a first launch
       if (!signedIn) {
@@ -3439,6 +3445,7 @@ function AppContent() {
       const userKeys = [
         'stack_silver', 'stack_gold', 'stack_platinum', 'stack_palladium',
         'stack_midnight_snapshot',
+        WIDGET_PAYLOAD_KEY,
         'stack_advisor_count',
         'stack_price_alerts',
         'stack_icloud_sync_enabled', 'stack_last_sync_time', 'stack_last_modified',
@@ -3458,6 +3465,8 @@ function AppContent() {
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
       await clearPendingDeletes();
+      // The home screen widget showed this account's stack, so it locks
+      lockWidget();
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -7588,6 +7597,15 @@ function AppContent() {
    * Sync portfolio data to iOS home screen widget
    * Called when prices update or portfolio changes
    */
+  // The widget's locked picture, with nothing of the stack in it, and no saved
+  // picture left for the background fetch to refresh.
+  const lockWidget = () => {
+    widgetGenRef.current += 1; // a sync already going out doesn't save its picture after this
+    AsyncStorage.removeItem(WIDGET_PAYLOAD_KEY).catch(() => {});
+    if (Platform.OS !== 'ios' || !isWidgetKitAvailable()) return;
+    syncWidgetData(LOCKED_WIDGET).catch(() => {});
+  };
+
   const syncWidget = async () => {
     // Debug logging for subscription state
     if (__DEV__) console.log('📱 [syncWidget] Called with state:', {
@@ -7613,17 +7631,27 @@ function AppContent() {
     try {
       // Daily change for the widget mirrors the Dashboard "Today's change" headline.
       // Top-level dailyChange / dailyChangePct are computed from spotChange.{metal}.percent
-      // on a yesterday-close basis (see compute block earlier in AppContent).
+      // on a yesterday-close basis (see compute block earlier in AppContent). A metal's
+      // change goes out only while its price is live, and the stack's only while every
+      // held metal is live, as the Dashboard does.
+      const changes = widgetChanges({
+        live: spotPricesLive,
+        liveMetals: liveSpotMetals,
+        held: { silver: totalSilverOzt, gold: totalGoldOzt, platinum: totalPlatinumOzt, palladium: totalPalladiumOzt },
+        dailyChange,
+        dailyChangePct,
+        spotChange,
+      });
       const widgetPayload = {
         portfolioValue: totalMeltValue,
-        dailyChangeAmount: spotPricesLive ? dailyChange : 0,
-        dailyChangePercent: spotPricesLive ? dailyChangePct : 0,
+        dailyChangeAmount: changes.dailyChangeAmount,
+        dailyChangePercent: changes.dailyChangePercent,
         goldSpot: goldSpot,
         silverSpot: silverSpot,
-        goldChangeAmount: spotChange?.gold?.amount || 0,
-        goldChangePercent: spotChange?.gold?.percent || 0,
-        silverChangeAmount: spotChange?.silver?.amount || 0,
-        silverChangePercent: spotChange?.silver?.percent || 0,
+        goldChangeAmount: changes.goldChangeAmount,
+        goldChangePercent: changes.goldChangePercent,
+        silverChangeAmount: changes.silverChangeAmount,
+        silverChangePercent: changes.silverChangePercent,
         goldValue: totalGoldOzt * goldSpot,
         silverValue: totalSilverOzt * silverSpot,
         platinumValue: totalPlatinumOzt * platinumSpot,
@@ -7634,10 +7662,10 @@ function AppContent() {
         palladiumOzt: totalPalladiumOzt,
         platinumSpot: platinumSpot,
         palladiumSpot: palladiumSpot,
-        platinumChangeAmount: spotChange?.platinum?.amount || 0,
-        platinumChangePercent: spotChange?.platinum?.percent || 0,
-        palladiumChangeAmount: spotChange?.palladium?.amount || 0,
-        palladiumChangePercent: spotChange?.palladium?.percent || 0,
+        platinumChangeAmount: changes.platinumChangeAmount,
+        platinumChangePercent: changes.platinumChangePercent,
+        palladiumChangeAmount: changes.palladiumChangeAmount,
+        palladiumChangePercent: changes.palladiumChangePercent,
         hasSubscription: hasGold || hasLifetimeAccess,
         hideValues: hideWidgetValues,
         goldSparkline: sparklineData?.gold || [],
@@ -7649,7 +7677,12 @@ function AppContent() {
 
       if (__DEV__) console.log('📱 [syncWidget] Sending payload:', widgetPayload);
 
-      await syncWidgetData(widgetPayload);
+      const gen = accountGenRef.current;
+      const widgetGen = widgetGenRef.current;
+      const synced = await syncWidgetData(widgetPayload);
+      // The background fetch refreshes prices on top of this picture, unless
+      // a sign out, a wipe or a lock came in while it was going out
+      if (synced && gen === accountGenRef.current && widgetGen === widgetGenRef.current) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
 
       if (__DEV__) console.log('✅ [syncWidget] Widget data synced successfully');
     } catch (error) {
@@ -7662,13 +7695,25 @@ function AppContent() {
     if (dataLoaded && spotPricesLive && (hasGold || hasLifetimeAccess)) {
       syncWidget();
     }
-  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
+  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
 
-  // Sync widget when app comes to foreground
+  // Once the plan is known to be free, a lapsed plan's widget locks and the
+  // background fetch has no saved picture to refresh. Not while the plan is
+  // still loading or RevenueCat couldn't be read, since Gold starts false on
+  // every launch until those answer.
+  useEffect(() => {
+    if (!widgetPlanKnownFree({ loading: subscriptionLoading, readOk: rcReadOkRef.current, hasGold, hasLifetime: hasLifetimeAccess })) return;
+    lockWidget();
+  }, [hasGold, hasLifetimeAccess, subscriptionLoading]);
+
+  // Sync widget when app comes to foreground, through a ref so it sends this
+  // render's Hide Values, ounces and prices, not the ones from when the plan
+  // last changed
+  syncWidgetRef.current = syncWidget;
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && (hasGold || hasLifetimeAccess)) {
-        syncWidget();
+        syncWidgetRef.current();
       }
     });
 

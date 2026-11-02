@@ -6,6 +6,7 @@
  */
 
 import { NativeModules, Platform } from 'react-native';
+import { widgetTime } from './widgetRefresh';
 
 const { WidgetKitModule } = NativeModules;
 
@@ -77,7 +78,7 @@ export const updateWidgetData = async (data) => {
       platinumChangePercent: data.platinumChangePercent || 0,
       palladiumChangeAmount: data.palladiumChangeAmount || 0,
       palladiumChangePercent: data.palladiumChangePercent || 0,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: widgetTime(),
       hasSubscription: data.hasSubscription || false,
       hideValues: data.hideValues || false,
       goldSparkline: data.goldSparkline || [],
