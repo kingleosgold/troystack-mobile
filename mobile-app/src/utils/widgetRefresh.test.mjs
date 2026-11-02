@@ -165,7 +165,10 @@ test('the locked picture carries nothing of the stack', () => {
 
 test('the app saves what it sends, and locks the widget when free, at sign out and at a wipe', () => {
   const app = read('../../App.js');
-  assert.match(app, /if \(synced && gen === accountGenRef\.current\) await AsyncStorage\.setItem\(WIDGET_PAYLOAD_KEY, JSON\.stringify\(widgetPayload\)\);/);
+  assert.match(app, /if \(synced && gen === accountGenRef\.current && widgetGen === widgetGenRef\.current\) await AsyncStorage\.setItem\(WIDGET_PAYLOAD_KEY, JSON\.stringify\(widgetPayload\)\);/);
+  assert.match(app, /const lockWidget = \(\) => \{\n\s+widgetGenRef\.current \+= 1;/);
+  assert.match(app, /syncWidgetRef\.current = syncWidget;/);
+  assert.match(app, /nextAppState === 'active' && \(hasGold \|\| hasLifetimeAccess\)\) \{\n\s+syncWidgetRef\.current\(\);/);
   assert.match(app, /'stack_midnight_snapshot',\n\s+WIDGET_PAYLOAD_KEY,/);
   assert.match(app, /if \(!widgetPlanKnownFree\(\{ loading: subscriptionLoading, readOk: rcReadOkRef\.current, hasGold, hasLifetime: hasLifetimeAccess \}\)\) return;\n\s+lockWidget\(\);\n\s+\}, \[hasGold, hasLifetimeAccess, subscriptionLoading\]\);/);
   assert.match(app, /await AsyncStorage\.multiRemove\(\[\.\.\.userKeys, \.\.\.syncedKeys\(allKeys\)\]\);\n(\s*\/\/.*\n)*\s*await clearPendingDeletes\(\);\n(\s*\/\/.*\n)*\s*lockWidget\(\);/);

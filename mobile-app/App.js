@@ -2816,6 +2816,9 @@ function AppContent() {
   // can't put the last account's owner or stack back on the phone. Unlike
   // signedInIdRef it never reads null while the same account stays signed in.
   const accountGenRef = useRef(0);
+  // Bumped each time the widget locks, and the latest widget sync
+  const widgetGenRef = useRef(0);
+  const syncWidgetRef = useRef(() => {});
   // The account the last account change left signed in, or null.
   const lastAccountIdRef = useRef(null);
   // The sync after Purchases.logIn runs at most once per account per launch.
@@ -7597,6 +7600,7 @@ function AppContent() {
   // The widget's locked picture, with nothing of the stack in it, and no saved
   // picture left for the background fetch to refresh.
   const lockWidget = () => {
+    widgetGenRef.current += 1; // a sync already going out doesn't save its picture after this
     AsyncStorage.removeItem(WIDGET_PAYLOAD_KEY).catch(() => {});
     if (Platform.OS !== 'ios' || !isWidgetKitAvailable()) return;
     syncWidgetData(LOCKED_WIDGET).catch(() => {});
@@ -7674,10 +7678,11 @@ function AppContent() {
       if (__DEV__) console.log('📱 [syncWidget] Sending payload:', widgetPayload);
 
       const gen = accountGenRef.current;
+      const widgetGen = widgetGenRef.current;
       const synced = await syncWidgetData(widgetPayload);
       // The background fetch refreshes prices on top of this picture, unless
-      // a sign out or a wipe came in while it was going out
-      if (synced && gen === accountGenRef.current) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
+      // a sign out, a wipe or a lock came in while it was going out
+      if (synced && gen === accountGenRef.current && widgetGen === widgetGenRef.current) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
 
       if (__DEV__) console.log('✅ [syncWidget] Widget data synced successfully');
     } catch (error) {
@@ -7701,11 +7706,14 @@ function AppContent() {
     lockWidget();
   }, [hasGold, hasLifetimeAccess, subscriptionLoading]);
 
-  // Sync widget when app comes to foreground
+  // Sync widget when app comes to foreground, through a ref so it sends this
+  // render's Hide Values, ounces and prices, not the ones from when the plan
+  // last changed
+  syncWidgetRef.current = syncWidget;
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && (hasGold || hasLifetimeAccess)) {
-        syncWidget();
+        syncWidgetRef.current();
       }
     });
 
