@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WIDGET_PAYLOAD_KEY, priceOk, widgetChanges, backgroundWidgetPayload } from './widgetRefresh.js';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
 
 const spotChange = {
   silver: { amount: 1, percent: 2 },
@@ -150,11 +150,28 @@ test('the background task builds from the saved picture, not a key nothing write
   assert.doesNotMatch(bg, /stack_has_gold/);
 });
 
-test('the app saves what it sends, clears it at sign out and without Gold', () => {
+test('the plan only counts as free once it has loaded and RevenueCat answered', () => {
+  assert.equal(widgetPlanKnownFree({ loading: true, readOk: true, hasGold: false, hasLifetime: false }), false);
+  assert.equal(widgetPlanKnownFree({ loading: false, readOk: false, hasGold: false, hasLifetime: false }), false);
+  assert.equal(widgetPlanKnownFree({ loading: false, readOk: true, hasGold: true, hasLifetime: false }), false);
+  assert.equal(widgetPlanKnownFree({ loading: false, readOk: true, hasGold: false, hasLifetime: true }), false);
+  assert.equal(widgetPlanKnownFree({ loading: false, readOk: true, hasGold: false, hasLifetime: false }), true);
+});
+
+test('the locked picture carries nothing of the stack', () => {
+  assert.deepEqual({ ...LOCKED_WIDGET }, { hasSubscription: false, hideValues: true });
+  assert.ok(Object.isFrozen(LOCKED_WIDGET));
+});
+
+test('the app saves what it sends, and locks the widget when free, at sign out and at a wipe', () => {
   const app = read('../../App.js');
-  assert.match(app, /if \(synced\) await AsyncStorage\.setItem\(WIDGET_PAYLOAD_KEY, JSON\.stringify\(widgetPayload\)\);/);
+  assert.match(app, /if \(synced && gen === accountGenRef\.current\) await AsyncStorage\.setItem\(WIDGET_PAYLOAD_KEY, JSON\.stringify\(widgetPayload\)\);/);
   assert.match(app, /'stack_midnight_snapshot',\n\s+WIDGET_PAYLOAD_KEY,/);
-  assert.match(app, /if \(!hasGold && !hasLifetimeAccess\) AsyncStorage\.removeItem\(WIDGET_PAYLOAD_KEY\)/);
+  assert.match(app, /if \(!widgetPlanKnownFree\(\{ loading: subscriptionLoading, readOk: rcReadOkRef\.current, hasGold, hasLifetime: hasLifetimeAccess \}\)\) return;\n\s+lockWidget\(\);\n\s+\}, \[hasGold, hasLifetimeAccess, subscriptionLoading\]\);/);
+  assert.match(app, /await AsyncStorage\.multiRemove\(\[\.\.\.userKeys, \.\.\.syncedKeys\(allKeys\)\]\);\n(\s*\/\/.*\n)*\s*await clearPendingDeletes\(\);\n(\s*\/\/.*\n)*\s*lockWidget\(\);/);
+  assert.match(app, /await AsyncStorage\.clear\(\);\n(.*\n){1,4}\s+lockWidget\(\);/);
+  assert.match(app, /syncWidgetData\(LOCKED_WIDGET\)/);
   assert.match(app, /dailyChangeAmount: changes\.dailyChangeAmount,/);
+  assert.doesNotMatch(app, /if \(!hasGold && !hasLifetimeAccess\) AsyncStorage\.removeItem/);
   assert.equal(WIDGET_PAYLOAD_KEY, 'stack_widget_payload');
 });

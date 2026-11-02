@@ -58,7 +58,7 @@ import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
-import { WIDGET_PAYLOAD_KEY, widgetChanges } from './src/utils/widgetRefresh';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetChanges, widgetPlanKnownFree } from './src/utils/widgetRefresh';
 import { registerBackgroundFetch, getBackgroundFetchStatus } from './src/utils/backgroundTasks';
 import { refusedHoldingsAlert } from './src/utils/refusedAlert';
 import { withHoldingRestored, deleteMissAlert } from './src/utils/deleteMiss';
@@ -3282,6 +3282,8 @@ function AppContent() {
       await AsyncStorage.clear();
       await clearPendingDeletes();
       accountGenRef.current += 1;
+      // The home screen widget held this stack too
+      lockWidget();
       resetAllState();
       // A guest stays a guest, as on a first launch
       if (!signedIn) {
@@ -3460,6 +3462,8 @@ function AppContent() {
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
       await clearPendingDeletes();
+      // The home screen widget showed this account's stack, so it locks
+      lockWidget();
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
@@ -7590,6 +7594,14 @@ function AppContent() {
    * Sync portfolio data to iOS home screen widget
    * Called when prices update or portfolio changes
    */
+  // The widget's locked picture, with nothing of the stack in it, and no saved
+  // picture left for the background fetch to refresh.
+  const lockWidget = () => {
+    AsyncStorage.removeItem(WIDGET_PAYLOAD_KEY).catch(() => {});
+    if (Platform.OS !== 'ios' || !isWidgetKitAvailable()) return;
+    syncWidgetData(LOCKED_WIDGET).catch(() => {});
+  };
+
   const syncWidget = async () => {
     // Debug logging for subscription state
     if (__DEV__) console.log('📱 [syncWidget] Called with state:', {
@@ -7661,9 +7673,11 @@ function AppContent() {
 
       if (__DEV__) console.log('📱 [syncWidget] Sending payload:', widgetPayload);
 
+      const gen = accountGenRef.current;
       const synced = await syncWidgetData(widgetPayload);
-      // The background fetch refreshes prices on top of this picture
-      if (synced) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
+      // The background fetch refreshes prices on top of this picture, unless
+      // a sign out or a wipe came in while it was going out
+      if (synced && gen === accountGenRef.current) await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, JSON.stringify(widgetPayload));
 
       if (__DEV__) console.log('✅ [syncWidget] Widget data synced successfully');
     } catch (error) {
@@ -7678,11 +7692,14 @@ function AppContent() {
     }
   }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
 
-  // Without Gold the background fetch has no saved widget picture to refresh,
-  // so a lapsed plan's widget stops getting new values from it
+  // Once the plan is known to be free, a lapsed plan's widget locks and the
+  // background fetch has no saved picture to refresh. Not while the plan is
+  // still loading or RevenueCat couldn't be read, since Gold starts false on
+  // every launch until those answer.
   useEffect(() => {
-    if (!hasGold && !hasLifetimeAccess) AsyncStorage.removeItem(WIDGET_PAYLOAD_KEY).catch(() => {});
-  }, [hasGold, hasLifetimeAccess]);
+    if (!widgetPlanKnownFree({ loading: subscriptionLoading, readOk: rcReadOkRef.current, hasGold, hasLifetime: hasLifetimeAccess })) return;
+    lockWidget();
+  }, [hasGold, hasLifetimeAccess, subscriptionLoading]);
 
   // Sync widget when app comes to foreground
   useEffect(() => {

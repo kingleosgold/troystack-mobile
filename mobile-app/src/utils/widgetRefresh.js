@@ -10,6 +10,16 @@
 
 export const WIDGET_PAYLOAD_KEY = 'stack_widget_payload';
 
+// What the widget is sent once the plan is known to be free or the account
+// signs out: the locked view, with no values or ounces in it.
+export const LOCKED_WIDGET = Object.freeze({ hasSubscription: false, hideValues: true });
+
+// Whether the plan is known to be free, so the widget can lock. Gold and
+// Lifetime start false on every launch, so a plan still loading, or a
+// RevenueCat read that failed, never counts as free.
+export const widgetPlanKnownFree = ({ loading, readOk, hasGold, hasLifetime }) =>
+  !loading && !!readOk && !hasGold && !hasLifetime;
+
 const METALS = ['silver', 'gold', 'platinum', 'palladium'];
 
 // The same floors the app uses before it trusts a fetched price.
