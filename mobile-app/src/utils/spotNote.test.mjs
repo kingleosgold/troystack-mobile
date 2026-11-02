@@ -65,8 +65,8 @@ test('App.js wires the note, the header and the tile mark on the Dashboard', () 
   assert.match(app, /metalNotLive\(\{ live: effSpotLive, liveMetals: liveSpotMetals, metal: m\.key \}\)/);
   assert.match(app, /effLiveMovers\.length > 0 && !effMarketsClosed && effSpotLive && \(\(\) => \{/);
   assert.match(app, /const sorted = \[\.\.\.effLiveMovers\]/);
-  assert.match(app, /const aiSummary = !effStackChangeLive\s*\? null/);
-  assert.match(app, /\{!effStackChangeLive \? \(/);
+  assert.match(app, /const aiSummary = !effSpotLive\s*\? null\s*: effMarketsClosed\s*\? 'Markets are closed[^']*'\s*: !effStackChangeLive\s*\? null/);
+  assert.match(app, /Markets Closed<\/Text>\s*<\/View>\s*\) : !effStackChangeLive \? \(/);
   assert.match(app, /\{effValueNote && \(/);
   assert.match(app, /const effValueNote = effSpotNote \|\| partialNote\(effHeldNotLive\);/);
   assert.match(app, /\{aiSummary && \(/);
@@ -93,6 +93,7 @@ test('the stack note names the held metals that are not live', () => {
   assert.equal(partialNote(['platinum']), "Platinum price isn't live yet");
   assert.equal(partialNote(['platinum', 'palladium']), "Platinum and palladium prices aren't live yet");
   assert.equal(partialNote(['silver', 'platinum', 'palladium']), "Silver, platinum and palladium prices aren't live yet");
+  assert.equal(partialNote(['silver', 'gold', 'platinum', 'palladium']), "Silver, gold, platinum and palladium prices aren't live yet");
 });
 
 test('Troy only talks about movers with a live price', () => {

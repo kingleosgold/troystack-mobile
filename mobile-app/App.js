@@ -11528,10 +11528,12 @@ function AppContent() {
           const gainedLost = effDailyChange >= 0 ? 'gained' : 'lost';
           const rallyDecline = biggestMover?.pct >= 0 ? 'rally' : 'decline';
           // No line about today's move until live prices land, since the change is unknown
-          const aiSummary = !effStackChangeLive
+          const aiSummary = !effSpotLive
             ? null
             : effMarketsClosed
             ? 'Markets are closed. Prices reflect Friday\u2019s close.'
+            : !effStackChangeLive
+            ? null
             : effTotalMeltValue > 0 && effDailyChange !== 0
             ? (biggestMover
               ? `Your stack ${gainedLost} $${formatCurrency(Math.abs(effDailyChange), 0)} today, driven by ${biggestMover.label}'s ${Math.abs(biggestMover.pct || 0).toFixed(1)}% ${rallyDecline}.`
@@ -11658,12 +11660,14 @@ function AppContent() {
                   );
                 })()}
 
-                {!effStackChangeLive ? (
+                {!effSpotLive ? (
                   <View style={{ marginBottom: 6 }} />
                 ) : effMarketsClosed ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ color: '#71717a', fontSize: scaledFonts.small, fontWeight: '500' }}>Markets Closed</Text>
                   </View>
+                ) : !effStackChangeLive ? (
+                  <View style={{ marginBottom: 6 }} />
                 ) : (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
                     <Text style={{ color: displayDailyChange >= 0 ? '#4CAF50' : '#F44336', fontSize: scaledFonts.medium, fontWeight: '600' }}>
@@ -11918,7 +11922,7 @@ function AppContent() {
                   if (sorted.length === 1 && gsRatio === 0) {
                     liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} {best.pct >= 0 ? 'up' : 'down'} <Text style={{ fontWeight: '700' }}>{Math.abs(best.pct).toFixed(1)}%</Text> today.</Text>;
                   } else if (Math.abs(best.pct) > 2) {
-                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} {best.pct >= 0 ? 'up' : 'down'} <Text style={{ fontWeight: '700' }}>{Math.abs(best.pct).toFixed(1)}%</Text> today — biggest mover across the board.</Text>;
+                    liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>{best.label} {best.pct >= 0 ? 'up' : 'down'} <Text style={{ fontWeight: '700' }}>{Math.abs(best.pct).toFixed(1)}%</Text> today{effLiveMovers.length === metalMovers.length ? ' — biggest mover across the board' : ''}.</Text>;
                   } else if (gsRatio > 0) {
                     const ctx = gsRatio > 80 ? 'historically stretched — silver tends to catch up' : gsRatio >= 65 ? 'elevated range' : 'tightening — silver gaining ground';
                     liner = <Text style={{ color: colors.muted, fontSize: scaledFonts.small, lineHeight: scaledFonts.small * 1.5, fontStyle: 'italic', flex: 1 }}>Gold-silver ratio at <Text style={{ fontWeight: '700' }}>{gsRatio.toFixed(1)}:1</Text> — {ctx}.</Text>;
