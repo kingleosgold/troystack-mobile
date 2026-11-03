@@ -80,12 +80,25 @@ export const spotSavePairs = (reply, timestamp, now = new Date()) => {
 // write of its own. multiSet isn't atomic on every platform, so a save that
 // fails partway throws before the time is written, and a half-failed save
 // can't put a new time on old prices. A failed read saves nothing.
-export const saveSpotReply = async (storage, reply, timestamp, now = new Date()) => {
-  const pairs = spotSavePairs(reply, timestamp, now);
-  if (!pairs.length) return;
+//
+// Saves run one after another, so the app's fetch and the background fetch
+// can't interleave their two writes and leave one reply's spots under the
+// other's time. A save that fails still rejects for its own caller and
+// doesn't stop the saves queued behind it.
+let spotSaveChain = Promise.resolve();
+
+const writeSpotPairs = async (storage, pairs) => {
   const [timeKey, time] = pairs.pop();
   if (pairs.length) await storage.multiSet(pairs);
   await storage.setItem(timeKey, time);
+};
+
+export const saveSpotReply = (storage, reply, timestamp, now = new Date()) => {
+  const pairs = spotSavePairs(reply, timestamp, now);
+  if (!pairs.length) return Promise.resolve();
+  const run = spotSaveChain.then(() => writeSpotPairs(storage, pairs));
+  spotSaveChain = run.catch(() => {});
+  return run;
 };
 
 // The prices the widget is built from: only the metals that passed, so the
