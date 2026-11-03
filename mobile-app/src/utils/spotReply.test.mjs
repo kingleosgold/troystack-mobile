@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk, fetchSpotRaw } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
 
 const full = {
   prices: {
@@ -352,4 +352,29 @@ test('the background task reads prices through fetchSpotRaw', () => {
   const bg = readFileSync(new URL('./backgroundTasks.js', import.meta.url), 'utf8');
   assert.match(bg, /const raw = await fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`\);/);
   assert.doesNotMatch(bg, /clearTimeout\(timeoutId\)/);
+});
+
+test('fetchSpotRaw names its timeout so callers can tell it from a network error', async () => {
+  await assert.rejects(fetchSpotRaw(() => new Promise(() => {}), 'u', 20), (e) => e.name === 'TimeoutError');
+});
+
+test('App.js reads prices through fetchSpotRaw with its 10s budget', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const fetchSpotPrices = async');
+  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
+  assert.match(body, /const raw = await fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS\);/);
+  assert.ok(!body.includes('response.json()'));
+  assert.ok(!body.includes('clearTimeout('));
+  assert.equal(FOREGROUND_PRICE_FETCH_TIMEOUT_MS, 10000);
+});
+
+test('App.js turns only its own loading to cached on a timeout', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const fetchSpotPrices = async');
+  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
+  const catchAt = body.lastIndexOf('} catch (error) {');
+  const timeoutAt = body.indexOf("error.name === 'TimeoutError'", catchAt);
+  const guardAt = body.indexOf("if (priceSourceRef.current === 'loading...')", timeoutAt);
+  const returnAt = body.indexOf('return;', guardAt);
+  assert.ok(catchAt > 0 && timeoutAt > catchAt && guardAt > timeoutAt && returnAt > guardAt);
 });
