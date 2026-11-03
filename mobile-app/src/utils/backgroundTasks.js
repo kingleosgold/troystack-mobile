@@ -10,7 +10,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
-import { readSpotReply, spotSavePairs, spotWidgetPrices } from './spotReply';
+import { readSpotReply, saveSpotReply, spotWidgetPrices } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -45,7 +45,7 @@ const fetchSpotPricesBackground = async () => {
       if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${reply.spots.gold}, Silver $${reply.spots.silver}`);
 
       // Saved for the app to use on next open
-      await AsyncStorage.multiSet(spotSavePairs(reply, raw.timestamp));
+      await saveSpotReply(AsyncStorage, reply, raw.timestamp);
 
       return {
         prices: spotWidgetPrices(reply, raw),
