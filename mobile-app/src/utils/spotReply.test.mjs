@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, spotWidgetPrices, spotPriceOk } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk } from './spotReply.js';
 
 const full = {
   prices: {
@@ -123,7 +123,8 @@ test('the widget only gets the metals that passed, with change_pct only when usa
 test('the background task reads the reply the way the app does', () => {
   const bg = readFileSync(new URL('./backgroundTasks.js', import.meta.url), 'utf8');
   assert.match(bg, /const reply = readSpotReply\(raw\);\n\s+if \(reply\) \{/);
-  assert.match(bg, /await saveSpotReply\(AsyncStorage, reply, raw\.timestamp\);/);
+  assert.match(bg, /return await saveSpotReplyForWidget\(AsyncStorage, reply, raw, /);
+  assert.doesNotMatch(bg, /await saveSpotReply\(/);
   assert.doesNotMatch(bg, /AsyncStorage\.setItem\('stack_price_timestamp'/);
   assert.doesNotMatch(bg, /change_pct \|\| 0/);
 });
@@ -271,4 +272,27 @@ test('saveSpotReply still returns a promise when a reply is malformed', async ()
   const p = saveSpotReply(fakeStorage(), { liveMetals: null }, 't');
   assert.ok(p instanceof Promise);
   await assert.rejects(p, TypeError);
+});
+
+test('the widget keeps its refresh when the background save fails', async () => {
+  const raw = { prices: { gold: { price: 4500, change_pct: 1 }, silver: { price: 80 } }, timestamp: 'tW' };
+  const r = readSpotReply(raw);
+  const errors = [];
+  const out = await saveSpotReplyForWidget(fakeStorage({ failMultiSet: true }), r, raw, (e) => errors.push(e.message));
+  assert.deepEqual(out, { prices: spotWidgetPrices(r, raw), timestamp: 'tW' });
+  assert.deepEqual(errors, ['disk full']);
+  const quiet = await saveSpotReplyForWidget(fakeStorage({ failMultiSet: true }), r, raw);
+  assert.deepEqual(quiet, out);
+});
+
+test('a good background save writes the spots and still hands the widget its prices', async () => {
+  const raw = { prices: { gold: { price: 4500 } }, timestamp: 'tG' };
+  const r = readSpotReply(raw);
+  const s = fakeStorage();
+  const errors = [];
+  const out = await saveSpotReplyForWidget(s, r, raw, (e) => errors.push(e));
+  assert.deepEqual(out, { prices: { gold: { price: 4500 } }, timestamp: 'tG' });
+  assert.deepEqual(s.calls.at(-1), ['setItem', 'stack_price_timestamp', 'tG']);
+  assert.deepEqual(errors, []);
+  assert.equal(await saveSpotReplyForWidget(fakeStorage(), null, raw), null);
 });

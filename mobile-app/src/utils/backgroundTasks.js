@@ -10,7 +10,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
-import { readSpotReply, saveSpotReply, spotWidgetPrices } from './spotReply';
+import { readSpotReply, saveSpotReplyForWidget } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -44,13 +44,11 @@ const fetchSpotPricesBackground = async () => {
     if (reply) {
       if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${reply.spots.gold}, Silver $${reply.spots.silver}`);
 
-      // Saved for the app to use on next open
-      await saveSpotReply(AsyncStorage, reply, raw.timestamp);
-
-      return {
-        prices: spotWidgetPrices(reply, raw),
-        timestamp: raw.timestamp,
-      };
+      // Saved for the app to use on next open. A failed save still returns
+      // the widget's prices, so the widget keeps this refresh.
+      return await saveSpotReplyForWidget(AsyncStorage, reply, raw, (error) => {
+        if (__DEV__) console.error('[BackgroundFetch] Failed to save spot prices:', error?.message);
+      });
     }
 
     if (__DEV__) console.log('[BackgroundFetch] API returned no usable prices');
