@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk, fetchSpotRaw } from './spotReply.js';
 
 const full = {
   prices: {
@@ -312,4 +312,44 @@ test('an onSaveError that throws does not cost the widget its refresh', async ()
   const r = readSpotReply(raw);
   const out = await saveSpotReplyForWidget(fakeStorage({ failMultiSet: true }), r, raw, () => { throw new Error('log broke'); });
   assert.deepEqual(out, { prices: { gold: { price: 4500 } }, timestamp: 'tX' });
+});
+
+test('fetchSpotRaw answers the parsed body and passes an abort signal', async () => {
+  let seen;
+  const raw = await fetchSpotRaw(async (url, opts) => {
+    seen = { url, signal: opts.signal };
+    return { json: async () => full };
+  }, 'https://x/v1/prices', 50);
+  assert.deepEqual(raw, full);
+  assert.equal(seen.url, 'https://x/v1/prices');
+  assert.equal(seen.signal.aborted, false);
+});
+
+test('fetchSpotRaw times out a body that stalls after the headers', async () => {
+  let signal;
+  const start = Date.now();
+  await assert.rejects(
+    fetchSpotRaw(async (_url, opts) => {
+      signal = opts.signal;
+      return { json: () => new Promise(() => {}) };
+    }, 'u', 30),
+    /price fetch timed out/,
+  );
+  assert.equal(signal.aborted, true);
+  assert.ok(Date.now() - start < 1000);
+});
+
+test('fetchSpotRaw times out a request that never answers, even one deaf to abort', async () => {
+  await assert.rejects(fetchSpotRaw(() => new Promise(() => {}), 'u', 30), /price fetch timed out/);
+});
+
+test('fetchSpotRaw passes a network error or bad JSON through', async () => {
+  await assert.rejects(fetchSpotRaw(async () => { throw new Error('offline'); }, 'u', 50), /offline/);
+  await assert.rejects(fetchSpotRaw(async () => ({ json: async () => { throw new SyntaxError('bad'); } }), 'u', 50), /bad/);
+});
+
+test('the background task reads prices through fetchSpotRaw', () => {
+  const bg = readFileSync(new URL('./backgroundTasks.js', import.meta.url), 'utf8');
+  assert.match(bg, /const raw = await fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`\);/);
+  assert.doesNotMatch(bg, /clearTimeout\(timeoutId\)/);
 });
