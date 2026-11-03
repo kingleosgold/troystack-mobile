@@ -148,7 +148,8 @@ test('the background task builds from the saved picture, not a key nothing write
   assert.match(bg, /backgroundWidgetPayload\(\{ saved, prices: priceData\.prices, held \}\)/);
   assert.match(bg, /AsyncStorage\.getItem\('stack_platinum'\)/);
   assert.match(bg, /AsyncStorage\.getItem\('stack_palladium'\)/);
-  assert.match(bg, /prices: spotWidgetPrices\(reply, raw\),/);
+  assert.match(bg, /saveSpotReplyForWidget\(AsyncStorage, reply, raw, /);
+  assert.match(read('./spotReply.js'), /prices: spotWidgetPrices\(reply, raw\)/);
   assert.doesNotMatch(bg, /stack_has_gold/);
 });
 

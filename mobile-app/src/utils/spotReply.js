@@ -114,6 +114,20 @@ export const saveSpotReply = async (storage, reply, timestamp, now = new Date(),
   return run;
 };
 
+// The background task's save and widget prices in one step. A save that fails
+// or times out doesn't cost the widget its refresh: the reply already passed
+// readSpotReply, so the widget still gets the metals that passed and the app
+// fetches its own spot again on next open.
+export const saveSpotReplyForWidget = async (storage, reply, raw, onSaveError) => {
+  if (!reply) return null;
+  try {
+    await saveSpotReply(storage, reply, raw?.timestamp);
+  } catch (error) {
+    if (onSaveError) onSaveError(error);
+  }
+  return { prices: spotWidgetPrices(reply, raw), timestamp: raw?.timestamp };
+};
+
 // The prices the widget is built from: only the metals that passed, so the
 // widget never takes a price the app threw out. change_pct goes along only
 // when the reply carried a usable one, so the widget still reads a missing
