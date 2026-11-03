@@ -204,3 +204,71 @@ test('saveSpotReply writes the time only after the spots land', async () => {
   await saveSpotReply(later, r, undefined, now);
   assert.deepEqual(later.calls.at(-1), ['setItem', 'stack_price_timestamp', now.toISOString()]);
 });
+
+test('saveSpotReply runs saves one after another so two replies never mix', async () => {
+  const a = readSpotReply({ prices: { gold: { price: 4500 }, silver: { price: 80 } } });
+  const b = readSpotReply({ prices: { gold: { price: 4600 }, silver: { price: 81 } } });
+  const calls = [];
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const slow = {
+    multiSet: async (pairs) => { calls.push(['multiSet', pairs]); if (pairs[0][1] === '80') await gate; },
+    setItem: async (k, v) => { calls.push(['setItem', k, v]); },
+  };
+  const first = saveSpotReply(slow, a, 'tA');
+  const second = saveSpotReply(slow, b, 'tB');
+  await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(calls, [['multiSet', [['stack_silver_spot', '80'], ['stack_gold_spot', '4500']]]]);
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(calls, [
+    ['multiSet', [['stack_silver_spot', '80'], ['stack_gold_spot', '4500']]],
+    ['setItem', 'stack_price_timestamp', 'tA'],
+    ['multiSet', [['stack_silver_spot', '81'], ['stack_gold_spot', '4600']]],
+    ['setItem', 'stack_price_timestamp', 'tB'],
+  ]);
+});
+
+test('a failed save rejects for its caller and the next save still runs', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const bad = fakeStorage({ failMultiSet: true });
+  const ok = fakeStorage();
+  const failed = saveSpotReply(bad, r, 't1');
+  const next = saveSpotReply(ok, r, 't2');
+  await assert.rejects(failed, /disk full/);
+  await next;
+  assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
+});
+
+test('the time is taken when the save is asked for, not when it runs', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const held = { multiSet: async () => { await gate; }, setItem: async () => {} };
+  const s = fakeStorage();
+  const now = new Date('2026-11-03T11:00:00.000Z');
+  const first = saveSpotReply(held, r, 't0');
+  const queued = saveSpotReply(s, r, undefined, now);
+  await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(s.calls, []);
+  release();
+  await Promise.all([first, queued]);
+  assert.deepEqual(s.calls.at(-1), ['setItem', 'stack_price_timestamp', now.toISOString()]);
+});
+
+test('a save that never settles times out and the next save still runs', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const stuck = { multiSet: () => new Promise(() => {}), setItem: async () => {} };
+  const ok = fakeStorage();
+  const hung = saveSpotReply(stuck, r, 't1', new Date(), 20);
+  const next = saveSpotReply(ok, r, 't2', new Date(), 20);
+  await assert.rejects(hung, /spot save timed out/);
+  await next;
+  assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
+});
+
+test('saveSpotReply still returns a promise when a reply is malformed', async () => {
+  const p = saveSpotReply(fakeStorage(), { liveMetals: null }, 't');
+  assert.ok(p instanceof Promise);
+  await assert.rejects(p, TypeError);
+});

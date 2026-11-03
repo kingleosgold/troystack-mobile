@@ -80,12 +80,38 @@ export const spotSavePairs = (reply, timestamp, now = new Date()) => {
 // write of its own. multiSet isn't atomic on every platform, so a save that
 // fails partway throws before the time is written, and a half-failed save
 // can't put a new time on old prices. A failed read saves nothing.
-export const saveSpotReply = async (storage, reply, timestamp, now = new Date()) => {
-  const pairs = spotSavePairs(reply, timestamp, now);
-  if (!pairs.length) return;
+//
+// Saves run one after another, so the app's fetch and the background fetch
+// can't interleave their two writes and leave one reply's spots under the
+// other's time. The queue lives in this module, so it covers the one JS
+// runtime the app and its background fetch share on iOS. A save that fails
+// still rejects for its own caller and doesn't stop the saves queued behind
+// it. A save that hasn't settled after SPOT_SAVE_TIMEOUT_MS rejects and
+// leaves the queue, so one stuck write can't hold up every later save.
+export const SPOT_SAVE_TIMEOUT_MS = 5000;
+
+let spotSaveChain = Promise.resolve();
+
+const writeSpotPairs = async (storage, pairs) => {
   const [timeKey, time] = pairs.pop();
   if (pairs.length) await storage.multiSet(pairs);
   await storage.setItem(timeKey, time);
+};
+
+const withTimeout = (work, ms) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('spot save timed out')), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+};
+
+export const saveSpotReply = async (storage, reply, timestamp, now = new Date(), timeoutMs = SPOT_SAVE_TIMEOUT_MS) => {
+  const pairs = spotSavePairs(reply, timestamp, now);
+  if (!pairs.length) return;
+  const run = spotSaveChain.then(() => withTimeout(writeSpotPairs(storage, pairs), timeoutMs));
+  spotSaveChain = run.catch(() => {});
+  return run;
 };
 
 // The prices the widget is built from: only the metals that passed, so the
