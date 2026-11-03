@@ -374,7 +374,7 @@ test('App.js turns only its own loading to cached on a timeout', () => {
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   const catchAt = body.lastIndexOf('} catch (error) {');
   const timeoutAt = body.indexOf("error.name === 'TimeoutError'", catchAt);
-  const guardAt = body.indexOf("if (priceSourceRef.current === 'loading...')", timeoutAt);
+  const guardAt = body.indexOf("if (!silent && priceSourceRef.current === 'loading...')", timeoutAt);
   const returnAt = body.indexOf('return;', guardAt);
   assert.ok(catchAt > 0 && timeoutAt > catchAt && guardAt > timeoutAt && returnAt > guardAt);
 });

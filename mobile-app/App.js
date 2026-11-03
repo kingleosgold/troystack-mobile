@@ -8663,9 +8663,10 @@ function AppContent() {
     } catch (error) {
       if (error.name === 'TimeoutError' || error.name === 'AbortError') {
         if (__DEV__) console.log('⏱️ Spot prices fetch timed out');
-        // A timeout leaves prices and a newer fetch's Live alone. It only
-        // stops this fetch's own loading from showing forever.
-        if (priceSourceRef.current === 'loading...') {
+        // A timeout leaves prices and a newer fetch's Live alone. Only a
+        // fetch that set loading itself clears it, so a stalled silent
+        // fetch can't cut short a pull to refresh still under way.
+        if (!silent && priceSourceRef.current === 'loading...') {
           setPriceSource('cached');
           priceSourceRef.current = 'cached';
         }
