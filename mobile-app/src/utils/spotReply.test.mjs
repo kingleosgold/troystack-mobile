@@ -242,8 +242,33 @@ test('a failed save rejects for its caller and the next save still runs', async 
 
 test('the time is taken when the save is asked for, not when it runs', async () => {
   const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const held = { multiSet: async () => { await gate; }, setItem: async () => {} };
   const s = fakeStorage();
   const now = new Date('2026-11-03T11:00:00.000Z');
-  await saveSpotReply(s, r, undefined, now);
+  const first = saveSpotReply(held, r, 't0');
+  const queued = saveSpotReply(s, r, undefined, now);
+  await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(s.calls, []);
+  release();
+  await Promise.all([first, queued]);
   assert.deepEqual(s.calls.at(-1), ['setItem', 'stack_price_timestamp', now.toISOString()]);
+});
+
+test('a save that never settles times out and the next save still runs', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const stuck = { multiSet: () => new Promise(() => {}), setItem: async () => {} };
+  const ok = fakeStorage();
+  const hung = saveSpotReply(stuck, r, 't1', new Date(), 20);
+  const next = saveSpotReply(ok, r, 't2', new Date(), 20);
+  await assert.rejects(hung, /spot save timed out/);
+  await next;
+  assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
+});
+
+test('saveSpotReply still returns a promise when a reply is malformed', async () => {
+  const p = saveSpotReply(fakeStorage(), { liveMetals: null }, 't');
+  assert.ok(p instanceof Promise);
+  await assert.rejects(p, TypeError);
 });

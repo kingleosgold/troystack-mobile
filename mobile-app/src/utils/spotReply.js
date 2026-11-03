@@ -83,8 +83,13 @@ export const spotSavePairs = (reply, timestamp, now = new Date()) => {
 //
 // Saves run one after another, so the app's fetch and the background fetch
 // can't interleave their two writes and leave one reply's spots under the
-// other's time. A save that fails still rejects for its own caller and
-// doesn't stop the saves queued behind it.
+// other's time. The queue lives in this module, so it covers the one JS
+// runtime the app and its background fetch share on iOS. A save that fails
+// still rejects for its own caller and doesn't stop the saves queued behind
+// it. A save that hasn't settled after SPOT_SAVE_TIMEOUT_MS rejects and
+// leaves the queue, so one stuck write can't hold up every later save.
+export const SPOT_SAVE_TIMEOUT_MS = 5000;
+
 let spotSaveChain = Promise.resolve();
 
 const writeSpotPairs = async (storage, pairs) => {
@@ -93,10 +98,18 @@ const writeSpotPairs = async (storage, pairs) => {
   await storage.setItem(timeKey, time);
 };
 
-export const saveSpotReply = (storage, reply, timestamp, now = new Date()) => {
+const withTimeout = (work, ms) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('spot save timed out')), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+};
+
+export const saveSpotReply = async (storage, reply, timestamp, now = new Date(), timeoutMs = SPOT_SAVE_TIMEOUT_MS) => {
   const pairs = spotSavePairs(reply, timestamp, now);
-  if (!pairs.length) return Promise.resolve();
-  const run = spotSaveChain.then(() => writeSpotPairs(storage, pairs));
+  if (!pairs.length) return;
+  const run = spotSaveChain.then(() => withTimeout(writeSpotPairs(storage, pairs), timeoutMs));
   spotSaveChain = run.catch(() => {});
   return run;
 };
