@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotSavePairs, spotWidgetPrices } from './spotReply.js';
+import { readSpotReply, spotSavePairs, spotWidgetPrices, spotPriceOk } from './spotReply.js';
 
 const full = {
   prices: {
@@ -126,4 +126,28 @@ test('the background task reads the reply the way the app does', () => {
   assert.match(bg, /await AsyncStorage\.multiSet\(spotSavePairs\(reply, raw\.timestamp\)\);/);
   assert.doesNotMatch(bg, /AsyncStorage\.setItem\('stack_price_timestamp'/);
   assert.doesNotMatch(bg, /change_pct \|\| 0/);
+});
+
+test('spotPriceOk reads a price one way for every caller', () => {
+  assert.equal(spotPriceOk('gold', 4500), true);
+  assert.equal(spotPriceOk('gold', '4500.5'), true);
+  assert.equal(spotPriceOk('gold', 1000), false);
+  for (const v of ['0x1F40', '5e3', 'Infinity', '', null, undefined, true, [4500]]) {
+    assert.equal(spotPriceOk('gold', v), false, String(v));
+  }
+});
+
+test('App.js saves a good reply through spotSavePairs in one write before Live', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const fetchSpotPrices = async');
+  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
+  const ifAt = body.indexOf('if (reply)');
+  const elseAt = body.indexOf('} else {', ifAt);
+  const pairsAt = body.indexOf('spotSavePairs(reply, raw.timestamp)');
+  const writeAt = body.indexOf('await AsyncStorage.multiSet(savePairs)');
+  const liveAt = body.indexOf('setSpotPricesLive(true)');
+  assert.ok(ifAt > 0 && pairsAt > ifAt && writeAt > pairsAt && liveAt > writeAt && liveAt < elseAt);
+  assert.ok(body.includes('setPriceTimestamp(savedAt)'));
+  assert.ok(!/setItem\('stack_(silver|gold|platinum|palladium)_spot'/.test(body));
+  assert.ok(!body.includes("setItem('stack_price_timestamp'"));
 });

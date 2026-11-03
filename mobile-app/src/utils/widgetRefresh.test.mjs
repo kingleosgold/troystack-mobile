@@ -238,3 +238,14 @@ test('old sparklines never ride with a fresh day change, so the widget cannot fl
   for (const m of ['gold', 'silver', 'platinum', 'palladium']) assert.deepEqual(out[`${m}Sparkline`], []);
   assert.deepEqual(withLines.goldSparkline, [4400, 4500]);
 });
+
+test('the widget reads a price the way the app does', () => {
+  assert.equal(priceOk('gold', '0x1F40'), false);
+  assert.equal(priceOk('gold', '5e3'), false);
+  assert.equal(priceOk('gold', ' 4500.25 '), true);
+  const saved = { goldSpot: 4000, goldOzt: 1, silverOzt: 0, platinumOzt: 0, palladiumOzt: 0, hasSubscription: true };
+  assert.equal(backgroundWidgetPayload({ saved, prices: { gold: { price: '0x1F40' } } }), null);
+  const next = backgroundWidgetPayload({ saved, prices: { gold: { price: '4500', change_pct: '1e2' } } });
+  assert.equal(next.goldSpot, 4500);
+  assert.equal(next.goldChangePercent, 0);
+});

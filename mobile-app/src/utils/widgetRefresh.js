@@ -8,6 +8,8 @@
 // went locked, Hide Values switched off and platinum and palladium dropped.
 // Nothing here imports React Native, so it runs under `node --test`.
 
+import { SPOT_METALS, spotPriceOk, toNum } from './spotReply.js';
+
 export const WIDGET_PAYLOAD_KEY = 'stack_widget_payload';
 
 // A time the widget can read. Its decoder takes ISO 8601 without fractional
@@ -25,21 +27,16 @@ export const LOCKED_WIDGET = Object.freeze({ hasSubscription: false, hideValues:
 export const widgetPlanKnownFree = ({ loading, readOk, hasGold, hasLifetime }) =>
   !loading && !!readOk && !hasGold && !hasLifetime;
 
-const METALS = ['silver', 'gold', 'platinum', 'palladium'];
-
-// The same floors the app uses before it trusts a fetched price.
-const FLOOR = { silver: 10, gold: 1000, platinum: 100, palladium: 100 };
+const METALS = SPOT_METALS;
 
 const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
 
-// Whether a fetched price for one metal passes the app's check.
-export const priceOk = (metal, price) => {
-  const n = Number(price);
-  return Number.isFinite(n) && n > FLOOR[metal];
-};
+// Whether a fetched price for one metal passes the app's check: the same
+// floors and the same plain-decimal read as spotReply.js.
+export const priceOk = spotPriceOk;
 
 // The day's change fields for the widget. A metal's own change goes out only
 // while its price is live, and the stack's change only while every metal the
@@ -99,11 +96,11 @@ export const backgroundWidgetPayload = ({ saved, prices, held: current, now = ne
     next[`${metal}Ozt`] = ozt;
     const fetched = prices[metal];
     const live = priceOk(metal, fetched?.price);
-    const spot = live ? Number(fetched.price) : num(saved[`${metal}Spot`]);
+    const spot = live ? toNum(fetched.price) : num(saved[`${metal}Spot`]);
     if (live) anyLive = true;
     next[`${metal}Spot`] = spot;
     next[`${metal}Value`] = ozt * spot;
-    const pct = Number(fetched?.change_pct);
+    const pct = toNum(fetched?.change_pct);
     const hasPct = live && Number.isFinite(pct) && pct > -100;
     if (hasPct) {
       const prevClose = spot / (1 + pct / 100);
