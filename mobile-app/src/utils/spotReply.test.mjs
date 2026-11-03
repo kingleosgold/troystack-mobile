@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotSavePairs, spotWidgetPrices, spotPriceOk } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, spotWidgetPrices, spotPriceOk } from './spotReply.js';
 
 const full = {
   prices: {
@@ -143,11 +143,32 @@ test('App.js saves a good reply through spotSavePairs in one write before Live',
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   const ifAt = body.indexOf('if (reply)');
   const elseAt = body.indexOf('} else {', ifAt);
-  const pairsAt = body.indexOf('spotSavePairs(reply, raw.timestamp)');
+  const pairsAt = body.indexOf('spotSavePairs(reply, savedAt)');
   const writeAt = body.indexOf('await AsyncStorage.multiSet(savePairs)');
   const liveAt = body.indexOf('setSpotPricesLive(true)');
   assert.ok(ifAt > 0 && pairsAt > ifAt && writeAt > pairsAt && liveAt > writeAt && liveAt < elseAt);
   assert.ok(body.includes('setPriceTimestamp(savedAt)'));
   assert.ok(!/setItem\('stack_(silver|gold|platinum|palladium)_spot'/.test(body));
   assert.ok(!body.includes("setItem('stack_price_timestamp'"));
+});
+
+test('the time shown is the time saved, from one helper', () => {
+  const now = new Date('2026-11-03T06:00:00.000Z');
+  assert.equal(spotReplyTime('2026-11-03T05:59:00Z', now), '2026-11-03T05:59:00Z');
+  for (const ts of [undefined, null, '', 5]) assert.equal(spotReplyTime(ts, now), now.toISOString());
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const at = spotReplyTime(undefined, now);
+  assert.deepEqual(spotSavePairs(r, at).at(-1), ['stack_price_timestamp', at]);
+});
+
+test('App.js keeps a good reply Live when its save fails', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const fetchSpotPrices = async');
+  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
+  const timeAt = body.indexOf('const savedAt = spotReplyTime(raw.timestamp)');
+  const tryAt = body.indexOf('try {', timeAt);
+  const writeAt = body.indexOf('await AsyncStorage.multiSet(savePairs)');
+  const catchAt = body.indexOf('} catch (saveError)', writeAt);
+  const liveAt = body.indexOf('setSpotPricesLive(true)');
+  assert.ok(timeAt > 0 && tryAt > timeAt && writeAt > tryAt && catchAt > writeAt && liveAt > catchAt);
 });

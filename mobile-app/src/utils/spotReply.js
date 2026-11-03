@@ -61,14 +61,18 @@ export const readSpotReply = (raw) => {
   return { spots, liveMetals, change };
 };
 
+// The time a reply's prices are shown and saved under: the reply's own
+// timestamp when it carries one as text, else now.
+export const spotReplyTime = (timestamp, now = new Date()) =>
+  typeof timestamp === 'string' && timestamp ? timestamp : now.toISOString();
+
 // What a read reply saves on the phone, as [key, value] pairs for
 // AsyncStorage.multiSet: each live metal's spot and the time of the reply.
 // Nothing for a failed read, so the saved prices and their time stay put.
 export const spotSavePairs = (reply, timestamp, now = new Date()) => {
   if (!reply) return [];
   const pairs = SPOT_METALS.filter((m) => reply.liveMetals[m]).map((m) => [`stack_${m}_spot`, String(reply.spots[m])]);
-  const time = typeof timestamp === 'string' && timestamp ? timestamp : now.toISOString();
-  pairs.push(['stack_price_timestamp', time]);
+  pairs.push(['stack_price_timestamp', spotReplyTime(timestamp, now)]);
   return pairs;
 };
 

@@ -47,7 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
-import { readSpotReply, spotSavePairs } from './src/utils/spotReply';
+import { readSpotReply, spotReplyTime, spotSavePairs } from './src/utils/spotReply';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8635,9 +8635,16 @@ function AppContent() {
         if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
         // Saved the way the background fetch saves them: every live spot and
         // the reply's time in one write, and the same time shown and saved.
-        const savePairs = spotSavePairs(reply, raw.timestamp);
-        const savedAt = savePairs[savePairs.length - 1][1];
-        await AsyncStorage.multiSet(savePairs);
+        // A failed save is caught on its own, so prices already on screen
+        // still read as live rather than cached. The next launch just starts
+        // from the older saved ones.
+        const savedAt = spotReplyTime(raw.timestamp);
+        const savePairs = spotSavePairs(reply, savedAt);
+        try {
+          await AsyncStorage.multiSet(savePairs);
+        } catch (saveError) {
+          if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
+        }
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(savedAt);
