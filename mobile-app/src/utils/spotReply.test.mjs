@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotReplyTime, spotSavePairs, spotWidgetPrices, spotPriceOk } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, spotWidgetPrices, spotPriceOk } from './spotReply.js';
 
 const full = {
   prices: {
@@ -123,7 +123,7 @@ test('the widget only gets the metals that passed, with change_pct only when usa
 test('the background task reads the reply the way the app does', () => {
   const bg = readFileSync(new URL('./backgroundTasks.js', import.meta.url), 'utf8');
   assert.match(bg, /const reply = readSpotReply\(raw\);\n\s+if \(reply\) \{/);
-  assert.match(bg, /await AsyncStorage\.multiSet\(spotSavePairs\(reply, raw\.timestamp\)\);/);
+  assert.match(bg, /await saveSpotReply\(AsyncStorage, reply, raw\.timestamp\);/);
   assert.doesNotMatch(bg, /AsyncStorage\.setItem\('stack_price_timestamp'/);
   assert.doesNotMatch(bg, /change_pct \|\| 0/);
 });
@@ -137,16 +137,16 @@ test('spotPriceOk reads a price one way for every caller', () => {
   }
 });
 
-test('App.js saves a good reply through spotSavePairs in one write before Live', () => {
+test('App.js saves a good reply through saveSpotReply before Live', () => {
   const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
   const start = src.indexOf('const fetchSpotPrices = async');
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   const ifAt = body.indexOf('if (reply)');
   const elseAt = body.indexOf('} else {', ifAt);
-  const pairsAt = body.indexOf('spotSavePairs(reply, savedAt)');
-  const writeAt = body.indexOf('await AsyncStorage.multiSet(savePairs)');
+  const writeAt = body.indexOf('await saveSpotReply(AsyncStorage, reply, savedAt)');
   const liveAt = body.indexOf('setSpotPricesLive(true)');
-  assert.ok(ifAt > 0 && pairsAt > ifAt && writeAt > pairsAt && liveAt > writeAt && liveAt < elseAt);
+  assert.ok(ifAt > 0 && writeAt > ifAt && liveAt > writeAt && liveAt < elseAt);
+  assert.ok(!body.includes('AsyncStorage.multiSet('));
   assert.ok(body.includes('setPriceTimestamp(savedAt)'));
   assert.ok(!/setItem\('stack_(silver|gold|platinum|palladium)_spot'/.test(body));
   assert.ok(!body.includes("setItem('stack_price_timestamp'"));
@@ -167,8 +167,40 @@ test('App.js keeps a good reply Live when its save fails', () => {
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   const timeAt = body.indexOf('const savedAt = spotReplyTime(raw.timestamp)');
   const tryAt = body.indexOf('try {', timeAt);
-  const writeAt = body.indexOf('await AsyncStorage.multiSet(savePairs)');
+  const writeAt = body.indexOf('await saveSpotReply(AsyncStorage, reply, savedAt)');
   const catchAt = body.indexOf('} catch (saveError)', writeAt);
   const liveAt = body.indexOf('setSpotPricesLive(true)');
   assert.ok(timeAt > 0 && tryAt > timeAt && writeAt > tryAt && catchAt > writeAt && liveAt > catchAt);
+});
+
+const fakeStorage = ({ failMultiSet = false } = {}) => {
+  const calls = [];
+  return {
+    calls,
+    multiSet: async (pairs) => {
+      calls.push(['multiSet', pairs]);
+      if (failMultiSet) throw new Error('disk full');
+    },
+    setItem: async (k, v) => { calls.push(['setItem', k, v]); },
+  };
+};
+
+test('saveSpotReply writes the time only after the spots land', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 }, silver: { price: 80 } } });
+  const ok = fakeStorage();
+  await saveSpotReply(ok, r, '2026-11-03T08:00:00Z');
+  assert.deepEqual(ok.calls, [
+    ['multiSet', [['stack_silver_spot', '80'], ['stack_gold_spot', '4500']]],
+    ['setItem', 'stack_price_timestamp', '2026-11-03T08:00:00Z'],
+  ]);
+  const bad = fakeStorage({ failMultiSet: true });
+  await assert.rejects(saveSpotReply(bad, r, '2026-11-03T08:00:00Z'), /disk full/);
+  assert.ok(!bad.calls.some((c) => c[0] === 'setItem'));
+  const none = fakeStorage();
+  await saveSpotReply(none, null, 't');
+  assert.deepEqual(none.calls, []);
+  const now = new Date('2026-11-03T09:00:00.000Z');
+  const later = fakeStorage();
+  await saveSpotReply(later, r, undefined, now);
+  assert.deepEqual(later.calls.at(-1), ['setItem', 'stack_price_timestamp', now.toISOString()]);
 });
