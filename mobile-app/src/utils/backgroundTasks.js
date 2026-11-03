@@ -10,7 +10,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { backgroundWidgetPayload, heldFromStored, readWidgetInputs, saveWidgetPicture } from './widgetRefresh';
-import { readSpotReply, saveSpotReplyForWidget } from './spotReply';
+import { fetchSpotRaw, readSpotReply, saveSpotReplyForWidget } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -28,15 +28,8 @@ const fetchSpotPricesBackground = async () => {
   try {
     if (__DEV__) console.log('[BackgroundFetch] Fetching spot prices...');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for background
-
-    const response = await fetch(`${API_BASE_URL}/v1/prices`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    const raw = await response.json();
+    // 15 seconds from the request through the body
+    const raw = await fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`);
 
     // The same read the app does. A reply where no metal clears its floor is
     // a failed fetch: no spot, no time and no widget change is saved from it.
