@@ -296,3 +296,20 @@ test('a good background save writes the spots and still hands the widget its pri
   assert.deepEqual(errors, []);
   assert.equal(await saveSpotReplyForWidget(fakeStorage(), null, raw), null);
 });
+
+test('a background save that times out still hands the widget its prices', async () => {
+  const raw = { prices: { gold: { price: 4500 } }, timestamp: 'tT' };
+  const r = readSpotReply(raw);
+  const stuck = { multiSet: () => new Promise(() => {}), setItem: async () => {} };
+  const errors = [];
+  const out = await saveSpotReplyForWidget(stuck, r, raw, (e) => errors.push(e.message), 20);
+  assert.deepEqual(out, { prices: { gold: { price: 4500 } }, timestamp: 'tT' });
+  assert.deepEqual(errors, ['spot save timed out']);
+});
+
+test('an onSaveError that throws does not cost the widget its refresh', async () => {
+  const raw = { prices: { gold: { price: 4500 } }, timestamp: 'tX' };
+  const r = readSpotReply(raw);
+  const out = await saveSpotReplyForWidget(fakeStorage({ failMultiSet: true }), r, raw, () => { throw new Error('log broke'); });
+  assert.deepEqual(out, { prices: { gold: { price: 4500 } }, timestamp: 'tX' });
+});

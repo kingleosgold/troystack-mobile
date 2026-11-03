@@ -98,10 +98,12 @@ const writeSpotPairs = async (storage, pairs) => {
   await storage.setItem(timeKey, time);
 };
 
-const withTimeout = (work, ms) => {
+// Rejects with message once ms pass without work settling. The work itself
+// isn't cancelled, it just stops being waited on.
+export const withTimeout = (work, ms, message = 'spot save timed out') => {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('spot save timed out')), ms);
+    timer = setTimeout(() => reject(new Error(message)), ms);
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 };
@@ -117,13 +119,14 @@ export const saveSpotReply = async (storage, reply, timestamp, now = new Date(),
 // The background task's save and widget prices in one step. A save that fails
 // or times out doesn't cost the widget its refresh: the reply already passed
 // readSpotReply, so the widget still gets the metals that passed and the app
-// fetches its own spot again on next open.
-export const saveSpotReplyForWidget = async (storage, reply, raw, onSaveError) => {
+// fetches its own spot again on next open. An onSaveError that throws can't
+// cost the refresh either.
+export const saveSpotReplyForWidget = async (storage, reply, raw, onSaveError, timeoutMs = SPOT_SAVE_TIMEOUT_MS) => {
   if (!reply) return null;
   try {
-    await saveSpotReply(storage, reply, raw?.timestamp);
+    await saveSpotReply(storage, reply, raw?.timestamp, new Date(), timeoutMs);
   } catch (error) {
-    if (onSaveError) onSaveError(error);
+    try { if (onSaveError) onSaveError(error); } catch { /* the refresh still goes on */ }
   }
   return { prices: spotWidgetPrices(reply, raw), timestamp: raw?.timestamp };
 };
