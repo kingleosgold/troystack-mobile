@@ -9,13 +9,21 @@ export const SPOT_METALS = ['silver', 'gold', 'platinum', 'palladium'];
 
 export const SPOT_FLOORS = { silver: 10, gold: 1000, platinum: 100, palladium: 100 };
 
+// Whether one metal's price is a plain decimal over its floor. The one check
+// the app, the background fetch and the widget all use.
+export const spotPriceOk = (metal, price) => {
+  const n = toNum(price);
+  return Number.isFinite(n) && n > SPOT_FLOORS[metal];
+};
+
 const NO_CHANGE = { amount: null, percent: null, prevClose: null };
 
 // A plain decimal only, so a string like '0x1F40' or '8e3' never reads as a
-// price. Number() alone would take both.
+// price. Number() alone would take both. Exported so the widget reads a
+// price the same way.
 const DECIMAL = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)\s*$/;
 
-const toNum = (v) => {
+export const toNum = (v) => {
   if (typeof v === 'number') return v;
   if (typeof v === 'string' && DECIMAL.test(v)) return Number(v);
   return NaN;
@@ -40,7 +48,7 @@ export const readSpotReply = (raw) => {
   for (const metal of SPOT_METALS) {
     const data = prices[metal];
     const price = toNum(data && typeof data === 'object' ? data.price : undefined);
-    const ok = Number.isFinite(price) && price > SPOT_FLOORS[metal];
+    const ok = spotPriceOk(metal, price);
     liveMetals[metal] = ok;
     if (ok) {
       spots[metal] = price;

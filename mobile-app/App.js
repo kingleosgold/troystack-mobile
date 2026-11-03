@@ -47,7 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
-import { readSpotReply } from './src/utils/spotReply';
+import { readSpotReply, spotSavePairs } from './src/utils/spotReply';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8629,28 +8629,20 @@ function AppContent() {
       const reply = readSpotReply(raw);
       if (reply) {
         const { spots, liveMetals, change } = reply;
-        if (liveMetals.silver) {
-          setSilverSpot(spots.silver);
-          await AsyncStorage.setItem('stack_silver_spot', spots.silver.toString());
-        }
-        if (liveMetals.gold) {
-          setGoldSpot(spots.gold);
-          await AsyncStorage.setItem('stack_gold_spot', spots.gold.toString());
-        }
-        if (liveMetals.platinum) {
-          setPlatinumSpot(spots.platinum);
-          await AsyncStorage.setItem('stack_platinum_spot', spots.platinum.toString());
-        }
-        if (liveMetals.palladium) {
-          setPalladiumSpot(spots.palladium);
-          await AsyncStorage.setItem('stack_palladium_spot', spots.palladium.toString());
-        }
+        if (liveMetals.silver) setSilverSpot(spots.silver);
+        if (liveMetals.gold) setGoldSpot(spots.gold);
+        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
+        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
+        // Saved the way the background fetch saves them: every live spot and
+        // the reply's time in one write, and the same time shown and saved.
+        const savePairs = spotSavePairs(reply, raw.timestamp);
+        const savedAt = savePairs[savePairs.length - 1][1];
+        await AsyncStorage.multiSet(savePairs);
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
-        setPriceTimestamp(raw.timestamp || new Date().toISOString());
+        setPriceTimestamp(savedAt);
         setLiveSpotMetals(liveMetals);
         setSpotPricesLive(true);
-        await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
 
         // Day change from change_pct, and none for a metal whose price was thrown out
         setSpotChange(change);
