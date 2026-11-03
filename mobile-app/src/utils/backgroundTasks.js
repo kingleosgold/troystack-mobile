@@ -9,7 +9,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
+import { backgroundWidgetPayload, heldFromStored, readWidgetInputs, saveWidgetPicture } from './widgetRefresh';
 import { readSpotReply, saveSpotReplyForWidget } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
@@ -72,18 +72,14 @@ const updateWidgetBackground = async (priceData) => {
   }
 
   try {
-    const [savedStr, silverStr, goldStr, platinumStr, palladiumStr] = await Promise.all([
-      AsyncStorage.getItem(WIDGET_PAYLOAD_KEY),
-      AsyncStorage.getItem('stack_silver'),
-      AsyncStorage.getItem('stack_gold'),
-      AsyncStorage.getItem('stack_platinum'),
-      AsyncStorage.getItem('stack_palladium'),
-    ]);
+    // Timed, so storage that stopped answering (say, after the spot save
+    // timed out) leaves the widget alone rather than running past iOS's window
+    const { saved: savedStr, stored } = await readWidgetInputs(AsyncStorage);
     let saved = null;
     try { saved = savedStr ? JSON.parse(savedStr) : null; } catch { saved = null; }
     // The holdings as stored now, since they can change while prices aren't
     // live and the app hasn't synced the widget since
-    const held = heldFromStored({ silver: silverStr, gold: goldStr, platinum: platinumStr, palladium: palladiumStr }) || undefined;
+    const held = heldFromStored(stored) || undefined;
     const widgetData = backgroundWidgetPayload({ saved, prices: priceData.prices, held });
     if (!widgetData) {
       if (__DEV__) console.log('[BackgroundFetch] Widget update skipped (no saved widget picture or no usable price)');
@@ -95,7 +91,7 @@ const updateWidgetBackground = async (priceData) => {
     if (__DEV__) console.log('[BackgroundFetch] Updating widget with data');
     WidgetKitModule.setWidgetData(jsonData);
     WidgetKitModule.reloadAllTimelines();
-    await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, jsonData);
+    await saveWidgetPicture(AsyncStorage, jsonData);
 
     if (__DEV__) console.log('[BackgroundFetch] Widget updated successfully');
   } catch (error) {

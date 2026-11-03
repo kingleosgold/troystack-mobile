@@ -8,9 +8,35 @@
 // went locked, Hide Values switched off and platinum and palladium dropped.
 // Nothing here imports React Native, so it runs under `node --test`.
 
-import { SPOT_METALS, spotPriceOk, toNum } from './spotReply.js';
+import { SPOT_METALS, spotPriceOk, toNum, withTimeout } from './spotReply.js';
 
 export const WIDGET_PAYLOAD_KEY = 'stack_widget_payload';
+
+// How long the background task waits on each widget read or write. iOS gives
+// a background fetch about 30 seconds, and the price fetch (15s) and the spot
+// save (5s) come first, so storage that stops answering can't hold the task
+// past its window.
+export const WIDGET_STORAGE_TIMEOUT_MS = 3000;
+
+// The background task's reads for the widget: the last picture the app sent
+// and each metal's holdings. Rejects if storage doesn't answer in time, and
+// the task then leaves the widget as it is.
+export const readWidgetInputs = async (storage, timeoutMs = WIDGET_STORAGE_TIMEOUT_MS) => {
+  const [saved, silver, gold, platinum, palladium] = await withTimeout(Promise.all([
+    storage.getItem(WIDGET_PAYLOAD_KEY),
+    storage.getItem('stack_silver'),
+    storage.getItem('stack_gold'),
+    storage.getItem('stack_platinum'),
+    storage.getItem('stack_palladium'),
+  ]), timeoutMs, 'widget read timed out');
+  return { saved, stored: { silver, gold, platinum, palladium } };
+};
+
+// Keeps the picture just sent so the next background run starts from it.
+// The widget already has it, so a write that doesn't answer in time only
+// gives up the copy.
+export const saveWidgetPicture = (storage, json, timeoutMs = WIDGET_STORAGE_TIMEOUT_MS) =>
+  withTimeout(Promise.resolve().then(() => storage.setItem(WIDGET_PAYLOAD_KEY, json)), timeoutMs, 'widget save timed out');
 
 // A time the widget can read. Its decoder takes ISO 8601 without fractional
 // seconds, and toISOString() always adds them (".000Z"), which fails the

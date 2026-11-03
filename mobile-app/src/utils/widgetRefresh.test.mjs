@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetTime, heldFromStored, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload } from './widgetRefresh.js';
+import { WIDGET_PAYLOAD_KEY, LOCKED_WIDGET, widgetTime, heldFromStored, priceOk, widgetChanges, widgetPlanKnownFree, backgroundWidgetPayload, readWidgetInputs, saveWidgetPicture } from './widgetRefresh.js';
 
 const spotChange = {
   silver: { amount: 1, percent: 2 },
@@ -146,8 +146,10 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 test('the background task builds from the saved picture, not a key nothing writes', () => {
   const bg = read('./backgroundTasks.js');
   assert.match(bg, /backgroundWidgetPayload\(\{ saved, prices: priceData\.prices, held \}\)/);
-  assert.match(bg, /AsyncStorage\.getItem\('stack_platinum'\)/);
-  assert.match(bg, /AsyncStorage\.getItem\('stack_palladium'\)/);
+  assert.match(bg, /await readWidgetInputs\(AsyncStorage\)/);
+  assert.match(bg, /heldFromStored\(stored\)/);
+  assert.match(bg, /await saveWidgetPicture\(AsyncStorage, jsonData\)/);
+  assert.doesNotMatch(bg, /AsyncStorage\.(getItem|setItem)\(/);
   assert.match(bg, /saveSpotReplyForWidget\(AsyncStorage, reply, raw, /);
   assert.match(read('./spotReply.js'), /prices: spotWidgetPrices\(reply, raw\)/);
   assert.doesNotMatch(bg, /stack_has_gold/);
@@ -249,4 +251,28 @@ test('the widget reads a price the way the app does', () => {
   const next = backgroundWidgetPayload({ saved, prices: { gold: { price: '4500', change_pct: '1e2' } } });
   assert.equal(next.goldSpot, 4500);
   assert.equal(next.goldChangePercent, 0);
+});
+
+test('readWidgetInputs reads the saved picture and every metal', async () => {
+  const data = { [WIDGET_PAYLOAD_KEY]: '{"a":1}', stack_silver: '[]', stack_gold: '[{"ozt":1,"quantity":2}]' };
+  const storage = { getItem: async (k) => data[k] ?? null };
+  assert.deepEqual(await readWidgetInputs(storage, 50), {
+    saved: '{"a":1}',
+    stored: { silver: '[]', gold: '[{"ozt":1,"quantity":2}]', platinum: null, palladium: null },
+  });
+});
+
+test('readWidgetInputs gives up when storage stops answering', async () => {
+  const stuck = { getItem: () => new Promise(() => {}) };
+  await assert.rejects(readWidgetInputs(stuck, 20), /widget read timed out/);
+  const broken = { getItem: async () => { throw new Error('io'); } };
+  await assert.rejects(readWidgetInputs(broken, 20), /io/);
+});
+
+test('saveWidgetPicture writes the picture and gives up on a stuck write', async () => {
+  const calls = [];
+  await saveWidgetPicture({ setItem: async (k, v) => { calls.push([k, v]); } }, 'J', 50);
+  assert.deepEqual(calls, [[WIDGET_PAYLOAD_KEY, 'J']]);
+  await assert.rejects(saveWidgetPicture({ setItem: () => new Promise(() => {}) }, 'J', 20), /widget save timed out/);
+  await assert.rejects(saveWidgetPicture({ setItem: () => { throw new Error('sync'); } }, 'J', 20), /sync/);
 });
