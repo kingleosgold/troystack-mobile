@@ -26,15 +26,16 @@ const timeoutError = () => Object.assign(new Error('price fetch timed out'), { n
 const screen = (gate = createLatestOnly()) => {
   const s = { source: 'cached', applied: [], saves: [], saveErrors: [] };
   s.gate = gate;
-  s.call = (fetchRaw, { silent = false, save } = {}) => runSpotFetch({
+  // onSaveError: null wires no handler at all, and apply swaps the screen's.
+  s.call = (fetchRaw, { silent = false, save, onSaveError, apply } = {}) => runSpotFetch({
     gate,
     silent,
     fetchRaw,
     save: save || (async (reply, savedAt) => { s.saves.push(savedAt); }),
-    onSaveError: (e) => s.saveErrors.push(e.message),
+    onSaveError: onSaveError === null ? undefined : (onSaveError || ((e) => s.saveErrors.push(e?.message ?? e))),
     getSource: () => s.source,
     setSource: (v) => { s.source = v; },
-    apply: (a) => { s.applied.push(a); s.source = a.source; },
+    apply: apply || ((a) => { s.applied.push(a); s.source = a.source; }),
     now: () => new Date('2026-11-04T07:00:00.000Z'),
   });
   return s;
@@ -170,14 +171,9 @@ test('the newest call clears a loading an older, dropped call set', async () => 
 
 test('a save error handler that throws still lets the reply show', async () => {
   const s = screen();
-  const outcome = await runSpotFetch({
-    gate: s.gate,
-    fetchRaw: async () => good(),
+  const outcome = await s.call(async () => good(), {
     save: async () => { throw new Error('disk full'); },
     onSaveError: () => { throw new Error('handler broke'); },
-    getSource: () => s.source,
-    setSource: (v) => { s.source = v; },
-    apply: (a) => { s.applied.push(a); s.source = a.source; },
   });
   assert.equal(outcome, 'applied');
   assert.equal(s.applied.length, 1);
@@ -186,16 +182,13 @@ test('a save error handler that throws still lets the reply show', async () => {
 
 test('a failed save with no handler still shows the reply', async () => {
   const s = screen();
-  const outcome = await runSpotFetch({
-    gate: s.gate,
-    fetchRaw: async () => good(),
+  const outcome = await s.call(async () => good(), {
     save: async () => { throw new Error('disk full'); },
-    getSource: () => s.source,
-    setSource: (v) => { s.source = v; },
-    apply: (a) => { s.applied.push(a); s.source = a.source; },
+    onSaveError: null,
   });
   assert.equal(outcome, 'applied');
   assert.equal(s.applied.length, 1);
+  assert.deepEqual(s.saveErrors, []);
 });
 
 test('an AbortError reads as a timeout and leaves a Live source alone', async () => {
@@ -224,18 +217,44 @@ test('a thrown value that is not an Error reads failed and never rejects', async
 test('a save that rejects with a non-Error still shows the reply', async () => {
   const s = screen();
   const seen = [];
-  const outcome = await runSpotFetch({
-    gate: s.gate,
-    fetchRaw: async () => good(),
+  const outcome = await s.call(async () => good(), {
     save: async () => { throw undefined; },
     onSaveError: (e) => { seen.push(e); },
-    getSource: () => s.source,
-    setSource: (v) => { s.source = v; },
-    apply: (a) => { s.applied.push(a); },
   });
   assert.equal(outcome, 'applied');
   assert.deepEqual(seen, [undefined]);
   assert.equal(s.applied.length, 1);
+});
+
+// Gaps the #184 review named: apply throwing after a good save, and a save
+// that fails while a newer call starts during it.
+
+test('apply throwing after a good save reads failed and cached, with the save kept', async () => {
+  const s = screen();
+  s.source = 'live';
+  const outcome = await s.call(async () => good(4600), {
+    silent: true,
+    apply: () => { throw new Error('setter broke'); },
+  });
+  assert.equal(outcome, 'failed');
+  assert.equal(s.source, 'cached');
+  // Storage already holds the reply, so the next launch starts from it.
+  assert.deepEqual(s.saves, ['2026-11-04T06:00:00Z']);
+  assert.deepEqual(s.saveErrors, []);
+});
+
+test('a save that fails while a newer call starts reports the error and shows only the newer reply', async () => {
+  const s = screen();
+  const saving = deferred();
+  const first = s.call(async () => good(4400), { save: () => saving.promise });
+  await new Promise((r) => setImmediate(r));
+  const second = s.call(async () => good(4600));
+  assert.equal(await second, 'applied');
+  saving.reject(new Error('disk full'));
+  assert.equal(await first, 'stale');
+  assert.deepEqual(s.saveErrors, ['disk full']);
+  assert.deepEqual(s.applied.map((a) => a.reply.spots.gold), [4600]);
+  assert.equal(s.source, 'test');
 });
 
 test('every outcome is one of the named ones', () => {
