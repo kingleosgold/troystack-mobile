@@ -165,6 +165,79 @@ test('the newest call clears a loading an older, dropped call set', async () => 
   assert.equal(s.source, 'cached');
 });
 
+// Edge cases the #183 review named: a save error handler that throws, an
+// AbortError, a thrown value that isn't an Error, and no handler at all.
+
+test('a save error handler that throws still lets the reply show', async () => {
+  const s = screen();
+  const outcome = await runSpotFetch({
+    gate: s.gate,
+    fetchRaw: async () => good(),
+    save: async () => { throw new Error('disk full'); },
+    onSaveError: () => { throw new Error('handler broke'); },
+    getSource: () => s.source,
+    setSource: (v) => { s.source = v; },
+    apply: (a) => { s.applied.push(a); s.source = a.source; },
+  });
+  assert.equal(outcome, 'applied');
+  assert.equal(s.applied.length, 1);
+  assert.equal(s.source, 'test');
+});
+
+test('a failed save with no handler still shows the reply', async () => {
+  const s = screen();
+  const outcome = await runSpotFetch({
+    gate: s.gate,
+    fetchRaw: async () => good(),
+    save: async () => { throw new Error('disk full'); },
+    getSource: () => s.source,
+    setSource: (v) => { s.source = v; },
+    apply: (a) => { s.applied.push(a); s.source = a.source; },
+  });
+  assert.equal(outcome, 'applied');
+  assert.equal(s.applied.length, 1);
+});
+
+test('an AbortError reads as a timeout and leaves a Live source alone', async () => {
+  const s = screen();
+  const abort = () => Object.assign(new Error('Aborted'), { name: 'AbortError' });
+  assert.equal(await s.call(async () => { throw abort(); }), 'timeout');
+  assert.equal(s.source, 'cached');
+  s.source = 'live';
+  assert.equal(await s.call(async () => { throw abort(); }, { silent: true }), 'timeout');
+  assert.equal(s.source, 'live');
+  assert.deepEqual(s.applied, []);
+  assert.deepEqual(s.saves, []);
+});
+
+test('a thrown value that is not an Error reads failed and never rejects', async () => {
+  for (const thrown of ['offline', null, undefined, 42, { name: 'Weird' }]) {
+    const s = screen();
+    s.source = 'live';
+    const outcome = await s.call(async () => { throw thrown; }, { silent: true });
+    assert.equal(outcome, 'failed', `thrown ${String(thrown)}`);
+    assert.equal(s.source, 'cached');
+    assert.deepEqual(s.applied, []);
+  }
+});
+
+test('a save that rejects with a non-Error still shows the reply', async () => {
+  const s = screen();
+  const seen = [];
+  const outcome = await runSpotFetch({
+    gate: s.gate,
+    fetchRaw: async () => good(),
+    save: async () => { throw undefined; },
+    onSaveError: (e) => { seen.push(e); },
+    getSource: () => s.source,
+    setSource: (v) => { s.source = v; },
+    apply: (a) => { s.applied.push(a); },
+  });
+  assert.equal(outcome, 'applied');
+  assert.deepEqual(seen, [undefined]);
+  assert.equal(s.applied.length, 1);
+});
+
 test('every outcome is one of the named ones', () => {
   assert.deepEqual(SPOT_FETCH_OUTCOMES, ['applied', 'stale', 'empty', 'timeout', 'failed']);
 });
