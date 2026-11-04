@@ -1,5 +1,18 @@
 # App Store Screenshots Guide
 
+## TroyStack captions, from TROYSTACK_LISTING_AND_PODCAST_COPY_2026-10-28 section 4
+
+These replace the older Stack Tracker Pro plan further down. Only the image files carry the captions, so each one needs a re-export from the app's own screens. The repo holds no screenshot sources, so the images aren't rendered here.
+
+1. Your whole stack, valued live. (Dashboard with holdings)
+2. Ask Troy. Get a straight answer. (Troy chat)
+3. What your metal really buys. (purchasing power view)
+4. Snap a receipt. Stack updated. (receipt scanner)
+5. The Stack Signal, every morning. (Today tab brief)
+6. Spot prices, charts and alerts. (spot price history and alerts)
+
+No caption uses the word AI. The older plan below is kept for its size table only.
+
 ## Required Sizes
 
 ### iOS
@@ -26,10 +39,10 @@
 - Gain/loss percentage
 - 2-3 sample holdings
 
-### Screenshot 2: AI Receipt Scanner
+### Screenshot 2: Receipt Scanner
 **Focus:** Receipt scanning in action
 **Text Overlay:** "Scan Receipts Instantly"
-**Subtext:** "AI extracts all the details"
+**Subtext:** "Every detail filled in"
 **Show:**
 - Add purchase modal open
 - Receipt scanner section highlighted
