@@ -47,7 +47,7 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
-import { readSpotReply, spotReplyTime, saveSpotReply } from './src/utils/spotReply';
+import { readSpotReply, spotReplyTime, saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8611,17 +8611,10 @@ function AppContent() {
     try {
       if (__DEV__) console.log('📡 Fetching spot prices from:', `${API_BASE_URL}/v1/prices`);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(`${API_BASE_URL}/v1/prices`, {
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (__DEV__) console.log('✅ API Response Status:', response.status, response.statusText);
-
-      const raw = await response.json();
+      // Timed from the request through the body read, so a reply whose body
+      // stalls can't leave the price source on loading or hold a pull to
+      // refresh open.
+      const raw = await fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS);
       if (__DEV__) console.log('📊 API Response Data:', JSON.stringify(raw).substring(0, 300));
 
       // A reply where no metal clears its floor counts as a failed fetch, so
@@ -8668,8 +8661,15 @@ function AppContent() {
         priceSourceRef.current = 'cached';
       }
     } catch (error) {
-      if (error.name === 'AbortError') {
-        if (__DEV__) console.log('⏱️ Spot prices fetch aborted (timeout or unmount)');
+      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+        if (__DEV__) console.log('⏱️ Spot prices fetch timed out');
+        // A timeout leaves prices and a newer fetch's Live alone. Only a
+        // fetch that set loading itself clears it, so a stalled silent
+        // fetch can't cut short a pull to refresh still under way.
+        if (!silent && priceSourceRef.current === 'loading...') {
+          setPriceSource('cached');
+          priceSourceRef.current = 'cached';
+        }
         return;
       }
       if (__DEV__) console.error('❌ Error fetching spot prices:', error.message);

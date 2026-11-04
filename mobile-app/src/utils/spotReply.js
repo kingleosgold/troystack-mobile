@@ -108,12 +108,14 @@ export const withTimeout = (work, ms, message = 'spot save timed out') => {
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 };
 
-// The background task's /v1/prices read, timed from the request through the
+// The /v1/prices read, for the background task and the app, timed from the request through the
 // body. The old timer was cleared once headers came back, so a server that
 // stalled the body could hold the task past its budget. When the time runs
 // out the request is aborted and this rejects, whether or not the fetch
 // itself honors the abort.
 export const PRICE_FETCH_TIMEOUT_MS = 15000;
+// The app's own read in the foreground keeps its old 10s budget.
+export const FOREGROUND_PRICE_FETCH_TIMEOUT_MS = 10000;
 
 export const fetchSpotRaw = (fetchImpl, url, timeoutMs = PRICE_FETCH_TIMEOUT_MS) => {
   const controller = new AbortController();
@@ -127,7 +129,9 @@ export const fetchSpotRaw = (fetchImpl, url, timeoutMs = PRICE_FETCH_TIMEOUT_MS)
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(new Error('price fetch timed out'));
+      const error = new Error('price fetch timed out');
+      error.name = 'TimeoutError';
+      reject(error);
     }, timeoutMs);
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
