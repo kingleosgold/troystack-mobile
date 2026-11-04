@@ -402,8 +402,10 @@ test('App.js drops an older spot fetch once a newer one starts', () => {
   // The ticket is taken before anything else, each await is followed by the
   // check, and every write to prices, the time, Live or the source sits after one.
   assert.ok(ticketAt > 0 && ticketAt < loadingAt);
-  assert.ok(rawAt > 0 && afterRawAt > rawAt && afterRawAt < readAt && readAt < spotAt);
-  assert.ok(saveAt > 0 && afterSaveAt > saveAt && afterSaveAt < sourceAt && sourceAt < elseAt);
+  assert.ok(rawAt > 0 && afterRawAt > rawAt && afterRawAt < readAt && readAt < saveAt);
+  // Prices apply with the rest of the reply after the save's check, so a
+  // reply that goes stale during its save shows nothing at all.
+  assert.ok(saveAt > 0 && afterSaveAt > saveAt && afterSaveAt < spotAt && spotAt < sourceAt && sourceAt < elseAt);
   assert.ok(catchAt > elseAt && inCatchAt > catchAt && genericAt > inCatchAt);
   assert.equal(body.split(check).length - 1, 3);
 });

@@ -8630,24 +8630,26 @@ function AppContent() {
       const reply = readSpotReply(raw);
       if (reply) {
         const { spots, liveMetals, change } = reply;
-        if (liveMetals.silver) setSilverSpot(spots.silver);
-        if (liveMetals.gold) setGoldSpot(spots.gold);
-        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
-        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
         // Saved the way the background fetch saves them: every live spot,
         // then the reply's time once the spots have landed, and the same
-        // time shown and saved. A failed save is caught on its own, so
-        // prices already on screen still read as live rather than cached.
-        // The next launch just starts from the older saved ones.
+        // time shown and saved. A failed save is caught on its own, so the
+        // reply still shows and reads as live rather than cached. The next
+        // launch just starts from the older saved ones.
         const savedAt = spotReplyTime(raw.timestamp);
         try {
           await saveSpotReply(AsyncStorage, reply, savedAt);
         } catch (saveError) {
           if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
         }
-        // A fetch that started during the save owns the time, Live and the
-        // source from here, and its own save queues after this one.
+        // A fetch that started during the save owns the screen from here,
+        // and its own save queues after this one. Prices, the time, Live,
+        // the change and the source all apply together below, so a reply
+        // never shows half applied.
         if (!spotFetchGate.current.isCurrent(ticket)) return;
+        if (liveMetals.silver) setSilverSpot(spots.silver);
+        if (liveMetals.gold) setGoldSpot(spots.gold);
+        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
+        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(savedAt);
