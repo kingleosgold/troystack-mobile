@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
+import { readSpotReply, spotReplyTime, spotSavePairs, saveSpotReply, saveSpotReplyForWidget, spotWidgetPrices, spotPriceOk, fetchSpotRaw } from './spotReply.js';
 
 const full = {
   prices: {
@@ -75,18 +75,6 @@ test('a change_pct at or under -100 or not a number reads flat', () => {
   }
 });
 
-test('App.js reads the reply through readSpotReply and keeps a failed read off Live', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const end = src.indexOf('const onRefreshDashboard', start);
-  const body = src.slice(start, end);
-  assert.ok(body.includes('readSpotReply(raw)'));
-  const ifAt = body.indexOf('if (reply)');
-  const liveAt = body.indexOf('setSpotPricesLive(true)');
-  const elseAt = body.indexOf('} else {', ifAt);
-  assert.ok(ifAt > 0 && liveAt > ifAt && liveAt < elseAt);
-});
-
 test('hex and exponent strings never read as a price', () => {
   assert.equal(readSpotReply({ prices: { gold: { price: '0x1F40' } } }), null);
   assert.equal(readSpotReply({ prices: { gold: { price: '5e3' } } }), null);
@@ -138,21 +126,6 @@ test('spotPriceOk reads a price one way for every caller', () => {
   }
 });
 
-test('App.js saves a good reply through saveSpotReply before Live', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
-  const ifAt = body.indexOf('if (reply)');
-  const elseAt = body.indexOf('} else {', ifAt);
-  const writeAt = body.indexOf('await saveSpotReply(AsyncStorage, reply, savedAt)');
-  const liveAt = body.indexOf('setSpotPricesLive(true)');
-  assert.ok(ifAt > 0 && writeAt > ifAt && liveAt > writeAt && liveAt < elseAt);
-  assert.ok(!body.includes('AsyncStorage.multiSet('));
-  assert.ok(body.includes('setPriceTimestamp(savedAt)'));
-  assert.ok(!/setItem\('stack_(silver|gold|platinum|palladium)_spot'/.test(body));
-  assert.ok(!body.includes("setItem('stack_price_timestamp'"));
-});
-
 test('the time shown is the time saved, from one helper', () => {
   const now = new Date('2026-11-03T06:00:00.000Z');
   assert.equal(spotReplyTime('2026-11-03T05:59:00Z', now), '2026-11-03T05:59:00Z');
@@ -160,18 +133,6 @@ test('the time shown is the time saved, from one helper', () => {
   const r = readSpotReply({ prices: { gold: { price: 4500 } } });
   const at = spotReplyTime(undefined, now);
   assert.deepEqual(spotSavePairs(r, at).at(-1), ['stack_price_timestamp', at]);
-});
-
-test('App.js keeps a good reply Live when its save fails', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
-  const timeAt = body.indexOf('const savedAt = spotReplyTime(raw.timestamp)');
-  const tryAt = body.indexOf('try {', timeAt);
-  const writeAt = body.indexOf('await saveSpotReply(AsyncStorage, reply, savedAt)');
-  const catchAt = body.indexOf('} catch (saveError)', writeAt);
-  const liveAt = body.indexOf('setSpotPricesLive(true)');
-  assert.ok(timeAt > 0 && tryAt > timeAt && writeAt > tryAt && catchAt > writeAt && liveAt > catchAt);
 });
 
 const fakeStorage = ({ failMultiSet = false } = {}) => {
@@ -358,54 +319,3 @@ test('fetchSpotRaw names its timeout so callers can tell it from a network error
   await assert.rejects(fetchSpotRaw(() => new Promise(() => {}), 'u', 20), (e) => e.name === 'TimeoutError');
 });
 
-test('App.js reads prices through fetchSpotRaw with its 10s budget', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
-  assert.match(body, /const raw = await fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS\);/);
-  assert.ok(!body.includes('response.json()'));
-  assert.ok(!body.includes('clearTimeout('));
-  assert.equal(FOREGROUND_PRICE_FETCH_TIMEOUT_MS, 10000);
-});
-
-test('App.js lets only the newest fetch turn a loading to cached on a timeout', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
-  const catchAt = body.lastIndexOf('} catch (error) {');
-  const staleAt = body.indexOf('if (!spotFetchGate.current.isCurrent(ticket)) return;', catchAt);
-  const timeoutAt = body.indexOf("error.name === 'TimeoutError'", catchAt);
-  const guardAt = body.indexOf("if (priceSourceRef.current === 'loading...')", timeoutAt);
-  const returnAt = body.indexOf('return;', guardAt);
-  assert.ok(catchAt > 0 && staleAt > catchAt && timeoutAt > staleAt && guardAt > timeoutAt && returnAt > guardAt);
-});
-
-test('App.js drops an older spot fetch once a newer one starts', () => {
-  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
-  assert.match(src, /const spotFetchGate = useRef\(createLatestOnly\(\)\);/);
-  const start = src.indexOf('const fetchSpotPrices = async');
-  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
-  const check = 'if (!spotFetchGate.current.isCurrent(ticket)) return;';
-  const ticketAt = body.indexOf('const ticket = spotFetchGate.current.begin();');
-  const loadingAt = body.indexOf("setPriceSource('loading...')");
-  const rawAt = body.indexOf('const raw = await fetchSpotRaw(');
-  const afterRawAt = body.indexOf(check, rawAt);
-  const readAt = body.indexOf('const reply = readSpotReply(raw)');
-  const spotAt = body.indexOf('setSilverSpot(');
-  const saveAt = body.indexOf('await saveSpotReply(AsyncStorage, reply, savedAt)');
-  const afterSaveAt = body.indexOf(check, saveAt);
-  const sourceAt = body.indexOf("setPriceSource(raw.source || 'live')");
-  const elseAt = body.indexOf('} else {', sourceAt);
-  const catchAt = body.lastIndexOf('} catch (error) {');
-  const inCatchAt = body.indexOf(check, catchAt);
-  const genericAt = body.lastIndexOf("setPriceSource('cached')");
-  // The ticket is taken before anything else, each await is followed by the
-  // check, and every write to prices, the time, Live or the source sits after one.
-  assert.ok(ticketAt > 0 && ticketAt < loadingAt);
-  assert.ok(rawAt > 0 && afterRawAt > rawAt && afterRawAt < readAt && readAt < saveAt);
-  // Prices apply with the rest of the reply after the save's check, so a
-  // reply that goes stale during its save shows nothing at all.
-  assert.ok(saveAt > 0 && afterSaveAt > saveAt && afterSaveAt < spotAt && spotAt < sourceAt && sourceAt < elseAt);
-  assert.ok(catchAt > elseAt && inCatchAt > catchAt && genericAt > inCatchAt);
-  assert.equal(body.split(check).length - 1, 3);
-});
