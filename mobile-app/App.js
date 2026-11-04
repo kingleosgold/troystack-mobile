@@ -47,7 +47,8 @@ import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editM
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
-import { readSpotReply, spotReplyTime, saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
+import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
+import { runSpotFetch } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -4043,16 +4044,14 @@ function AppContent() {
       {
         logLifecycleEvent('app:initial_spot_fetch_start');
         const _spotStart = Date.now();
-        // fetchSpotPrices swallows errors internally, so promise resolution
-        // alone is not a reliable success signal. Derive `ok` from the
-        // post-call priceSourceRef: non-'cached' (and not loading) = success.
-        fetchSpotPrices().then(() => {
-          const src = priceSourceRef.current;
-          const ok = src !== 'cached' && src !== 'loading...' && src !== null;
+        // fetchSpotPrices resolves with its own outcome, so a launch fetch a
+        // newer one overtook logs as stale rather than as a failure.
+        fetchSpotPrices().then((outcome) => {
           logLifecycleEvent('app:initial_spot_fetch_end', {
-            ok,
+            ok: outcome === 'applied',
+            outcome,
             durationMs: Date.now() - _spotStart,
-            priceSource: src,
+            priceSource: priceSourceRef.current,
           });
         }).catch(err => {
           // Defense in depth: unreachable in practice since fetchSpotPrices
@@ -8607,93 +8606,48 @@ function AppContent() {
   // API CALLS
   // ============================================
 
-  const fetchSpotPrices = async (silent = false) => {
-    const ticket = spotFetchGate.current.begin();
-    if (!silent) {
-      setPriceSource('loading...');
-      priceSourceRef.current = 'loading...';
-    }
-    try {
+  // Resolves with what happened ('applied', 'stale', 'empty', 'timeout' or
+  // 'failed') and never rejects. The steps and the latest-only rules live in
+  // runSpotFetch, so tests can drive overlapping calls.
+  const fetchSpotPrices = (silent = false) => runSpotFetch({
+    gate: spotFetchGate.current,
+    silent,
+    // Timed from the request through the body read, so a reply whose body
+    // stalls can't leave the price source on loading or hold a pull to
+    // refresh open.
+    fetchRaw: () => {
       if (__DEV__) console.log('📡 Fetching spot prices from:', `${API_BASE_URL}/v1/prices`);
-
-      // Timed from the request through the body read, so a reply whose body
-      // stalls can't leave the price source on loading or hold a pull to
-      // refresh open.
-      const raw = await fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS);
-      // A newer fetch started while this one was out, so its reply wins.
-      // This one shows and saves nothing.
-      if (!spotFetchGate.current.isCurrent(ticket)) return;
-      if (__DEV__) console.log('📊 API Response Data:', JSON.stringify(raw).substring(0, 300));
-
-      // A reply where no metal clears its floor counts as a failed fetch, so
-      // the saved prices stay as they are and aren't called live.
-      const reply = readSpotReply(raw);
-      if (reply) {
-        const { spots, liveMetals, change } = reply;
-        // Saved the way the background fetch saves them: every live spot,
-        // then the reply's time once the spots have landed, and the same
-        // time shown and saved. A failed save is caught on its own, so the
-        // reply still shows and reads as live rather than cached. The next
-        // launch just starts from the older saved ones.
-        const savedAt = spotReplyTime(raw.timestamp);
-        try {
-          await saveSpotReply(AsyncStorage, reply, savedAt);
-        } catch (saveError) {
-          if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
-        }
-        // A fetch that started during the save owns the screen from here,
-        // and its own save queues after this one. Prices, the time, Live,
-        // the change and the source all apply together below, so a reply
-        // never shows half applied.
-        if (!spotFetchGate.current.isCurrent(ticket)) return;
-        if (liveMetals.silver) setSilverSpot(spots.silver);
-        if (liveMetals.gold) setGoldSpot(spots.gold);
-        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
-        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
-        setPriceSource(raw.source || 'live');
-        priceSourceRef.current = raw.source || 'live';
-        setPriceTimestamp(savedAt);
-        setLiveSpotMetals(liveMetals);
-        setSpotPricesLive(true);
-
-        // Day change from change_pct, and none for a metal whose price was thrown out
-        setSpotChange(change);
-        if (__DEV__) console.log('📈 Change data computed from change_pct');
-
-        // Capture markets closed status (client-side fallback since v1 doesn't send marketsClosed)
-        const clientClosed = isMarketClosedClientSide();
-        setMarketsClosed(clientClosed);
-        if (clientClosed) {
-          if (__DEV__) console.log(`🔒 Markets closed — client: ${clientClosed}`);
-        }
-
-        if (__DEV__) console.log(`💰 Prices updated: Gold $${spots.gold}, Silver $${spots.silver} (Source: ${raw.source})`);
-      } else {
-        if (__DEV__) console.log('⚠️  API returned no usable prices');
-        setPriceSource('cached');
-        priceSourceRef.current = 'cached';
-      }
-    } catch (error) {
-      // A newer fetch is out, so it settles the source, and this failure
-      // can't turn its Live to cached.
-      if (!spotFetchGate.current.isCurrent(ticket)) return;
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        if (__DEV__) console.log('⏱️ Spot prices fetch timed out');
-        // A timeout leaves prices and Live alone. The newest fetch clears a
-        // loading still showing, whichever fetch set it, since any older
-        // fetch that set it is now dropped and won't clear it.
-        if (priceSourceRef.current === 'loading...') {
-          setPriceSource('cached');
-          priceSourceRef.current = 'cached';
-        }
-        return;
-      }
-      if (__DEV__) console.error('❌ Error fetching spot prices:', error.message);
-      if (__DEV__) console.error('   Error details:', error);
-      setPriceSource('cached');
-      priceSourceRef.current = 'cached';
-    }
-  };
+      return fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS);
+    },
+    // Saved the way the background fetch saves them: every live spot, then
+    // the reply's time once the spots have landed.
+    save: (reply, savedAt) => saveSpotReply(AsyncStorage, reply, savedAt),
+    onSaveError: (saveError) => {
+      if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
+    },
+    getSource: () => priceSourceRef.current,
+    setSource: (source) => {
+      setPriceSource(source);
+      priceSourceRef.current = source;
+    },
+    apply: ({ reply, savedAt, source }) => {
+      const { spots, liveMetals, change } = reply;
+      if (liveMetals.silver) setSilverSpot(spots.silver);
+      if (liveMetals.gold) setGoldSpot(spots.gold);
+      if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
+      if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
+      setPriceSource(source);
+      priceSourceRef.current = source;
+      setPriceTimestamp(savedAt);
+      setLiveSpotMetals(liveMetals);
+      setSpotPricesLive(true);
+      // Day change from change_pct, and none for a metal whose price was thrown out
+      setSpotChange(change);
+      // Markets closed status (client-side fallback since v1 doesn't send marketsClosed)
+      setMarketsClosed(isMarketClosedClientSide());
+      if (__DEV__) console.log(`💰 Prices updated: Gold $${spots.gold}, Silver $${spots.silver} (Source: ${source})`);
+    },
+  });
 
   // Pull-to-refresh handler for dashboard
   const onRefreshDashboard = async () => {
