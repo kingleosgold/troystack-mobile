@@ -3007,6 +3007,10 @@ function AppContent() {
   const [spotPriceSource, setSpotPriceSource] = useState(null); // Tracks data source for spot price warnings
   // Only the newest spot lookup on the add form may fill the spot
   const spotLookupGate = useRef(createLatestOnly());
+  // Only the newest spot price fetch may change prices, the time, Live or
+  // the price source, so an older one that lands or fails late can't
+  // overwrite a newer one's reply.
+  const spotFetchGate = useRef(createLatestOnly());
   const [historicalSpotSuggestion, setHistoricalSpotSuggestion] = useState(null); // Suggested historical spot price for comparison
 
   // Speculation State
@@ -8604,6 +8608,7 @@ function AppContent() {
   // ============================================
 
   const fetchSpotPrices = async (silent = false) => {
+    const ticket = spotFetchGate.current.begin();
     if (!silent) {
       setPriceSource('loading...');
       priceSourceRef.current = 'loading...';
@@ -8615,6 +8620,9 @@ function AppContent() {
       // stalls can't leave the price source on loading or hold a pull to
       // refresh open.
       const raw = await fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS);
+      // A newer fetch started while this one was out, so its reply wins.
+      // This one shows and saves nothing.
+      if (!spotFetchGate.current.isCurrent(ticket)) return;
       if (__DEV__) console.log('📊 API Response Data:', JSON.stringify(raw).substring(0, 300));
 
       // A reply where no metal clears its floor counts as a failed fetch, so
@@ -8622,21 +8630,26 @@ function AppContent() {
       const reply = readSpotReply(raw);
       if (reply) {
         const { spots, liveMetals, change } = reply;
-        if (liveMetals.silver) setSilverSpot(spots.silver);
-        if (liveMetals.gold) setGoldSpot(spots.gold);
-        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
-        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
         // Saved the way the background fetch saves them: every live spot,
         // then the reply's time once the spots have landed, and the same
-        // time shown and saved. A failed save is caught on its own, so
-        // prices already on screen still read as live rather than cached.
-        // The next launch just starts from the older saved ones.
+        // time shown and saved. A failed save is caught on its own, so the
+        // reply still shows and reads as live rather than cached. The next
+        // launch just starts from the older saved ones.
         const savedAt = spotReplyTime(raw.timestamp);
         try {
           await saveSpotReply(AsyncStorage, reply, savedAt);
         } catch (saveError) {
           if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
         }
+        // A fetch that started during the save owns the screen from here,
+        // and its own save queues after this one. Prices, the time, Live,
+        // the change and the source all apply together below, so a reply
+        // never shows half applied.
+        if (!spotFetchGate.current.isCurrent(ticket)) return;
+        if (liveMetals.silver) setSilverSpot(spots.silver);
+        if (liveMetals.gold) setGoldSpot(spots.gold);
+        if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
+        if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
         setPriceSource(raw.source || 'live');
         priceSourceRef.current = raw.source || 'live';
         setPriceTimestamp(savedAt);
@@ -8661,12 +8674,15 @@ function AppContent() {
         priceSourceRef.current = 'cached';
       }
     } catch (error) {
+      // A newer fetch is out, so it settles the source, and this failure
+      // can't turn its Live to cached.
+      if (!spotFetchGate.current.isCurrent(ticket)) return;
       if (error.name === 'TimeoutError' || error.name === 'AbortError') {
         if (__DEV__) console.log('⏱️ Spot prices fetch timed out');
-        // A timeout leaves prices and a newer fetch's Live alone. Only a
-        // fetch that set loading itself clears it, so a stalled silent
-        // fetch can't cut short a pull to refresh still under way.
-        if (!silent && priceSourceRef.current === 'loading...') {
+        // A timeout leaves prices and Live alone. The newest fetch clears a
+        // loading still showing, whichever fetch set it, since any older
+        // fetch that set it is now dropped and won't clear it.
+        if (priceSourceRef.current === 'loading...') {
           setPriceSource('cached');
           priceSourceRef.current = 'cached';
         }
