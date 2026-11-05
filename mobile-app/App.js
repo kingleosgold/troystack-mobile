@@ -5911,6 +5911,12 @@ function AppContent() {
     }
   }, []); // Run once on mount
 
+  // The deep link effect below runs once, so its handler would keep the
+  // first render's performScan, with its Gold status, scan count and user id.
+  // Reading performScan through this ref at tap time uses the current one.
+  const performScanRef = useRef(null);
+  const lastScanLinkAtRef = useRef(0);
+
   // Deep link handler for password reset
   useEffect(() => {
     const handleDeepLink = async (url) => {
@@ -5926,12 +5932,16 @@ function AppContent() {
         return;
       }
       if (url.includes('troystack://scan')) {
+        // getInitialURL and the url event can both deliver one tap.
+        const now = Date.now();
+        if (now - lastScanLinkAtRef.current < 2000) return;
+        lastScanLinkAtRef.current = now;
         setCurrentScreen('MyStack');
         // Small delay to let screen mount, then say where the photo goes
         // before the camera opens, like every other scan entry point.
         setTimeout(() => {
           Alert.alert('Scan Receipt', SCAN_AI_NOTE, [
-            { text: 'Take Photo', onPress: () => performScan('camera') },
+            { text: 'Take Photo', onPress: () => performScanRef.current?.('camera') },
             { text: 'Cancel', style: 'cancel' },
           ]);
         }, 500);
@@ -9570,6 +9580,7 @@ function AppContent() {
 
     setTimeout(() => { setScanStatus(null); setScanMessage(''); }, 5000);
   };
+  performScanRef.current = performScan;
 
   // ============================================
   // SPREADSHEET IMPORT (with Dealer Templates)
