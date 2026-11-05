@@ -229,6 +229,9 @@ test('a save that never settles times out and the next save still runs', async (
   assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
 });
 
+// This fake lets the old spots land after the newer save's, which real
+// AsyncStorage can't do since it runs native writes in order. It checks the
+// time write only, in the worst case.
 test('a save that times out never writes its time, even when its spots land late', async () => {
   const r = readSpotReply({ prices: { gold: { price: 4500 } } });
   const calls = [];
