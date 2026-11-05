@@ -24,9 +24,10 @@ test('Android with three or fewer buttons is left alone', () => {
   assert.deepEqual(out.options, { cancelable: false });
 });
 
-test('Android with four buttons keeps the three actions and closes on a tap outside', () => {
+test('Android with four buttons keeps the three actions, main one last, and closes on a tap outside', () => {
   const out = fitAlertButtons(four(), 'android');
-  assert.deepEqual(out.buttons.map((b) => b.text), ['Take a Photo', 'Choose Photo', 'Import Spreadsheet']);
+  // React Native puts the last button in Android's positive (main) slot.
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Import Spreadsheet', 'Choose Photo', 'Take a Photo']);
   assert.equal(out.options.cancelable, true);
 });
 
@@ -42,7 +43,36 @@ test('dismissing on Android runs the dropped Cancel handler and any onDismiss', 
 test('a cancel button that is not last is still the one dropped', () => {
   const buttons = [{ text: 'Cancel', style: 'cancel' }, ...four().slice(0, 3)];
   const out = fitAlertButtons(buttons, 'android');
-  assert.deepEqual(out.buttons.map((b) => b.text), ['Take a Photo', 'Choose Photo', 'Import Spreadsheet']);
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Import Spreadsheet', 'Choose Photo', 'Take a Photo']);
+});
+
+test('every cancel-style button drops on Android and the first one runs on dismiss', () => {
+  const calls = [];
+  const buttons = [
+    ...four().slice(0, 3),
+    { text: 'Not now', style: 'cancel', onPress: () => calls.push('not now') },
+    { text: 'Cancel', style: 'cancel', onPress: () => calls.push('cancel') },
+  ];
+  const out = fitAlertButtons(buttons, 'android');
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Import Spreadsheet', 'Choose Photo', 'Take a Photo']);
+  out.options.onDismiss();
+  assert.deepEqual(calls, ['not now']);
+});
+
+test('more than three actions on Android keeps the first three listed, main one last', () => {
+  const buttons = [...four().slice(0, 3), { text: 'Type It In', onPress: () => {} }, { text: 'Cancel', style: 'cancel' }];
+  const out = fitAlertButtons(buttons, 'android');
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Import Spreadsheet', 'Choose Photo', 'Take a Photo']);
+});
+
+test('the kept actions keep their handlers and styles and the input is not changed', () => {
+  const buttons = four();
+  buttons[0].style = 'default';
+  const before = buttons.map((b) => b.text);
+  const out = fitAlertButtons(buttons, 'android');
+  assert.equal(out.buttons[2], buttons[0]);
+  assert.equal(out.buttons[0], buttons[2]);
+  assert.deepEqual(buttons.map((b) => b.text), before);
 });
 
 test('bad input gives an empty list', () => {
