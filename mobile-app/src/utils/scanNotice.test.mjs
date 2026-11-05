@@ -28,6 +28,7 @@ test("the widget's scan link shows the note before the camera opens", async () =
   const note = block.indexOf('SCAN_AI_NOTE');
   const camera = block.indexOf("performScan('camera')");
   assert.ok(note > -1, 'the scan link block names SCAN_AI_NOTE');
+  assert.ok(!/performScan\(/.test(block.slice(0, note)), 'nothing scans before the note');
   assert.ok(camera > note, 'the camera opens only from a button after the note');
   assert.ok(/Alert\.alert\(/.test(block.slice(0, camera)), 'the note shows in an alert first');
   assert.match(block, /style: 'cancel'/);
