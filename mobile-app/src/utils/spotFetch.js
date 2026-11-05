@@ -40,6 +40,21 @@ export const keepsLive = ({ liveAt, now, graceMs = LIVE_GRACE_MS }) => (
   typeof liveAt === 'number' && Number.isFinite(liveAt) && now - liveAt <= graceMs
 );
 
+// Drops Live once the prices that landed at liveAtRef.current are older than
+// the grace. A phone clock set back past liveAt would otherwise keep Live
+// until the clock caught up again, so liveAt moves back to now and the grace
+// counts from the moment the set-back is seen. The next reply that lands
+// stamps liveAt fresh. Returns whether Live stays.
+export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS }) => {
+  const liveAt = liveAtRef.current;
+  if (typeof liveAt === 'number' && Number.isFinite(liveAt) && now < liveAt) {
+    liveAtRef.current = now;
+  }
+  const live = keepsLive({ liveAt: liveAtRef.current, now, graceMs });
+  if (!live) setLive(false);
+  return live;
+};
+
 export const runSpotFetch = async ({
   gate,
   silent = false,
