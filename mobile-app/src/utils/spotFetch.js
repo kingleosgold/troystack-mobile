@@ -23,7 +23,7 @@
 //
 // An empty, timed out or failed call that's still newest also calls onMiss
 // with its outcome, so the screen can stop calling old prices Live once no
-// reply has landed for a while (see keepsLive).
+// reply has landed for a while (see dropStaleLive).
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
