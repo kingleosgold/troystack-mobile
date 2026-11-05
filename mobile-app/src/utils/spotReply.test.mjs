@@ -229,6 +229,42 @@ test('a save that never settles times out and the next save still runs', async (
   assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
 });
 
+// This fake lets the old spots land after the newer save's, which real
+// AsyncStorage can't do since it runs native writes in order. It checks the
+// time write only, in the worst case.
+test('a save that times out never writes its time, even when its spots land late', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const calls = [];
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  let first = true;
+  const s = {
+    multiSet: async (pairs) => {
+      if (first) { first = false; await gate; }
+      calls.push(['multiSet', pairs]);
+    },
+    setItem: async (k, v) => { calls.push(['setItem', k, v]); },
+  };
+  const slow = saveSpotReply(s, r, 'tOld', new Date(), 20);
+  const next = saveSpotReply(s, r, 'tNew', new Date(), 20);
+  await assert.rejects(slow, /spot save timed out/);
+  await next;
+  release();
+  await new Promise((res) => setTimeout(res, 10));
+  const times = calls.filter((c) => c[0] === 'setItem').map((c) => c[2]);
+  assert.deepEqual(times, ['tNew']);
+});
+
+test('a save that fails for another reason still skips its time and frees the queue', async () => {
+  const r = readSpotReply({ prices: { gold: { price: 4500 } } });
+  const bad = fakeStorage({ failMultiSet: true });
+  const ok = fakeStorage();
+  await assert.rejects(saveSpotReply(bad, r, 't1'), /disk full/);
+  await saveSpotReply(ok, r, 't2');
+  assert.ok(!bad.calls.some((c) => c[0] === 'setItem'));
+  assert.deepEqual(ok.calls.at(-1), ['setItem', 'stack_price_timestamp', 't2']);
+});
+
 test('saveSpotReply still returns a promise when a reply is malformed', async () => {
   const p = saveSpotReply(fakeStorage(), { liveMetals: null }, 't');
   assert.ok(p instanceof Promise);

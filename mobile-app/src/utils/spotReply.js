@@ -88,13 +88,19 @@ export const spotSavePairs = (reply, timestamp, now = new Date()) => {
 // still rejects for its own caller and doesn't stop the saves queued behind
 // it. A save that hasn't settled after SPOT_SAVE_TIMEOUT_MS rejects and
 // leaves the queue, so one stuck write can't hold up every later save.
+// A save that timed out never writes its time, even if its spots land late.
+// Otherwise a later save could finish first and then have its newer time
+// overwritten by the older reply's. Its late spots can't land over a later
+// save's: AsyncStorage runs its native writes in order on iOS and Android,
+// and the later save's writes are issued after it.
 export const SPOT_SAVE_TIMEOUT_MS = 5000;
 
 let spotSaveChain = Promise.resolve();
 
-const writeSpotPairs = async (storage, pairs) => {
+const writeSpotPairs = async (storage, pairs, save) => {
   const [timeKey, time] = pairs.pop();
   if (pairs.length) await storage.multiSet(pairs);
+  if (save.expired) return;
   await storage.setItem(timeKey, time);
 };
 
@@ -140,7 +146,11 @@ export const fetchSpotRaw = (fetchImpl, url, timeoutMs = PRICE_FETCH_TIMEOUT_MS)
 export const saveSpotReply = async (storage, reply, timestamp, now = new Date(), timeoutMs = SPOT_SAVE_TIMEOUT_MS) => {
   const pairs = spotSavePairs(reply, timestamp, now);
   if (!pairs.length) return;
-  const run = spotSaveChain.then(() => withTimeout(writeSpotPairs(storage, pairs), timeoutMs));
+  const save = { expired: false };
+  const run = spotSaveChain.then(() => withTimeout(writeSpotPairs(storage, pairs, save), timeoutMs).catch((error) => {
+    save.expired = true;
+    throw error;
+  }));
   spotSaveChain = run.catch(() => {});
   return run;
 };
