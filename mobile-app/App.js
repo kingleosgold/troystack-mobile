@@ -44,6 +44,7 @@ import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, li
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
 import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
 import { SCAN_AI_NOTE, SCAN_SOURCE_MESSAGE } from './src/utils/scanNotice';
+import { fitAlertButtons } from './src/utils/alertButtons';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
@@ -14616,12 +14617,13 @@ function AppContent() {
               <TouchableOpacity
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  Alert.alert('Add to your stack', SCAN_AI_NOTE, [
+                  const addSheet = fitAlertButtons([
                     { text: 'Take a Photo', onPress: () => performScan('camera') },
                     { text: 'Choose Photo', onPress: () => performScan('gallery') },
                     { text: 'Import Spreadsheet', onPress: () => importSpreadsheet() },
                     { text: 'Cancel', style: 'cancel' },
-                  ]);
+                  ], Platform.OS);
+                  Alert.alert('Add to your stack', SCAN_AI_NOTE, addSheet.buttons, addSheet.options);
                 }}
                 style={{
                   width: 32, height: 32, borderRadius: 16,
