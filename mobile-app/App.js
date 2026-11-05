@@ -5927,8 +5927,14 @@ function AppContent() {
       }
       if (url.includes('troystack://scan')) {
         setCurrentScreen('MyStack');
-        // Small delay to let screen mount before triggering scan
-        setTimeout(() => performScan('camera'), 500);
+        // Small delay to let screen mount, then say where the photo goes
+        // before the camera opens, like every other scan entry point.
+        setTimeout(() => {
+          Alert.alert('Scan Receipt', SCAN_AI_NOTE, [
+            { text: 'Take Photo', onPress: () => performScan('camera') },
+            { text: 'Cancel', style: 'cancel' },
+          ]);
+        }, 500);
         return;
       }
 
