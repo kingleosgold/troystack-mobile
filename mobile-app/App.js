@@ -50,7 +50,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
 import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
-import { runSpotFetch, keepsLive } from './src/utils/spotFetch';
+import { runSpotFetch, dropStaleLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -2592,7 +2592,7 @@ function AppContent() {
   const [palladiumSpot, setPalladiumSpot] = useState(1740);
   const [priceSource, setPriceSource] = useState('cached');
   const [priceTimestamp, setPriceTimestamp] = useState(null);
-  const [spotPricesLive, setSpotPricesLive] = useState(false); // True while the last fetch that landed is recent (see keepsLive)
+  const [spotPricesLive, setSpotPricesLive] = useState(false); // True while the last fetch that landed is recent (see dropStaleLive)
   // True once any spot reply has landed this session. Unlike spotPricesLive it
   // stays on through a run of missed fetches, so the widget still hears Hide
   // Values and holdings changes while the prices aren't live.
@@ -6023,7 +6023,7 @@ function AppContent() {
         if (__DEV__) console.log('▶️  App came to foreground - fetching fresh prices immediately');
         // Prices from before a long time in the background aren't Live while
         // this fetch is out. The reply turns Live back on when it lands.
-        if (!keepsLive({ liveAt: spotLiveAtRef.current, now: Date.now() })) setSpotPricesLive(false);
+        dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive });
         // ALWAYS fetch fresh prices when app comes to foreground
         fetchSpotPrices(true).catch(err => {
           // Ignore AbortError, only log actual errors
@@ -8646,7 +8646,7 @@ function AppContent() {
     // the note says when the prices on screen were fetched. The next reply
     // that lands turns Live back on.
     onMiss: () => {
-      if (!keepsLive({ liveAt: spotLiveAtRef.current, now: Date.now() })) setSpotPricesLive(false);
+      dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive });
     },
     getSource: () => priceSourceRef.current,
     setSource: (source) => {
