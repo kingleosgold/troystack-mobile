@@ -48,3 +48,8 @@ test('a cancel button that is not last is still the one dropped', () => {
 test('bad input gives an empty list', () => {
   assert.deepEqual(fitAlertButtons(undefined, 'android').buttons, []);
 });
+
+test('dismissing on Android with no handlers anywhere does nothing and does not throw', () => {
+  const out = fitAlertButtons(four(), 'android');
+  assert.doesNotThrow(() => out.options.onDismiss());
+});

@@ -5,8 +5,8 @@
  * three it's given, so a fourth Cancel button disappears and the alert
  * can't be closed without picking something. When an alert has more than
  * three buttons on Android, this drops the Cancel button and makes the
- * alert close on a tap outside or the back button instead. iOS keeps
- * every button.
+ * alert close on a tap outside or the back button instead, so it always
+ * sets cancelable: true there. iOS keeps every button.
  */
 
 const ANDROID_MAX_BUTTONS = 3;
