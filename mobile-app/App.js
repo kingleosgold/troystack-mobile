@@ -50,7 +50,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
 import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
-import { runSpotFetch } from './src/utils/spotFetch';
+import { runSpotFetch, keepsLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -2429,6 +2429,9 @@ function AppContent() {
   // each await to derive an honest `ok` for lifecycle events. Write-only
   // mirrors — never read inside render, never a hook dep.
   const priceSourceRef = useRef('cached');
+  // When the last spot reply landed on this phone (Date.now ms), so a run of
+  // missed fetches can stop calling those prices Live.
+  const spotLiveAtRef = useRef(null);
   const lastIntelligenceFetchRef = useRef({ count: 0, fetchedAt: 0 });
   const lastBriefStateRef = useRef(null);
 
@@ -3234,6 +3237,7 @@ function AppContent() {
     setPriceSource('cached');
     priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
+    spotLiveAtRef.current = null;
     setSpotPricesLive(false);
     setLiveSpotMetals({});
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
@@ -8627,6 +8631,12 @@ function AppContent() {
     onSaveError: (saveError) => {
       if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
     },
+    // Once no reply has landed for LIVE_GRACE_MS the header drops Live and
+    // the note says when the prices on screen were fetched. The next reply
+    // that lands turns Live back on.
+    onMiss: () => {
+      if (!keepsLive({ liveAt: spotLiveAtRef.current, now: Date.now() })) setSpotPricesLive(false);
+    },
     getSource: () => priceSourceRef.current,
     setSource: (source) => {
       setPriceSource(source);
@@ -8642,6 +8652,7 @@ function AppContent() {
       priceSourceRef.current = source;
       setPriceTimestamp(savedAt);
       setLiveSpotMetals(liveMetals);
+      spotLiveAtRef.current = Date.now();
       setSpotPricesLive(true);
       // Day change from change_pct, and none for a metal whose price was thrown out
       setSpotChange(change);
