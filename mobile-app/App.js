@@ -50,7 +50,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
 import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
-import { runSpotFetch } from './src/utils/spotFetch';
+import { runSpotFetch, keepsLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -2429,6 +2429,9 @@ function AppContent() {
   // each await to derive an honest `ok` for lifecycle events. Write-only
   // mirrors — never read inside render, never a hook dep.
   const priceSourceRef = useRef('cached');
+  // When the last spot reply landed on this phone (Date.now ms), so a run of
+  // missed fetches can stop calling those prices Live.
+  const spotLiveAtRef = useRef(null);
   const lastIntelligenceFetchRef = useRef({ count: 0, fetchedAt: 0 });
   const lastBriefStateRef = useRef(null);
 
@@ -2589,7 +2592,11 @@ function AppContent() {
   const [palladiumSpot, setPalladiumSpot] = useState(1740);
   const [priceSource, setPriceSource] = useState('cached');
   const [priceTimestamp, setPriceTimestamp] = useState(null);
-  const [spotPricesLive, setSpotPricesLive] = useState(false); // True after successful API fetch
+  const [spotPricesLive, setSpotPricesLive] = useState(false); // True while the last fetch that landed is recent (see keepsLive)
+  // True once any spot reply has landed this session. Unlike spotPricesLive it
+  // stays on through a run of missed fetches, so the widget still hears Hide
+  // Values and holdings changes while the prices aren't live.
+  const [spotLandedOnce, setSpotLandedOnce] = useState(false);
   // Which metals took a price from the latest fetch. One the API left out keeps the placeholder or an old cached price
   const [liveSpotMetals, setLiveSpotMetals] = useState({});
 
@@ -3234,7 +3241,9 @@ function AppContent() {
     setPriceSource('cached');
     priceSourceRef.current = 'cached';
     setPriceTimestamp(null);
+    spotLiveAtRef.current = null;
     setSpotPricesLive(false);
+    setSpotLandedOnce(false);
     setLiveSpotMetals({});
     setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
     setTroyMessages([]);
@@ -6012,6 +6021,9 @@ function AppContent() {
       // App came to foreground from background/inactive
       if (nextAppState === 'active' && previousState !== 'active') {
         if (__DEV__) console.log('▶️  App came to foreground - fetching fresh prices immediately');
+        // Prices from before a long time in the background aren't Live while
+        // this fetch is out. The reply turns Live back on when it lands.
+        if (!keepsLive({ liveAt: spotLiveAtRef.current, now: Date.now() })) setSpotPricesLive(false);
         // ALWAYS fetch fresh prices when app comes to foreground
         fetchSpotPrices(true).catch(err => {
           // Ignore AbortError, only log actual errors
@@ -7706,12 +7718,15 @@ function AppContent() {
     }
   };
 
-  // Sync widget when prices or portfolio changes
+  // Sync widget when prices or portfolio changes, once a reply has landed this
+  // session. It keeps syncing while Live is off after missed fetches, so Hide
+  // Values and holdings changes still reach the widget, and syncWidget passes
+  // spotPricesLive so the day's changes stay out then.
   useEffect(() => {
-    if (dataLoaded && spotPricesLive && (hasGold || hasLifetimeAccess)) {
+    if (dataLoaded && spotLandedOnce && (hasGold || hasLifetimeAccess)) {
       syncWidget();
     }
-  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
+  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, spotLandedOnce, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
 
   // Once the plan is known to be free, a lapsed plan's widget locks and the
   // background fetch has no saved picture to refresh. Not while the plan is
@@ -8627,6 +8642,12 @@ function AppContent() {
     onSaveError: (saveError) => {
       if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
     },
+    // Once no reply has landed for LIVE_GRACE_MS the header drops Live and
+    // the note says when the prices on screen were fetched. The next reply
+    // that lands turns Live back on.
+    onMiss: () => {
+      if (!keepsLive({ liveAt: spotLiveAtRef.current, now: Date.now() })) setSpotPricesLive(false);
+    },
     getSource: () => priceSourceRef.current,
     setSource: (source) => {
       setPriceSource(source);
@@ -8642,7 +8663,9 @@ function AppContent() {
       priceSourceRef.current = source;
       setPriceTimestamp(savedAt);
       setLiveSpotMetals(liveMetals);
+      spotLiveAtRef.current = Date.now();
       setSpotPricesLive(true);
+      setSpotLandedOnce(true);
       // Day change from change_pct, and none for a metal whose price was thrown out
       setSpotChange(change);
       // Markets closed status (client-side fallback since v1 doesn't send marketsClosed)

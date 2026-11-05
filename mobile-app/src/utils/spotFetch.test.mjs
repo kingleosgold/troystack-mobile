@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runSpotFetch, SPOT_FETCH_OUTCOMES } from './spotFetch.js';
+import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, LIVE_GRACE_MS } from './spotFetch.js';
 import { createLatestOnly } from './latestOnly.js';
 import { FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
 
@@ -284,4 +284,109 @@ test('App.js logs the launch fetch from its outcome, not the source after it', (
   const block = src.slice(at, src.indexOf("logLifecycleEvent('app:initial_spot_fetch_end', { ok: false", at));
   assert.match(block, /fetchSpotPrices\(\)\.then\(\(outcome\) => \{/);
   assert.ok(block.includes("ok: outcome === 'applied',"));
+});
+
+// onMiss and keepsLive: Live stops once no reply has landed for a while.
+
+const missRun = (fetchRaw, { gate = createLatestOnly(), onMiss, apply } = {}) => runSpotFetch({
+  gate,
+  fetchRaw,
+  save: async () => {},
+  getSource: () => 'live',
+  setSource: () => {},
+  apply: apply || (() => {}),
+  now: () => new Date('2026-11-04T07:00:00.000Z'),
+  onMiss,
+});
+
+test('onMiss hears a timeout, a failure and an empty reply', async () => {
+  const heard = [];
+  const onMiss = (o) => heard.push(o);
+  assert.equal(await missRun(async () => { throw timeoutError(); }, { onMiss }), 'timeout');
+  assert.equal(await missRun(async () => { throw new Error('offline'); }, { onMiss }), 'failed');
+  assert.equal(await missRun(async () => ({ prices: {} }), { onMiss }), 'empty');
+  assert.deepEqual(heard, ['timeout', 'failed', 'empty']);
+});
+
+test('onMiss stays quiet for a reply that lands', async () => {
+  const heard = [];
+  const applied = [];
+  const outcome = await missRun(async () => good(), { onMiss: (o) => heard.push(o), apply: (a) => applied.push(a) });
+  assert.equal(outcome, 'applied');
+  assert.equal(applied.length, 1);
+  assert.deepEqual(heard, []);
+});
+
+test('onMiss stays quiet when a newer fetch owns the screen', async () => {
+  const gate = createLatestOnly();
+  const heard = [];
+  const older = deferred();
+  const first = missRun(() => older.promise, { gate, onMiss: (o) => heard.push(o) });
+  gate.begin(); // a newer fetch started
+  older.reject(timeoutError());
+  assert.equal(await first, 'stale');
+  assert.deepEqual(heard, []);
+});
+
+test('an onMiss that throws still resolves the outcome', async () => {
+  const outcome = await missRun(async () => { throw new Error('offline'); }, { onMiss: () => { throw new Error('boom'); } });
+  assert.equal(outcome, 'failed');
+});
+
+test('keepsLive holds Live for the grace and drops it after', () => {
+  const liveAt = 1_000_000;
+  assert.equal(LIVE_GRACE_MS, 5 * 60 * 1000);
+  assert.equal(keepsLive({ liveAt, now: liveAt + 60_000 }), true);
+  assert.equal(keepsLive({ liveAt, now: liveAt + LIVE_GRACE_MS }), true);
+  assert.equal(keepsLive({ liveAt, now: liveAt + LIVE_GRACE_MS + 1 }), false);
+  assert.equal(keepsLive({ liveAt, now: liveAt + 3 * 60 * 60 * 1000 }), false);
+  // A clock that moved back counts as fresh.
+  assert.equal(keepsLive({ liveAt, now: liveAt - 60_000 }), true);
+  // Nothing landed yet.
+  assert.equal(keepsLive({ liveAt: null, now: liveAt }), false);
+  assert.equal(keepsLive({ liveAt: undefined, now: liveAt }), false);
+  assert.equal(keepsLive({ liveAt: NaN, now: liveAt }), false);
+});
+
+test('App.js drops Live on a miss past the grace and stamps each landed reply', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const fetchSpotPrices = (silent = false) => runSpotFetch({');
+  const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
+  assert.match(body, /onMiss: \(\) => \{\s*if \(!keepsLive\(\{ liveAt: spotLiveAtRef\.current, now: Date\.now\(\) \}\)\) setSpotPricesLive\(false\);/);
+  assert.match(body, /spotLiveAtRef\.current = Date\.now\(\);\s*setSpotPricesLive\(true\);/);
+  // Signing out clears the stamp with the rest of the spot state.
+  assert.match(src, /setPriceTimestamp\(null\);\s*spotLiveAtRef\.current = null;\s*setSpotPricesLive\(false\);/);
+});
+
+test('onMiss stays quiet when a newer fetch starts during the save', async () => {
+  const gate = createLatestOnly();
+  const heard = [];
+  const saving = deferred();
+  const first = runSpotFetch({
+    gate,
+    fetchRaw: async () => good(),
+    save: () => saving.promise,
+    getSource: () => 'live',
+    setSource: () => {},
+    apply: () => { throw new Error('a stale call must not apply'); },
+    onMiss: (o) => heard.push(o),
+  });
+  await new Promise((r) => setImmediate(r));
+  gate.begin(); // a newer fetch started while this one saved
+  saving.resolve();
+  assert.equal(await first, 'stale');
+  assert.deepEqual(heard, []);
+});
+
+test('App.js keeps the widget syncing once a reply landed, and drops stale Live on foreground', () => {
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  // The widget effect runs on any landed reply this session, not only while Live.
+  assert.match(src, /if \(dataLoaded && spotLandedOnce && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/);
+  assert.ok(!/if \(dataLoaded && spotPricesLive && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/.test(src));
+  assert.match(src, /setSpotPricesLive\(true\);\s*setSpotLandedOnce\(true\);/);
+  assert.match(src, /setSpotPricesLive\(false\);\s*setSpotLandedOnce\(false\);/);
+  // Coming back from the background drops Live before the fetch when it's past the grace.
+  const fg = src.indexOf("App came to foreground - fetching fresh prices immediately");
+  const block = src.slice(fg, src.indexOf('fetchSpotPrices(true)', fg));
+  assert.match(block, /if \(!keepsLive\(\{ liveAt: spotLiveAtRef\.current, now: Date\.now\(\) \}\)\) setSpotPricesLive\(false\);/);
 });
