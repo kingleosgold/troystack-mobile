@@ -121,3 +121,11 @@ test('a reset keeps the spot prices, their time and Live', () => {
     assert.ok(!reset.includes(setter), `${setter} stays out of the reset`);
   }
 });
+
+test('the daily snapshot waits for the cloud stack, and sparklines refetch after a reset', () => {
+  assert.match(app, /if \(dataLoaded && spotPricesLive && hasSyncedOnce && supabaseUser\?\.id && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*saveDailySnapshot\(\);\s*\}\s*\}, \[dataLoaded, spotPricesLive, hasSyncedOnce, supabaseUser\?\.id, hasGold, hasLifetimeAccess\]\);/);
+  assert.match(app, /if \(dataLoaded && spotPricesLive && spotLandedOnce\) fetchSparklineData\(\);\s*\}, \[dataLoaded, spotPricesLive, spotLandedOnce\]\);/);
+  const reset = slice('const resetAllState = (fullReset = true) => {', 'const clearAllData = async () => {');
+  assert.match(reset, /setHasSyncedOnce\(false\);/);
+  assert.match(reset, /sparklineFetchedRef\.current = false;/);
+});
