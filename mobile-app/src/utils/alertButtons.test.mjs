@@ -98,6 +98,29 @@ test('Android scan picker puts Take Photo in the positive slot and Cancel in the
   assert.equal(out.options, opts);
 });
 
+test('Android scan picker closes on back or a tap outside and runs Cancel and onDismiss', () => {
+  const calls = [];
+  const buttons = scanPicker();
+  buttons[2].onPress = () => calls.push('cancel');
+  const out = fitAlertButtons(buttons, 'android', { onDismiss: () => calls.push('dismiss') });
+  assert.equal(out.options.cancelable, true);
+  out.options.onDismiss();
+  assert.deepEqual(calls, ['dismiss', 'cancel']);
+});
+
+test('Android scan picker with no options and no handlers still closes and does not throw', () => {
+  const out = fitAlertButtons(scanPicker(), 'android');
+  assert.equal(out.options.cancelable, true);
+  assert.doesNotThrow(() => out.options.onDismiss());
+});
+
+test('Android lists left as given keep their options untouched', () => {
+  const opts = { cancelable: false };
+  const noCancel = scanPicker().slice(0, 2);
+  assert.equal(fitAlertButtons(noCancel, 'android', opts).options, opts);
+  assert.equal(fitAlertButtons(noCancel, 'android').options, undefined);
+});
+
 test('Android two-button alert puts Cancel first so the action is the positive button', () => {
   const out = fitAlertButtons(scanPicker().filter((b) => b.text !== 'Choose from Library'), 'android');
   assert.deepEqual(out.buttons.map((b) => b.text), ['Cancel', 'Take Photo']);
