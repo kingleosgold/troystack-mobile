@@ -17,7 +17,9 @@
  * With three or fewer buttons and one Cancel-style button, Android gets the
  * main action in the positive slot and Cancel in the negative slot, so Cancel
  * isn't the highlighted button. Any other action takes the neutral slot.
- * Lists without exactly one Cancel are left as given.
+ * That alert also closes on back or a tap outside and runs Cancel's handler,
+ * unless the caller passed cancelable: false. Lists without exactly one
+ * Cancel are left as given.
  */
 
 const ANDROID_MAX_BUTTONS = 3;
@@ -34,7 +36,11 @@ export function fitAlertButtons(buttons, platformOS, options) {
       return { buttons: list, options };
     }
     const [main, ...rest] = actions;
-    return { buttons: [...rest.reverse(), cancels[0], main], options };
+    const keepsCancelable = options && options.cancelable === false;
+    return {
+      buttons: [...rest.reverse(), cancels[0], main],
+      options: keepsCancelable ? options : closableOptions(options, cancels[0]),
+    };
   }
   const cancels = list.filter((b) => b && b.style === 'cancel');
   const actions = list.filter((b) => !(b && b.style === 'cancel'));
@@ -43,14 +49,20 @@ export function fitAlertButtons(buttons, platformOS, options) {
   }
   return {
     buttons: actions.slice(0, ANDROID_MAX_BUTTONS).reverse(),
-    options: {
-      ...options,
-      cancelable: true,
-      onDismiss: () => {
-        if (options && typeof options.onDismiss === 'function') options.onDismiss();
-        const cancel = cancels[0];
-        if (cancel && typeof cancel.onPress === 'function') cancel.onPress();
-      },
+    options: closableOptions(options, cancels[0]),
+  };
+}
+
+// Android alerts default to cancelable: false, so back and a tap outside do
+// nothing. This makes them close the alert and run the Cancel handler, the
+// same as tapping Cancel.
+function closableOptions(options, cancel) {
+  return {
+    ...options,
+    cancelable: true,
+    onDismiss: () => {
+      if (options && typeof options.onDismiss === 'function') options.onDismiss();
+      if (cancel && typeof cancel.onPress === 'function') cancel.onPress();
     },
   };
 }
