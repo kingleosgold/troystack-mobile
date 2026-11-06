@@ -3234,18 +3234,12 @@ function AppContent() {
     editMarksRef.current.clear();
     rowLookupMarksRef.current.clear();
     knownRowsRef.current.clear();
-    setSilverSpot(77);
-    setGoldSpot(4530);
-    setPlatinumSpot(2100);
-    setPalladiumSpot(1740);
-    setPriceSource('cached');
-    priceSourceRef.current = 'cached';
-    setPriceTimestamp(null);
-    spotLiveAtRef.current = null;
-    setSpotPricesLive(false);
+    // Spot prices, their time, Live and the day's change belong to the
+    // market, not the account, so they stay. Resetting them put placeholder
+    // prices under the next account's stack until the next fetch landed.
+    // The widget still waits for a reply this session before it syncs again,
+    // so it stays locked after lockWidget until a reply lands.
     setSpotLandedOnce(false);
-    setLiveSpotMetals({});
-    setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
     setTroyMessages([]);
     setTroyInputText('');
     setTroyConversations([]);
@@ -8366,12 +8360,14 @@ function AppContent() {
     }
   };
 
-  // Save snapshot when data is loaded and prices are live
+  // Save snapshot when data is loaded, prices are live and this account's
+  // cloud stack has been read, so a sign in never snapshots the empty stack
+  // the reset left before its holdings arrive
   useEffect(() => {
-    if (dataLoaded && spotPricesLive && supabaseUser?.id && (hasGold || hasLifetimeAccess)) {
+    if (dataLoaded && spotPricesLive && hasSyncedOnce && supabaseUser?.id && (hasGold || hasLifetimeAccess)) {
       saveDailySnapshot();
     }
-  }, [dataLoaded, spotPricesLive, supabaseUser?.id, hasGold, hasLifetimeAccess]);
+  }, [dataLoaded, spotPricesLive, hasSyncedOnce, supabaseUser?.id, hasGold, hasLifetimeAccess]);
 
   // Fetch analytics when tab opens (data is cached, so only fetches once per session)
   // This effect triggers when: user navigates to Analytics tab, OR RevenueCat values become available while on Analytics
@@ -8433,9 +8429,11 @@ function AppContent() {
     if (currentScreen === 'Dashboard') fetchSparklineData();
   }, [currentScreen]);
 
+  // Again once a reply lands after a reset, which keeps Live but clears the
+  // sparklines
   useEffect(() => {
-    if (dataLoaded && spotPricesLive) fetchSparklineData();
-  }, [dataLoaded, spotPricesLive]);
+    if (dataLoaded && spotPricesLive && spotLandedOnce) fetchSparklineData();
+  }, [dataLoaded, spotPricesLive, spotLandedOnce]);
 
 
   // ============================================

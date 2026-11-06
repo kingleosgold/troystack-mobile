@@ -354,8 +354,10 @@ test('App.js drops Live on a miss past the grace and stamps each landed reply', 
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   assert.match(body, /onMiss: \(\) => \{\s*dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive \}\);/);
   assert.match(body, /spotLiveAtRef\.current = Date\.now\(\);\s*setSpotPricesLive\(true\);/);
-  // Signing out clears the stamp with the rest of the spot state.
-  assert.match(src, /setPriceTimestamp\(null\);\s*spotLiveAtRef\.current = null;\s*setSpotPricesLive\(false\);/);
+  // Signing out keeps the market's prices, their stamp and Live.
+  const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
+  assert.ok(!reset.includes('spotLiveAtRef.current'));
+  assert.ok(!reset.includes('setSpotPricesLive('));
 });
 
 test('onMiss stays quiet when a newer fetch starts during the save', async () => {
@@ -384,7 +386,9 @@ test('App.js keeps the widget syncing once a reply landed, and drops stale Live 
   assert.match(src, /if \(dataLoaded && spotLandedOnce && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/);
   assert.ok(!/if \(dataLoaded && spotPricesLive && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/.test(src));
   assert.match(src, /setSpotPricesLive\(true\);\s*setSpotLandedOnce\(true\);/);
-  assert.match(src, /setSpotPricesLive\(false\);\s*setSpotLandedOnce\(false\);/);
+  // A reset holds the widget until a reply lands in the new session.
+  const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
+  assert.match(reset, /setSpotLandedOnce\(false\);/);
   // Coming back from the background drops Live before the fetch when it's past the grace.
   const fg = src.indexOf("App came to foreground - fetching fresh prices immediately");
   const block = src.slice(fg, src.indexOf('fetchSpotPrices(true)', fg));

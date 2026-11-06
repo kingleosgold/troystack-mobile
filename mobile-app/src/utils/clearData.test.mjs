@@ -107,3 +107,25 @@ test('the loading screen holds through a wipe', () => {
   assert.ok(clear.indexOf('setSigningOut(true);') < clear.indexOf('await AsyncStorage.clear();'));
   assert.match(clear, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
 });
+
+test('a reset keeps the spot prices, their time and Live', () => {
+  const reset = slice('const resetAllState = (fullReset = true) => {', 'const clearAllData = async () => {');
+  // The widget still waits for a reply in the new session
+  assert.match(reset, /setSpotLandedOnce\(false\);/);
+  for (const setter of [
+    'setSilverSpot(', 'setGoldSpot(', 'setPlatinumSpot(', 'setPalladiumSpot(',
+    'setPriceSource(', 'priceSourceRef.current', 'setPriceTimestamp(',
+    'spotLiveAtRef.current', 'setSpotPricesLive(',
+    'setLiveSpotMetals(', 'setSpotChange(',
+  ]) {
+    assert.ok(!reset.includes(setter), `${setter} stays out of the reset`);
+  }
+});
+
+test('the daily snapshot waits for the cloud stack, and sparklines refetch after a reset', () => {
+  assert.match(app, /if \(dataLoaded && spotPricesLive && hasSyncedOnce && supabaseUser\?\.id && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*saveDailySnapshot\(\);\s*\}\s*\}, \[dataLoaded, spotPricesLive, hasSyncedOnce, supabaseUser\?\.id, hasGold, hasLifetimeAccess\]\);/);
+  assert.match(app, /if \(dataLoaded && spotPricesLive && spotLandedOnce\) fetchSparklineData\(\);\s*\}, \[dataLoaded, spotPricesLive, spotLandedOnce\]\);/);
+  const reset = slice('const resetAllState = (fullReset = true) => {', 'const clearAllData = async () => {');
+  assert.match(reset, /setHasSyncedOnce\(false\);/);
+  assert.match(reset, /sparklineFetchedRef\.current = false;/);
+});
