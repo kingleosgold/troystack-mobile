@@ -123,7 +123,14 @@ test('a reset keeps the spot prices, their time and Live', () => {
 });
 
 test('the daily snapshot waits for the cloud stack, and sparklines refetch after a reset', () => {
-  assert.match(app, /if \(dataLoaded && spotPricesLive && hasSyncedOnce && supabaseUser\?\.id && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*saveDailySnapshot\(\);\s*\}\s*\}, \[dataLoaded, spotPricesLive, hasSyncedOnce, supabaseUser\?\.id, hasGold, hasLifetimeAccess\]\);/);
+  assert.match(app, /if \(shouldSnapshot\(\{\s*dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId,\s*userId: supabaseUser\?\.id, hasGold: hasGold \|\| hasLifetimeAccess,\s*\}\)\) \{\s*saveDailySnapshot\(\);\s*\}\s*\}, \[dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId, supabaseUser\?\.id, hasGold, hasLifetimeAccess\]\);/);
+  // The post itself checks the same gate, since the analytics fetch calls it too
+  const save = slice('const saveDailySnapshot = async () => {', 'const response = await fetch(`${API_BASE_URL}/v1/snapshots`');
+  assert.match(save, /if \(!shouldSnapshot\(\{/);
+  assert.match(save, /snapshotDateKey\(userId\)/);
+  assert.match(save, /if \(lastAccountIdRef\.current !== userId\) return;/);
+  // Only a finished sync names the account it read
+  assert.match(app, /setSyncedUserId\(syncUserId\);\s*setHasSyncedOnce\(true\);/);
   assert.match(app, /if \(dataLoaded && spotPricesLive && spotLandedOnce\) fetchSparklineData\(\);\s*\}, \[dataLoaded, spotPricesLive, spotLandedOnce\]\);/);
   const reset = slice('const resetAllState = (fullReset = true) => {', 'const clearAllData = async () => {');
   assert.match(reset, /setHasSyncedOnce\(false\);/);

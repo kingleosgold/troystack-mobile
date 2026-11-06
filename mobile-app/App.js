@@ -59,6 +59,7 @@ import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DEL
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
 import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
+import { shouldSnapshot, snapshotDateKey, snapshotDateKeys } from './src/utils/snapshotGate';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
@@ -2482,6 +2483,9 @@ function AppContent() {
   const syncEndRef = useRef(Promise.resolve());
   const syncOutcomesRef = useRef(new Map());
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
+  // The account whose cloud stack the last finished sync read. hasSyncedOnce
+  // outlives an account switch by a render, and this tells the two apart.
+  const [syncedUserId, setSyncedUserId] = useState(null);
   // Counts restores, so a sync that was already running when one landed
   // leaves the restored stack for the next sync instead of replacing it
   const restoreCountRef = useRef(0);
@@ -3468,7 +3472,6 @@ function AppContent() {
         'stack_silver_milestone', 'stack_gold_milestone',
         'stack_last_silver_milestone_reached', 'stack_last_gold_milestone_reached',
         'stack_review_prompts', 'stack_first_open_date',
-        'lastSnapshotDate',
         'stack_guest_mode',
         HOLDINGS_OWNER_KEY,
         PENDING_DELETES_KEY,
@@ -3477,6 +3480,8 @@ function AppContent() {
       // Every account's synced key goes with the stack, a key left by a
       // session that ended without a sign out included
       const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
+      // Every account's snapshot day, the old per phone key included
+      userKeys.push(...snapshotDateKeys(allKeys));
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
@@ -4385,6 +4390,8 @@ function AppContent() {
       return false;
     }
 
+    // The account this sync reads, kept for the snapshot gate
+    const syncUserId = supabaseUser.id;
     // The ref closes the add, edit and delete gates now rather than at the
     // next render, so a tap in the frame between can't slip past the sync
     isSyncingRef.current = true;
@@ -4705,6 +4712,7 @@ function AppContent() {
         }
       }
 
+      setSyncedUserId(syncUserId);
       setHasSyncedOnce(true);
       return true;
     } catch (err) {
@@ -7767,17 +7775,21 @@ function AppContent() {
 
   /**
    * Save daily portfolio snapshot for analytics
-   * Only saves once per day (checks lastSnapshotDate in AsyncStorage)
+   * Only saves once per day per account (its own day key in AsyncStorage)
    */
   const saveDailySnapshot = async () => {
-    // Only for Gold/Lifetime subscribers
-    if (!hasGold && !hasLifetimeAccess) return;
-    if (!supabaseUser?.id) return;
-    if (!spotPricesLive) return; // Need live prices for accurate snapshot
+    // Gold or Lifetime, live prices, and this account's own cloud stack read,
+    // so it never posts the last account's totals under this one's id
+    if (!shouldSnapshot({
+      dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId,
+      userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
+    })) return;
+    const userId = supabaseUser.id;
 
     try {
       const today = new Date().toISOString().split('T')[0];
-      const lastSnapshot = await AsyncStorage.getItem('lastSnapshotDate');
+      const dateKey = snapshotDateKey(userId);
+      const lastSnapshot = await AsyncStorage.getItem(dateKey);
 
       // Only save one snapshot per day
       if (lastSnapshot === today) {
@@ -7792,11 +7804,15 @@ function AppContent() {
       const palladiumValue = totalPalladiumOzt * palladiumSpot;
       const totalValue = goldValue + silverValue + platinumValue + palladiumValue;
 
+      // An account change while the day key was read leaves these totals with
+      // the last account, so they don't post under the next one's session
+      if (lastAccountIdRef.current !== userId) return;
+
       const response = await fetch(`${API_BASE_URL}/v1/snapshots`, {
         method: 'POST',
         headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          userId: supabaseUser.id,
+          userId,
           totalValue,
           goldValue,
           silverValue,
@@ -7816,7 +7832,7 @@ function AppContent() {
       const data = await response.json();
 
       if (data.success) {
-        await AsyncStorage.setItem('lastSnapshotDate', today);
+        await AsyncStorage.setItem(dateKey, today);
         if (__DEV__) console.log('📊 Daily snapshot saved:', data.snapshot?.date);
       }
     } catch (error) {
@@ -8364,10 +8380,13 @@ function AppContent() {
   // cloud stack has been read, so a sign in never snapshots the empty stack
   // the reset left before its holdings arrive
   useEffect(() => {
-    if (dataLoaded && spotPricesLive && hasSyncedOnce && supabaseUser?.id && (hasGold || hasLifetimeAccess)) {
+    if (shouldSnapshot({
+      dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId,
+      userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
+    })) {
       saveDailySnapshot();
     }
-  }, [dataLoaded, spotPricesLive, hasSyncedOnce, supabaseUser?.id, hasGold, hasLifetimeAccess]);
+  }, [dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId, supabaseUser?.id, hasGold, hasLifetimeAccess]);
 
   // Fetch analytics when tab opens (data is cached, so only fetches once per session)
   // This effect triggers when: user navigates to Analytics tab, OR RevenueCat values become available while on Analytics
