@@ -28,11 +28,13 @@ test("the widget's scan link shows the note before the camera opens", async () =
   // drops a repeat delivery of the same tap.
   const block = app.slice(start, app.indexOf('return;', app.indexOf('SCAN_AI_NOTE', start)));
   const note = block.indexOf('SCAN_AI_NOTE');
-  const camera = block.indexOf("performScanRef.current?.('camera')");
   assert.ok(note > -1, 'the scan link block names SCAN_AI_NOTE');
-  assert.ok(!/performScan(Ref\.current\?\.)?\(/.test(block.slice(0, note)), 'nothing scans before the note');
-  assert.ok(camera > note, 'the camera opens only from a button after the note');
-  assert.ok(/Alert\.alert\(/.test(block.slice(0, camera)), 'the note shows in an alert first');
+  // Every scan call is a button's onPress, so nothing scans until a tap on the note's alert.
+  const scans = block.match(/performScan(Ref\.current\?\.)?\(/g) || [];
+  const buttonScans = block.match(/onPress: \(\) => performScanRef\.current\?\.\('camera'\)/g) || [];
+  assert.equal(scans.length, 1);
+  assert.equal(buttonScans.length, 1, 'the camera opens only from a button');
+  assert.match(block, /Alert\.alert\('Scan Receipt', SCAN_AI_NOTE, scanPicker\.buttons, scanPicker\.options\)/, 'the note shows in the alert that holds the button');
   assert.match(block, /style: 'cancel'/);
 });
 

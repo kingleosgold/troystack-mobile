@@ -17,8 +17,8 @@ test('iOS keeps all four buttons and the options as given', () => {
   assert.equal(out.options, undefined);
 });
 
-test('Android with three or fewer buttons is left alone', () => {
-  const buttons = four().slice(1);
+test('Android with three or fewer buttons and no Cancel is left alone', () => {
+  const buttons = four().slice(0, 3);
   const out = fitAlertButtons(buttons, 'android', { cancelable: false });
   assert.equal(out.buttons, buttons);
   assert.deepEqual(out.options, { cancelable: false });
@@ -82,4 +82,55 @@ test('bad input gives an empty list', () => {
 test('dismissing on Android with no handlers anywhere does nothing and does not throw', () => {
   const out = fitAlertButtons(four(), 'android');
   assert.doesNotThrow(() => out.options.onDismiss());
+});
+
+const scanPicker = () => [
+  { text: 'Take Photo', onPress: () => {} },
+  { text: 'Choose from Library', onPress: () => {} },
+  { text: 'Cancel', style: 'cancel' },
+];
+
+test('Android scan picker puts Take Photo in the positive slot and Cancel in the negative slot', () => {
+  const opts = { cancelable: false };
+  const out = fitAlertButtons(scanPicker(), 'android', opts);
+  // React Native maps the list to neutral, negative, positive from first to last.
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Choose from Library', 'Cancel', 'Take Photo']);
+  assert.equal(out.options, opts);
+});
+
+test('Android two-button alert puts Cancel first so the action is the positive button', () => {
+  const out = fitAlertButtons(scanPicker().filter((b) => b.text !== 'Choose from Library'), 'android');
+  assert.deepEqual(out.buttons.map((b) => b.text), ['Cancel', 'Take Photo']);
+});
+
+test('Android keeps the onPress handlers on reordered buttons', () => {
+  const calls = [];
+  const buttons = scanPicker();
+  buttons[0].onPress = () => calls.push('camera');
+  const out = fitAlertButtons(buttons, 'android');
+  out.buttons[2].onPress();
+  assert.deepEqual(calls, ['camera']);
+});
+
+test('Android lists without exactly one Cancel, or with a null entry, stay as given', () => {
+  const noCancel = scanPicker().slice(0, 2);
+  assert.equal(fitAlertButtons(noCancel, 'android').buttons, noCancel);
+  const twoCancels = [{ text: 'A', onPress: () => {} }, { text: 'No', style: 'cancel' }, { text: 'Cancel', style: 'cancel' }];
+  assert.equal(fitAlertButtons(twoCancels, 'android').buttons, twoCancels);
+  const onlyCancel = [{ text: 'Cancel', style: 'cancel' }];
+  assert.equal(fitAlertButtons(onlyCancel, 'android').buttons, onlyCancel);
+  const withNull = [null, { text: 'Take Photo', onPress: () => {} }, { text: 'Cancel', style: 'cancel' }];
+  assert.equal(fitAlertButtons(withNull, 'android').buttons, withNull);
+});
+
+test('iOS scan picker keeps its order', () => {
+  const buttons = scanPicker();
+  assert.equal(fitAlertButtons(buttons, 'ios').buttons, buttons);
+});
+
+test('every Scan Receipt picker in App.js goes through fitAlertButtons', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+  assert.equal((src.match(/Alert\.alert\('Scan Receipt', SCAN_[A-Z_]+, \[/g) || []).length, 0);
+  assert.equal((src.match(/Alert\.alert\('Scan Receipt', SCAN_[A-Z_]+, scanPicker\.buttons, scanPicker\.options\)/g) || []).length, 4);
 });

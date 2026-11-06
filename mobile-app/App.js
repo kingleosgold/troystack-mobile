@@ -5944,10 +5944,11 @@ function AppContent() {
         // Small delay to let screen mount, then say where the photo goes
         // before the camera opens, like every other scan entry point.
         setTimeout(() => {
-          Alert.alert('Scan Receipt', SCAN_AI_NOTE, [
+          const scanPicker = fitAlertButtons([
             { text: 'Take Photo', onPress: () => performScanRef.current?.('camera') },
             { text: 'Cancel', style: 'cancel' },
-          ]);
+          ], Platform.OS);
+          Alert.alert('Scan Receipt', SCAN_AI_NOTE, scanPicker.buttons, scanPicker.options);
         }, 500);
         return;
       }
@@ -11690,11 +11691,12 @@ function AppContent() {
                       <TouchableOpacity
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, [
+                          const scanPicker = fitAlertButtons([
                             { text: 'Take Photo', onPress: () => performScan('camera') },
                             { text: 'Choose from Library', onPress: () => performScan('gallery') },
                             { text: 'Cancel', style: 'cancel' },
-                          ]);
+                          ], Platform.OS);
+                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(212,168,67,0.5)', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
                       >
@@ -14514,11 +14516,12 @@ function AppContent() {
                             if (chip.action === 'brief') {
                               fetchAndShowDailyBrief();
                             } else if (chip.action === 'scan') {
-                              Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, [
+                              const scanPicker = fitAlertButtons([
                                 { text: 'Take Photo', onPress: () => performScan('camera') },
                                 { text: 'Choose from Library', onPress: () => performScan('gallery') },
                                 { text: 'Cancel', style: 'cancel' },
-                              ]);
+                              ], Platform.OS);
+                              Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                             } else {
                               sendTroyMessage(chip.text);
                             }
@@ -14660,11 +14663,12 @@ function AppContent() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         if (chip.action === 'brief') fetchAndShowDailyBrief();
                         else if (chip.action === 'scan') {
-                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, [
+                          const scanPicker = fitAlertButtons([
                             { text: 'Take Photo', onPress: () => performScan('camera') },
                             { text: 'Choose from Library', onPress: () => performScan('gallery') },
                             { text: 'Cancel', style: 'cancel' },
-                          ]);
+                          ], Platform.OS);
+                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }
                         else sendTroyMessage(chip.text);
                       }}
