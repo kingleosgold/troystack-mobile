@@ -53,5 +53,7 @@ test('saveDailySnapshot claims the latch, releases it in finally and checks the 
   assert.match(save, /const accountGen = accountGenRef\.current;\s*const saveKey = `\$\{userId\}#\$\{accountGen\}`;/);
   assert.match(save, /if \(!snapshotSaveLatch\.claim\(saveKey\)\) return;\s*try \{/);
   assert.match(save, /\} finally \{\s*snapshotSaveLatch\.release\(saveKey\);\s*\}\s*\};/);
+  assert.match(save, /if \(data\.success && accountGenRef\.current === accountGen\) \{\s*await AsyncStorage\.setItem\(dateKey, today\);/);
+  assert.equal(save.match(/AsyncStorage\.setItem\(dateKey/g).length, 1);
   assert.match(save, /const headers = await withSession\(\{ 'Content-Type': 'application\/json' \}\);\s*if \(lastAccountIdRef\.current !== userId \|\| accountGenRef\.current !== accountGen\) return;\s*const response = await fetch\(`\$\{API_BASE_URL\}\/v1\/snapshots`, \{\s*method: 'POST',\s*headers,/);
 });
