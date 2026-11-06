@@ -7787,9 +7787,13 @@ function AppContent() {
       userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
     })) return;
     const userId = supabaseUser.id;
+    // A switch away and back bumps the generation, so a save left over from
+    // before it never posts and never holds up this account's new one
+    const accountGen = accountGenRef.current;
+    const saveKey = `${userId}#${accountGen}`;
     // The save effect and the analytics fetch can both get here at once, and
     // both would read the day key before either wrote it
-    if (!snapshotSaveLatch.claim(userId)) return;
+    if (!snapshotSaveLatch.claim(saveKey)) return;
 
     try {
       const today = new Date().toISOString().split('T')[0];
@@ -7810,10 +7814,10 @@ function AppContent() {
       const totalValue = goldValue + silverValue + platinumValue + palladiumValue;
 
       // The session's token is read first, so an account change while the day
-      // key or the token was read leaves these totals with the last account
-      // and they don't post under the next one's session
+      // key or the token was read drops this save. A change after this point
+      // still posts, but it's this account's totals under its own token.
       const headers = await withSession({ 'Content-Type': 'application/json' });
-      if (lastAccountIdRef.current !== userId) return;
+      if (lastAccountIdRef.current !== userId || accountGenRef.current !== accountGen) return;
 
       const response = await fetch(`${API_BASE_URL}/v1/snapshots`, {
         method: 'POST',
@@ -7845,7 +7849,7 @@ function AppContent() {
     } catch (error) {
       if (__DEV__) console.error('❌ Error saving daily snapshot:', error.message);
     } finally {
-      snapshotSaveLatch.release(userId);
+      snapshotSaveLatch.release(saveKey);
     }
   };
 

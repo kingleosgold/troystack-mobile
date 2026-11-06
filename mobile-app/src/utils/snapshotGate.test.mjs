@@ -50,7 +50,8 @@ test('saveDailySnapshot claims the latch, releases it in finally and checks the 
   const end = app.indexOf('const calculateHistoricalPortfolioData', start);
   const save = app.slice(start, end);
   assert.ok(start > 0 && end > start);
-  assert.match(save, /if \(!snapshotSaveLatch\.claim\(userId\)\) return;\s*try \{/);
-  assert.match(save, /\} finally \{\s*snapshotSaveLatch\.release\(userId\);\s*\}\s*\};/);
-  assert.match(save, /const headers = await withSession\(\{ 'Content-Type': 'application\/json' \}\);\s*if \(lastAccountIdRef\.current !== userId\) return;\s*const response = await fetch\(`\$\{API_BASE_URL\}\/v1\/snapshots`, \{\s*method: 'POST',\s*headers,/);
+  assert.match(save, /const accountGen = accountGenRef\.current;\s*const saveKey = `\$\{userId\}#\$\{accountGen\}`;/);
+  assert.match(save, /if \(!snapshotSaveLatch\.claim\(saveKey\)\) return;\s*try \{/);
+  assert.match(save, /\} finally \{\s*snapshotSaveLatch\.release\(saveKey\);\s*\}\s*\};/);
+  assert.match(save, /const headers = await withSession\(\{ 'Content-Type': 'application\/json' \}\);\s*if \(lastAccountIdRef\.current !== userId \|\| accountGenRef\.current !== accountGen\) return;\s*const response = await fetch\(`\$\{API_BASE_URL\}\/v1\/snapshots`, \{\s*method: 'POST',\s*headers,/);
 });
