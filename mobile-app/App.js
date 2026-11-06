@@ -3234,18 +3234,12 @@ function AppContent() {
     editMarksRef.current.clear();
     rowLookupMarksRef.current.clear();
     knownRowsRef.current.clear();
-    setSilverSpot(77);
-    setGoldSpot(4530);
-    setPlatinumSpot(2100);
-    setPalladiumSpot(1740);
-    setPriceSource('cached');
-    priceSourceRef.current = 'cached';
-    setPriceTimestamp(null);
-    spotLiveAtRef.current = null;
-    setSpotPricesLive(false);
+    // Spot prices, their time, Live and the day's change belong to the
+    // market, not the account, so they stay. Resetting them put placeholder
+    // prices under the next account's stack until the next fetch landed.
+    // The widget still waits for a reply this session before it syncs again,
+    // so it stays locked after lockWidget until a reply lands.
     setSpotLandedOnce(false);
-    setLiveSpotMetals({});
-    setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
     setTroyMessages([]);
     setTroyInputText('');
     setTroyConversations([]);
