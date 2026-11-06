@@ -447,6 +447,13 @@ test('dropStaleLive with setBackDrops drops Live on a clock set back and waits f
   const c = liveCheck(liveAt);
   assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt + 1000, setLive: (v) => c.sets.push(v), setBackDrops: true }), true);
   assert.deepEqual(c.sets, []);
+  // Past the grace on a normal clock it still drops through the grace check.
+  const g = liveCheck(liveAt);
+  assert.equal(dropStaleLive({ liveAtRef: g.ref, now: liveAt + LIVE_GRACE_MS + 1, setLive: (v) => g.sets.push(v), setBackDrops: true }), false);
+  assert.deepEqual(g.sets, [false]);
+  // A miss after the drop keeps Live off and never turns it on.
+  assert.equal(run(back + 1000, false), true);
+  assert.ok(!sets.includes(true));
   // Nothing landed yet still just drops Live.
   const e = liveCheck(null);
   assert.equal(dropStaleLive({ liveAtRef: e.ref, now: 5_000, setLive: (v) => e.sets.push(v), setBackDrops: true }), false);

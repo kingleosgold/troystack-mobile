@@ -46,9 +46,9 @@ export const keepsLive = ({ liveAt, now, graceMs = LIVE_GRACE_MS }) => (
 // counts from the moment the set-back is seen. The next reply that lands
 // stamps liveAt fresh. Returns whether Live stays.
 // With setBackDrops, a clock set back past liveAt drops Live outright. The
-// app passes it on foreground, where the set-back may hide any length of time
-// in the background, so prices from before it never show as Live until the
-// foreground fetch lands.
+// app passes it on foreground, where a set-back may hide time spent in the
+// background, so the grace doesn't restart from the set-back. A set-back
+// smaller than the time since liveAt can't be seen on the wall clock.
 export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS, setBackDrops = false }) => {
   const liveAt = liveAtRef.current;
   if (typeof liveAt === 'number' && Number.isFinite(liveAt) && now < liveAt) {
