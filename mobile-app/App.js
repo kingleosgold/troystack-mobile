@@ -43,7 +43,7 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
 import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
-import { SCAN_AI_NOTE, SCAN_SOURCE_MESSAGE } from './src/utils/scanNotice';
+import { SCAN_AI_NOTE, SCAN_SOURCE_MESSAGE, scanPickerButtons } from './src/utils/scanNotice';
 import { fitAlertButtons } from './src/utils/alertButtons';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
@@ -5941,14 +5941,15 @@ function AppContent() {
         if (now - lastScanLinkAtRef.current < 2000) return;
         lastScanLinkAtRef.current = now;
         setCurrentScreen('MyStack');
-        // Small delay to let screen mount, then say where the photo goes
-        // before the camera opens, like every other scan entry point.
+        // Small delay to let screen mount, then offer the camera or the
+        // library and say where the photo goes, like every other scan entry
+        // point.
         setTimeout(() => {
-          const scanPicker = fitAlertButtons([
-            { text: 'Take Photo', onPress: () => performScanRef.current?.('camera') },
-            { text: 'Cancel', style: 'cancel' },
-          ], Platform.OS);
-          Alert.alert('Scan Receipt', SCAN_AI_NOTE, scanPicker.buttons, scanPicker.options);
+          const scanPicker = fitAlertButtons(
+            scanPickerButtons((source) => performScanRef.current?.(source)),
+            Platform.OS,
+          );
+          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
         }, 500);
         return;
       }
@@ -11691,11 +11692,7 @@ function AppContent() {
                       <TouchableOpacity
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          const scanPicker = fitAlertButtons([
-                            { text: 'Take Photo', onPress: () => performScan('camera') },
-                            { text: 'Choose from Library', onPress: () => performScan('gallery') },
-                            { text: 'Cancel', style: 'cancel' },
-                          ], Platform.OS);
+                          const scanPicker = fitAlertButtons(scanPickerButtons(performScan), Platform.OS);
                           Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(212,168,67,0.5)', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
@@ -14516,11 +14513,7 @@ function AppContent() {
                             if (chip.action === 'brief') {
                               fetchAndShowDailyBrief();
                             } else if (chip.action === 'scan') {
-                              const scanPicker = fitAlertButtons([
-                                { text: 'Take Photo', onPress: () => performScan('camera') },
-                                { text: 'Choose from Library', onPress: () => performScan('gallery') },
-                                { text: 'Cancel', style: 'cancel' },
-                              ], Platform.OS);
+                              const scanPicker = fitAlertButtons(scanPickerButtons(performScan), Platform.OS);
                               Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                             } else {
                               sendTroyMessage(chip.text);
@@ -14663,11 +14656,7 @@ function AppContent() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         if (chip.action === 'brief') fetchAndShowDailyBrief();
                         else if (chip.action === 'scan') {
-                          const scanPicker = fitAlertButtons([
-                            { text: 'Take Photo', onPress: () => performScan('camera') },
-                            { text: 'Choose from Library', onPress: () => performScan('gallery') },
-                            { text: 'Cancel', style: 'cancel' },
-                          ], Platform.OS);
+                          const scanPicker = fitAlertButtons(scanPickerButtons(performScan), Platform.OS);
                           Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }
                         else sendTroyMessage(chip.text);
