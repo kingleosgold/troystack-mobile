@@ -1,3 +1,5 @@
+> Superseded. This is the old Stack Tracker Pro listing. The current TroyStack listing copy lives in TROYSTACK_LISTING_AND_PODCAST_COPY_2026-10-28 in Drive. Don't paste from this file.
+
 # Stack Tracker Pro - App Store Listing
 
 ## App Name

@@ -15532,7 +15532,7 @@ function AppContent() {
               {[
                 { icon: '📊', label: 'Live gold & silver spot prices' },
                 { icon: '📝', label: 'Manual holdings entry' },
-                { icon: '📸', label: 'AI receipt scanning (5/month)' },
+                { icon: '📸', label: 'Receipt scanning (5/month)' },
                 { icon: '📤', label: 'Export CSV & manual backup' },
                 { icon: '🌙', label: 'Dark mode & accessibility' },
                 { icon: '🔔', label: 'Price alerts & push notifications' },
@@ -15664,7 +15664,7 @@ function AppContent() {
                   )}
 
                   <View style={[styles.card, { backgroundColor: isDarkMode ? 'rgba(148,163,184,0.1)' : `${colors.gold}15` }]}>
-                    <Text style={{ color: colors.text, fontWeight: '600', marginBottom: 12, fontSize: scaledFonts.normal }}>AI Receipt Scanner</Text>
+                    <Text style={{ color: colors.text, fontWeight: '600', marginBottom: 12, fontSize: scaledFonts.normal }}>Receipt Scanner</Text>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity style={[styles.button, { backgroundColor: colors.gold, flex: 1 }]} onPress={() => performScan('camera')}>
                         <Text style={{ color: '#000', fontSize: scaledFonts.normal }} numberOfLines={1} adjustsFontSizeToFit={true}>Camera</Text>
@@ -15675,6 +15675,9 @@ function AppContent() {
                     </View>
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 6, textAlign: 'center' }}>
                       Tip: Lay flat with good lighting for best results
+                    </Text>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 4, textAlign: 'center' }}>
+                      Your photo is read by a third-party AI service. TroyStack doesn't keep it.
                     </Text>
                     {!hasGold && !hasLifetimeAccess && (
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 8, textAlign: 'center' }}>
@@ -16187,14 +16190,14 @@ function AppContent() {
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Stack Pulse — Daily P/L and stack snapshot</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Metal Movers — Spot price changes across all metals</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Vault Watch — COMEX warehouse inventory for Ag, Au, Pt</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Market Intelligence — AI-curated news and analysis</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief — AI market summary delivered to your feed</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Market Intelligence — Daily news and analysis</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief — A market summary delivered to your feed</Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
           <Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium }]}>Stack Tab</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Add holdings manually with the "+" button</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} AI Receipt Scanner — Snap a photo to auto-extract purchase data</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Receipt Scanner — Snap a photo to auto-extract purchase data</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Swipe left on a holding to edit or delete</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Pull down to refresh live spot prices</Text>
           <View style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', padding: 10, borderRadius: 8, marginTop: 8 }}>
@@ -16209,7 +16212,7 @@ function AppContent() {
               <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>GOLD</Text>
             </View>
           </View>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Troy's Take — AI analysis of your holdings</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Troy's Take — Troy's read on your holdings</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Stack Value Chart — Track value over 1D to All Time</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Spot Price History — Historical charts for each metal</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Cost Basis Analysis — Total cost, P/L, and avg premium per metal</Text>
