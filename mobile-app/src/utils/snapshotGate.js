@@ -29,3 +29,23 @@ export function shouldSnapshot({ dataLoaded, spotPricesLive, hasSyncedOnce, sync
     && syncedUserId === userId
     && !!hasGold;
 }
+
+// One snapshot save per account at a time. The save effect and the analytics
+// fetch can both start one in the same moment, and each reads the day key
+// before either writes it, so without this both would post. claim(userId)
+// returns true when no save for that account is running and marks one;
+// release(userId) clears it once that save ends. A save for another account
+// never blocks this one, so a switch mid save still gets its own snapshot.
+export function createSnapshotSaveLatch() {
+  const running = new Set();
+  return {
+    claim(userId) {
+      if (!userId || running.has(userId)) return false;
+      running.add(userId);
+      return true;
+    },
+    release(userId) {
+      running.delete(userId);
+    },
+  };
+}

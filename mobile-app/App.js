@@ -59,7 +59,7 @@ import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DEL
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
 import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
-import { shouldSnapshot, snapshotDateKey, snapshotDateKeys } from './src/utils/snapshotGate';
+import { shouldSnapshot, snapshotDateKey, snapshotDateKeys, createSnapshotSaveLatch } from './src/utils/snapshotGate';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
@@ -2841,6 +2841,8 @@ function AppContent() {
   const syncWidgetRef = useRef(() => {});
   // The account the last account change left signed in, or null.
   const lastAccountIdRef = useRef(null);
+  // One daily snapshot save per account at a time (src/utils/snapshotGate.js)
+  const [snapshotSaveLatch] = useState(() => createSnapshotSaveLatch());
   // The sync after Purchases.logIn runs at most once per account per launch.
   const [claimStoreSync] = useState(() => oncePerAccount());
   // Profile writes go out one at a time, newest wins. See src/utils/profileWrites.js.
@@ -7785,6 +7787,13 @@ function AppContent() {
       userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
     })) return;
     const userId = supabaseUser.id;
+    // A switch away and back bumps the generation, so a save left over from
+    // before it never posts and never holds up this account's new one
+    const accountGen = accountGenRef.current;
+    const saveKey = `${userId}#${accountGen}`;
+    // The save effect and the analytics fetch can both get here at once, and
+    // both would read the day key before either wrote it
+    if (!snapshotSaveLatch.claim(saveKey)) return;
 
     try {
       const today = new Date().toISOString().split('T')[0];
@@ -7804,13 +7813,15 @@ function AppContent() {
       const palladiumValue = totalPalladiumOzt * palladiumSpot;
       const totalValue = goldValue + silverValue + platinumValue + palladiumValue;
 
-      // An account change while the day key was read leaves these totals with
-      // the last account, so they don't post under the next one's session
-      if (lastAccountIdRef.current !== userId) return;
+      // The session's token is read first, so an account change while the day
+      // key or the token was read drops this save. A change after this point
+      // still posts, but it's this account's totals under its own token.
+      const headers = await withSession({ 'Content-Type': 'application/json' });
+      if (lastAccountIdRef.current !== userId || accountGenRef.current !== accountGen) return;
 
       const response = await fetch(`${API_BASE_URL}/v1/snapshots`, {
         method: 'POST',
-        headers: await withSession({ 'Content-Type': 'application/json' }),
+        headers,
         body: JSON.stringify({
           userId,
           totalValue,
@@ -7837,6 +7848,8 @@ function AppContent() {
       }
     } catch (error) {
       if (__DEV__) console.error('❌ Error saving daily snapshot:', error.message);
+    } finally {
+      snapshotSaveLatch.release(saveKey);
     }
   };
 

@@ -128,7 +128,7 @@ test('the daily snapshot waits for the cloud stack, and sparklines refetch after
   const save = slice('const saveDailySnapshot = async () => {', 'const response = await fetch(`${API_BASE_URL}/v1/snapshots`');
   assert.match(save, /if \(!shouldSnapshot\(\{/);
   assert.match(save, /snapshotDateKey\(userId\)/);
-  assert.match(save, /if \(lastAccountIdRef\.current !== userId\) return;/);
+  assert.match(save, /if \(lastAccountIdRef\.current !== userId \|\| accountGenRef\.current !== accountGen\) return;/);
   // Only a finished sync names the account it read
   assert.match(app, /setSyncedUserId\(syncUserId\);\s*setHasSyncedOnce\(true\);/);
   assert.match(app, /if \(dataLoaded && spotPricesLive && spotLandedOnce\) fetchSparklineData\(\);\s*\}, \[dataLoaded, spotPricesLive, spotLandedOnce\]\);/);
