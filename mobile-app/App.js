@@ -6042,8 +6042,9 @@ function AppContent() {
       if (nextAppState === 'active' && previousState !== 'active') {
         if (__DEV__) console.log('▶️  App came to foreground - fetching fresh prices immediately');
         // Prices from before a long time in the background aren't Live while
-        // this fetch is out. The reply turns Live back on when it lands.
-        dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive });
+        // this fetch is out, and a clock set back while away can hide how
+        // long that was. The reply turns Live back on when it lands.
+        dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive, setBackDrops: true });
         // ALWAYS fetch fresh prices when app comes to foreground
         fetchSpotPrices(true).catch(err => {
           // Ignore AbortError, only log actual errors

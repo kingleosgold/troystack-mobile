@@ -392,7 +392,7 @@ test('App.js keeps the widget syncing once a reply landed, and drops stale Live 
   // Coming back from the background drops Live before the fetch when it's past the grace.
   const fg = src.indexOf("App came to foreground - fetching fresh prices immediately");
   const block = src.slice(fg, src.indexOf('fetchSpotPrices(true)', fg));
-  assert.match(block, /dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive \}\);/);
+  assert.match(block, /dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive, setBackDrops: true \}\);/);
 });
 
 // dropStaleLive: the screen's check on a miss and on foreground.
@@ -431,4 +431,25 @@ test('dropStaleLive with nothing landed drops Live and leaves the stamp empty', 
     assert.deepEqual(c.sets, [false]);
     assert.ok(c.ref.current === liveAt || (Number.isNaN(liveAt) && Number.isNaN(c.ref.current)));
   }
+});
+
+test('dropStaleLive with setBackDrops drops Live on a clock set back and waits for a reply', () => {
+  const liveAt = 10_000_000;
+  const ref = { current: liveAt };
+  const sets = [];
+  const run = (now, setBackDrops) => dropStaleLive({ liveAtRef: ref, now, setLive: (v) => sets.push(v), setBackDrops });
+  // Foreground after the clock went back an hour: Live drops at once.
+  const back = liveAt - 60 * 60 * 1000;
+  assert.equal(run(back, true), false);
+  assert.deepEqual(sets, [false]);
+  assert.equal(ref.current, back);
+  // Inside the grace and on a normal clock, setBackDrops changes nothing.
+  const c = liveCheck(liveAt);
+  assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt + 1000, setLive: (v) => c.sets.push(v), setBackDrops: true }), true);
+  assert.deepEqual(c.sets, []);
+  // Nothing landed yet still just drops Live.
+  const e = liveCheck(null);
+  assert.equal(dropStaleLive({ liveAtRef: e.ref, now: 5_000, setLive: (v) => e.sets.push(v), setBackDrops: true }), false);
+  assert.deepEqual(e.sets, [false]);
+  assert.equal(e.ref.current, null);
 });
