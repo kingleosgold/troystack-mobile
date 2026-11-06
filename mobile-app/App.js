@@ -7843,7 +7843,9 @@ function AppContent() {
 
       const data = await response.json();
 
-      if (data.success) {
+      // A sign out or a wipe while this posted already removed the day key,
+      // so it isn't written back onto a phone that no longer holds the account
+      if (data.success && accountGenRef.current === accountGen) {
         await AsyncStorage.setItem(dateKey, today);
         if (__DEV__) console.log('📊 Daily snapshot saved:', data.snapshot?.date);
       }
