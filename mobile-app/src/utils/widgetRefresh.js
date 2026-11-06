@@ -8,7 +8,35 @@
 // went locked, Hide Values switched off and platinum and palladium dropped.
 // Nothing here imports React Native, so it runs under `node --test`.
 
+import { SPOT_METALS, spotPriceOk, toNum, withTimeout } from './spotReply.js';
+
 export const WIDGET_PAYLOAD_KEY = 'stack_widget_payload';
+
+// How long the background task waits on each widget read or write. iOS gives
+// a background fetch about 30 seconds, and the price fetch (15s) and the spot
+// save (5s) come first, so storage that stops answering can't hold the task
+// past its window.
+export const WIDGET_STORAGE_TIMEOUT_MS = 3000;
+
+// The background task's reads for the widget: the last picture the app sent
+// and each metal's holdings. Rejects if storage doesn't answer in time, and
+// the task then leaves the widget as it is.
+export const readWidgetInputs = async (storage, timeoutMs = WIDGET_STORAGE_TIMEOUT_MS) => {
+  const [saved, silver, gold, platinum, palladium] = await withTimeout(Promise.all([
+    storage.getItem(WIDGET_PAYLOAD_KEY),
+    storage.getItem('stack_silver'),
+    storage.getItem('stack_gold'),
+    storage.getItem('stack_platinum'),
+    storage.getItem('stack_palladium'),
+  ]), timeoutMs, 'widget read timed out');
+  return { saved, stored: { silver, gold, platinum, palladium } };
+};
+
+// Keeps the picture just sent so the next background run starts from it.
+// The widget already has it, so a write that doesn't answer in time only
+// gives up the copy.
+export const saveWidgetPicture = (storage, json, timeoutMs = WIDGET_STORAGE_TIMEOUT_MS) =>
+  withTimeout(Promise.resolve().then(() => storage.setItem(WIDGET_PAYLOAD_KEY, json)), timeoutMs, 'widget save timed out');
 
 // A time the widget can read. Its decoder takes ISO 8601 without fractional
 // seconds, and toISOString() always adds them (".000Z"), which fails the
@@ -25,21 +53,16 @@ export const LOCKED_WIDGET = Object.freeze({ hasSubscription: false, hideValues:
 export const widgetPlanKnownFree = ({ loading, readOk, hasGold, hasLifetime }) =>
   !loading && !!readOk && !hasGold && !hasLifetime;
 
-const METALS = ['silver', 'gold', 'platinum', 'palladium'];
-
-// The same floors the app uses before it trusts a fetched price.
-const FLOOR = { silver: 10, gold: 1000, platinum: 100, palladium: 100 };
+const METALS = SPOT_METALS;
 
 const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
 
-// Whether a fetched price for one metal passes the app's check.
-export const priceOk = (metal, price) => {
-  const n = Number(price);
-  return Number.isFinite(n) && n > FLOOR[metal];
-};
+// Whether a fetched price for one metal passes the app's check: the same
+// floors and the same plain-decimal read as spotReply.js.
+export const priceOk = spotPriceOk;
 
 // The day's change fields for the widget. A metal's own change goes out only
 // while its price is live, and the stack's change only while every metal the
@@ -99,11 +122,11 @@ export const backgroundWidgetPayload = ({ saved, prices, held: current, now = ne
     next[`${metal}Ozt`] = ozt;
     const fetched = prices[metal];
     const live = priceOk(metal, fetched?.price);
-    const spot = live ? Number(fetched.price) : num(saved[`${metal}Spot`]);
+    const spot = live ? toNum(fetched.price) : num(saved[`${metal}Spot`]);
     if (live) anyLive = true;
     next[`${metal}Spot`] = spot;
     next[`${metal}Value`] = ozt * spot;
-    const pct = Number(fetched?.change_pct);
+    const pct = toNum(fetched?.change_pct);
     const hasPct = live && Number.isFinite(pct) && pct > -100;
     if (hasPct) {
       const prevClose = spot / (1 + pct / 100);

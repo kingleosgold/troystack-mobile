@@ -9,7 +9,8 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { WIDGET_PAYLOAD_KEY, backgroundWidgetPayload, heldFromStored } from './widgetRefresh';
+import { backgroundWidgetPayload, heldFromStored, readWidgetInputs, saveWidgetPicture } from './widgetRefresh';
+import { fetchSpotRaw, readSpotReply, saveSpotReplyForWidget } from './spotReply';
 
 // Task identifier - must match app.json BGTaskSchedulerPermittedIdentifiers
 export const BACKGROUND_FETCH_TASK = 'background-fetch-prices';
@@ -27,59 +28,23 @@ const fetchSpotPricesBackground = async () => {
   try {
     if (__DEV__) console.log('[BackgroundFetch] Fetching spot prices...');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for background
+    // 15 seconds from the request through the body
+    const raw = await fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`);
 
-    const response = await fetch(`${API_BASE_URL}/v1/prices`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
+    // The same read the app does. A reply where no metal clears its floor is
+    // a failed fetch: no spot, no time and no widget change is saved from it.
+    const reply = readSpotReply(raw);
+    if (reply) {
+      if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${reply.spots.gold}, Silver $${reply.spots.silver}`);
 
-    const raw = await response.json();
-
-    if (raw.prices) {
-      const goldPrice = raw.prices.gold?.price;
-      const silverPrice = raw.prices.silver?.price;
-
-      if (__DEV__) console.log(`[BackgroundFetch] Prices received: Gold $${goldPrice}, Silver $${silverPrice}`);
-
-      // Save to AsyncStorage for app to use on next open
-      if (silverPrice && silverPrice > 10) {
-        await AsyncStorage.setItem('stack_silver_spot', silverPrice.toString());
-      }
-      if (goldPrice && goldPrice > 1000) {
-        await AsyncStorage.setItem('stack_gold_spot', goldPrice.toString());
-      }
-      if (raw.timestamp) {
-        await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp);
-      }
-
-      // Compute and save change data from change_pct
-      const computeChange = (metalData) => {
-        if (!metalData) return { amount: 0, percent: 0, prevClose: 0 };
-        const pct = metalData.change_pct || 0;
-        const price = metalData.price || 0;
-        const prevClose = pct !== 0 ? price / (1 + pct / 100) : price;
-        return { amount: price - prevClose, percent: pct, prevClose };
-      };
-      const change = {
-        gold: computeChange(raw.prices.gold),
-        silver: computeChange(raw.prices.silver),
-        platinum: computeChange(raw.prices.platinum),
-        palladium: computeChange(raw.prices.palladium),
-      };
-      await AsyncStorage.setItem('stack_spot_change', JSON.stringify(change));
-
-      return {
-        gold: goldPrice,
-        silver: silverPrice,
-        change,
-        prices: raw.prices,
-        timestamp: raw.timestamp,
-      };
+      // Saved for the app to use on next open. A failed save still returns
+      // the widget's prices, so the widget keeps this refresh.
+      return await saveSpotReplyForWidget(AsyncStorage, reply, raw, (error) => {
+        if (__DEV__) console.error('[BackgroundFetch] Failed to save spot prices:', error?.message);
+      });
     }
 
-    if (__DEV__) console.log('[BackgroundFetch] API returned no prices data');
+    if (__DEV__) console.log('[BackgroundFetch] API returned no usable prices');
     return null;
   } catch (error) {
     if (__DEV__) console.error('[BackgroundFetch] Failed to fetch prices:', error.message);
@@ -100,18 +65,14 @@ const updateWidgetBackground = async (priceData) => {
   }
 
   try {
-    const [savedStr, silverStr, goldStr, platinumStr, palladiumStr] = await Promise.all([
-      AsyncStorage.getItem(WIDGET_PAYLOAD_KEY),
-      AsyncStorage.getItem('stack_silver'),
-      AsyncStorage.getItem('stack_gold'),
-      AsyncStorage.getItem('stack_platinum'),
-      AsyncStorage.getItem('stack_palladium'),
-    ]);
+    // Timed, so storage that stopped answering (say, after the spot save
+    // timed out) leaves the widget alone rather than running past iOS's window
+    const { saved: savedStr, stored } = await readWidgetInputs(AsyncStorage);
     let saved = null;
     try { saved = savedStr ? JSON.parse(savedStr) : null; } catch { saved = null; }
     // The holdings as stored now, since they can change while prices aren't
     // live and the app hasn't synced the widget since
-    const held = heldFromStored({ silver: silverStr, gold: goldStr, platinum: platinumStr, palladium: palladiumStr }) || undefined;
+    const held = heldFromStored(stored) || undefined;
     const widgetData = backgroundWidgetPayload({ saved, prices: priceData.prices, held });
     if (!widgetData) {
       if (__DEV__) console.log('[BackgroundFetch] Widget update skipped (no saved widget picture or no usable price)');
@@ -123,7 +84,7 @@ const updateWidgetBackground = async (priceData) => {
     if (__DEV__) console.log('[BackgroundFetch] Updating widget with data');
     WidgetKitModule.setWidgetData(jsonData);
     WidgetKitModule.reloadAllTimelines();
-    await AsyncStorage.setItem(WIDGET_PAYLOAD_KEY, jsonData);
+    await saveWidgetPicture(AsyncStorage, jsonData);
 
     if (__DEV__) console.log('[BackgroundFetch] Widget updated successfully');
   } catch (error) {

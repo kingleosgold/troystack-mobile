@@ -43,10 +43,14 @@ import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answer
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
 import { pullFailedAlert, pullFailedDue, pullUnsentDue, recordSyncOutcome } from './src/utils/pullFailed';
 import { unsentCount, unsentSignOutAlert } from './src/utils/signOutUnsent';
+import { SCAN_AI_NOTE, SCAN_SOURCE_MESSAGE } from './src/utils/scanNotice';
+import { fitAlertButtons } from './src/utils/alertButtons';
 import { HOLDINGS_OWNER_KEY, asAddedBy, holdingMetal, mayAddEditedHolding, editMarkAhead, asRestoredBy, localHoldingsToSync, mayUploadLocalStack, pendingEdits, stackOwnerOf, syncedKeys, withEditMarks, withPendingEdits, withRetryMarks, withRowLookups, withoutGuestMark, withoutGuestMarkOn, withoutSentEditMark } from './src/utils/holdingsUpload';
 import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch, canSaveHoldings, GUEST_SAVE_NOTE, GUEST_BANNER, GUEST_CONTINUE } from './src/utils/guestMode';
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
+import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
+import { runSpotFetch, dropStaleLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -55,6 +59,7 @@ import { FREE_WEEK_OFFER_KEY, FREE_WEEK_OFFER_DELAY_MS, FREE_WEEK_OFFER_TROY_DEL
 import { logLifecycleEvent, getLifecycleLog, clearLifecycleLog } from './src/utils/lifecycleLogger';
 import { checkMinVersion } from './src/utils/minVersion';
 import { syncRetryDelay, syncRetryDue } from './src/utils/syncRetry';
+import { shouldSnapshot, snapshotDateKey, snapshotDateKeys, createSnapshotSaveLatch } from './src/utils/snapshotGate';
 import { editOutlivesSwaps, holdingInStack } from './src/utils/editAcrossSync';
 import { sendTroyReport, reportEmailUrl, reportText, REPORT_REASONS, SUPPORT_EMAIL } from './src/utils/troyReport';
 import { syncWidgetData, isWidgetKitAvailable } from './src/utils/widgetKit';
@@ -2425,6 +2430,9 @@ function AppContent() {
   // each await to derive an honest `ok` for lifecycle events. Write-only
   // mirrors — never read inside render, never a hook dep.
   const priceSourceRef = useRef('cached');
+  // When the last spot reply landed on this phone (Date.now ms), so a run of
+  // missed fetches can stop calling those prices Live.
+  const spotLiveAtRef = useRef(null);
   const lastIntelligenceFetchRef = useRef({ count: 0, fetchedAt: 0 });
   const lastBriefStateRef = useRef(null);
 
@@ -2475,6 +2483,9 @@ function AppContent() {
   const syncEndRef = useRef(Promise.resolve());
   const syncOutcomesRef = useRef(new Map());
   const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
+  // The account whose cloud stack the last finished sync read. hasSyncedOnce
+  // outlives an account switch by a render, and this tells the two apart.
+  const [syncedUserId, setSyncedUserId] = useState(null);
   // Counts restores, so a sync that was already running when one landed
   // leaves the restored stack for the next sync instead of replacing it
   const restoreCountRef = useRef(0);
@@ -2585,7 +2596,11 @@ function AppContent() {
   const [palladiumSpot, setPalladiumSpot] = useState(1740);
   const [priceSource, setPriceSource] = useState('cached');
   const [priceTimestamp, setPriceTimestamp] = useState(null);
-  const [spotPricesLive, setSpotPricesLive] = useState(false); // True after successful API fetch
+  const [spotPricesLive, setSpotPricesLive] = useState(false); // True while the last fetch that landed is recent (see dropStaleLive)
+  // True once any spot reply has landed this session. Unlike spotPricesLive it
+  // stays on through a run of missed fetches, so the widget still hears Hide
+  // Values and holdings changes while the prices aren't live.
+  const [spotLandedOnce, setSpotLandedOnce] = useState(false);
   // Which metals took a price from the latest fetch. One the API left out keeps the placeholder or an old cached price
   const [liveSpotMetals, setLiveSpotMetals] = useState({});
 
@@ -2770,6 +2785,11 @@ function AppContent() {
   const [hasGold, setHasGold] = useState(__DEV__ ? true : false);
   const [userTier, setUserTier] = useState(__DEV__ ? 'gold' : 'free'); // 'free' or 'gold'
   const [subscriptionLoading, setSubscriptionLoading] = useState(true); // Don't show upgrade prompts until loaded
+  // True once the saved Supabase session has been read at launch. RevenueCat
+  // setup waits for it, or a slow restore lets setup read the anonymous
+  // customer as free and lock a Gold member's widget until the account loads.
+  // It latches, so a sign out's own loading doesn't rerun setup.
+  const [sessionRestored, setSessionRestored] = useState(false);
 
   // Server-side scan tracking
   const [scanUsage, setScanUsage] = useState({
@@ -2821,6 +2841,8 @@ function AppContent() {
   const syncWidgetRef = useRef(() => {});
   // The account the last account change left signed in, or null.
   const lastAccountIdRef = useRef(null);
+  // One daily snapshot save per account at a time (src/utils/snapshotGate.js)
+  const [snapshotSaveLatch] = useState(() => createSnapshotSaveLatch());
   // The sync after Purchases.logIn runs at most once per account per launch.
   const [claimStoreSync] = useState(() => oncePerAccount());
   // Profile writes go out one at a time, newest wins. See src/utils/profileWrites.js.
@@ -3001,6 +3023,10 @@ function AppContent() {
   const [spotPriceSource, setSpotPriceSource] = useState(null); // Tracks data source for spot price warnings
   // Only the newest spot lookup on the add form may fill the spot
   const spotLookupGate = useRef(createLatestOnly());
+  // Only the newest spot price fetch may change prices, the time, Live or
+  // the price source, so an older one that lands or fails late can't
+  // overwrite a newer one's reply.
+  const spotFetchGate = useRef(createLatestOnly());
   const [historicalSpotSuggestion, setHistoricalSpotSuggestion] = useState(null); // Suggested historical spot price for comparison
 
   // Speculation State
@@ -3214,16 +3240,12 @@ function AppContent() {
     editMarksRef.current.clear();
     rowLookupMarksRef.current.clear();
     knownRowsRef.current.clear();
-    setSilverSpot(77);
-    setGoldSpot(4530);
-    setPlatinumSpot(2100);
-    setPalladiumSpot(1740);
-    setPriceSource('cached');
-    priceSourceRef.current = 'cached';
-    setPriceTimestamp(null);
-    setSpotPricesLive(false);
-    setLiveSpotMetals({});
-    setSpotChange({ gold: { amount: null, percent: null, prevClose: null }, silver: { amount: null, percent: null, prevClose: null }, platinum: { amount: null, percent: null, prevClose: null }, palladium: { amount: null, percent: null, prevClose: null } });
+    // Spot prices, their time, Live and the day's change belong to the
+    // market, not the account, so they stay. Resetting them put placeholder
+    // prices under the next account's stack until the next fetch landed.
+    // The widget still waits for a reply this session before it syncs again,
+    // so it stays locked after lockWidget until a reply lands.
+    setSpotLandedOnce(false);
     setTroyMessages([]);
     setTroyInputText('');
     setTroyConversations([]);
@@ -3452,7 +3474,6 @@ function AppContent() {
         'stack_silver_milestone', 'stack_gold_milestone',
         'stack_last_silver_milestone_reached', 'stack_last_gold_milestone_reached',
         'stack_review_prompts', 'stack_first_open_date',
-        'lastSnapshotDate',
         'stack_guest_mode',
         HOLDINGS_OWNER_KEY,
         PENDING_DELETES_KEY,
@@ -3461,6 +3482,8 @@ function AppContent() {
       // Every account's synced key goes with the stack, a key left by a
       // session that ended without a sign out included
       const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
+      // Every account's snapshot day, the old per phone key included
+      userKeys.push(...snapshotDateKeys(allKeys));
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
@@ -4033,16 +4056,14 @@ function AppContent() {
       {
         logLifecycleEvent('app:initial_spot_fetch_start');
         const _spotStart = Date.now();
-        // fetchSpotPrices swallows errors internally, so promise resolution
-        // alone is not a reliable success signal. Derive `ok` from the
-        // post-call priceSourceRef: non-'cached' (and not loading) = success.
-        fetchSpotPrices().then(() => {
-          const src = priceSourceRef.current;
-          const ok = src !== 'cached' && src !== 'loading...' && src !== null;
+        // fetchSpotPrices resolves with its own outcome, so a launch fetch a
+        // newer one overtook logs as stale rather than as a failure.
+        fetchSpotPrices().then((outcome) => {
           logLifecycleEvent('app:initial_spot_fetch_end', {
-            ok,
+            ok: outcome === 'applied',
+            outcome,
             durationMs: Date.now() - _spotStart,
-            priceSource: src,
+            priceSource: priceSourceRef.current,
           });
         }).catch(err => {
           // Defense in depth: unreachable in practice since fetchSpotPrices
@@ -4371,6 +4392,8 @@ function AppContent() {
       return false;
     }
 
+    // The account this sync reads, kept for the snapshot gate
+    const syncUserId = supabaseUser.id;
     // The ref closes the add, edit and delete gates now rather than at the
     // next render, so a tap in the frame between can't slip past the sync
     isSyncingRef.current = true;
@@ -4691,6 +4714,7 @@ function AppContent() {
         }
       }
 
+      setSyncedUserId(syncUserId);
       setHasSyncedOnce(true);
       return true;
     } catch (err) {
@@ -5371,10 +5395,15 @@ function AppContent() {
     }
   };
 
+  useEffect(() => {
+    if (!authLoading) setSessionRestored(true);
+  }, [authLoading]);
+
   // Initialize RevenueCat (non-blocking, runs after authentication)
   // IMPORTANT: Uses setTimeout to ensure this doesn't block the main render
   useEffect(() => {
     if (!isAuthenticated) return; // Wait for auth to complete first
+    if (!sessionRestored) return; // and for the saved session, so the account's own plan is read
 
     // Delay RevenueCat setup slightly to ensure UI renders first
     const timeoutId = setTimeout(() => {
@@ -5468,7 +5497,7 @@ function AppContent() {
     }, 500); // 500ms delay to let UI settle
 
     return () => clearTimeout(timeoutId);
-  }, [isAuthenticated, supabaseUser?.id, guestMode]); // Re-run when user changes
+  }, [isAuthenticated, sessionRestored, supabaseUser?.id, guestMode]); // Re-run when user changes
 
   // RevenueCat real-time listener — updates tier immediately on purchase/restore/expiry
   useEffect(() => {
@@ -5886,6 +5915,12 @@ function AppContent() {
     }
   }, []); // Run once on mount
 
+  // The deep link effect below runs once, so its handler would keep the
+  // first render's performScan, with its Gold status, scan count and user id.
+  // Reading performScan through this ref at tap time uses the current one.
+  const performScanRef = useRef(null);
+  const lastScanLinkAtRef = useRef(0);
+
   // Deep link handler for password reset
   useEffect(() => {
     const handleDeepLink = async (url) => {
@@ -5901,9 +5936,20 @@ function AppContent() {
         return;
       }
       if (url.includes('troystack://scan')) {
+        // getInitialURL and the url event can both deliver one tap.
+        const now = Date.now();
+        if (now - lastScanLinkAtRef.current < 2000) return;
+        lastScanLinkAtRef.current = now;
         setCurrentScreen('MyStack');
-        // Small delay to let screen mount before triggering scan
-        setTimeout(() => performScan('camera'), 500);
+        // Small delay to let screen mount, then say where the photo goes
+        // before the camera opens, like every other scan entry point.
+        setTimeout(() => {
+          const scanPicker = fitAlertButtons([
+            { text: 'Take Photo', onPress: () => performScanRef.current?.('camera') },
+            { text: 'Cancel', style: 'cancel' },
+          ], Platform.OS);
+          Alert.alert('Scan Receipt', SCAN_AI_NOTE, scanPicker.buttons, scanPicker.options);
+        }, 500);
         return;
       }
 
@@ -5996,6 +6042,10 @@ function AppContent() {
       // App came to foreground from background/inactive
       if (nextAppState === 'active' && previousState !== 'active') {
         if (__DEV__) console.log('▶️  App came to foreground - fetching fresh prices immediately');
+        // Prices from before a long time in the background aren't Live while
+        // this fetch is out, and a clock set back while away can hide how
+        // long that was. The reply turns Live back on when it lands.
+        dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive, setBackDrops: true });
         // ALWAYS fetch fresh prices when app comes to foreground
         fetchSpotPrices(true).catch(err => {
           // Ignore AbortError, only log actual errors
@@ -7690,12 +7740,15 @@ function AppContent() {
     }
   };
 
-  // Sync widget when prices or portfolio changes
+  // Sync widget when prices or portfolio changes, once a reply has landed this
+  // session. It keeps syncing while Live is off after missed fetches, so Hide
+  // Values and holdings changes still reach the widget, and syncWidget passes
+  // spotPricesLive so the day's changes stay out then.
   useEffect(() => {
-    if (dataLoaded && spotPricesLive && (hasGold || hasLifetimeAccess)) {
+    if (dataLoaded && spotLandedOnce && (hasGold || hasLifetimeAccess)) {
       syncWidget();
     }
-  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
+  }, [totalMeltValue, totalGoldOzt, totalSilverOzt, totalPlatinumOzt, totalPalladiumOzt, silverSpot, goldSpot, platinumSpot, palladiumSpot, spotChange, dataLoaded, spotPricesLive, spotLandedOnce, liveSpotMetals, hasGold, hasLifetimeAccess, hideWidgetValues, sparklineData]);
 
   // Once the plan is known to be free, a lapsed plan's widget locks and the
   // background fetch has no saved picture to refresh. Not while the plan is
@@ -7726,17 +7779,28 @@ function AppContent() {
 
   /**
    * Save daily portfolio snapshot for analytics
-   * Only saves once per day (checks lastSnapshotDate in AsyncStorage)
+   * Only saves once per day per account (its own day key in AsyncStorage)
    */
   const saveDailySnapshot = async () => {
-    // Only for Gold/Lifetime subscribers
-    if (!hasGold && !hasLifetimeAccess) return;
-    if (!supabaseUser?.id) return;
-    if (!spotPricesLive) return; // Need live prices for accurate snapshot
+    // Gold or Lifetime, live prices, and this account's own cloud stack read,
+    // so it never posts the last account's totals under this one's id
+    if (!shouldSnapshot({
+      dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId,
+      userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
+    })) return;
+    const userId = supabaseUser.id;
+    // A switch away and back bumps the generation, so a save left over from
+    // before it never posts and never holds up this account's new one
+    const accountGen = accountGenRef.current;
+    const saveKey = `${userId}#${accountGen}`;
+    // The save effect and the analytics fetch can both get here at once, and
+    // both would read the day key before either wrote it
+    if (!snapshotSaveLatch.claim(saveKey)) return;
 
     try {
       const today = new Date().toISOString().split('T')[0];
-      const lastSnapshot = await AsyncStorage.getItem('lastSnapshotDate');
+      const dateKey = snapshotDateKey(userId);
+      const lastSnapshot = await AsyncStorage.getItem(dateKey);
 
       // Only save one snapshot per day
       if (lastSnapshot === today) {
@@ -7751,11 +7815,17 @@ function AppContent() {
       const palladiumValue = totalPalladiumOzt * palladiumSpot;
       const totalValue = goldValue + silverValue + platinumValue + palladiumValue;
 
+      // The session's token is read first, so an account change while the day
+      // key or the token was read drops this save. A change after this point
+      // still posts, but it's this account's totals under its own token.
+      const headers = await withSession({ 'Content-Type': 'application/json' });
+      if (lastAccountIdRef.current !== userId || accountGenRef.current !== accountGen) return;
+
       const response = await fetch(`${API_BASE_URL}/v1/snapshots`, {
         method: 'POST',
-        headers: await withSession({ 'Content-Type': 'application/json' }),
+        headers,
         body: JSON.stringify({
-          userId: supabaseUser.id,
+          userId,
           totalValue,
           goldValue,
           silverValue,
@@ -7774,12 +7844,16 @@ function AppContent() {
 
       const data = await response.json();
 
-      if (data.success) {
-        await AsyncStorage.setItem('lastSnapshotDate', today);
+      // A sign out or a wipe while this posted already removed the day key,
+      // so it isn't written back onto a phone that no longer holds the account
+      if (data.success && accountGenRef.current === accountGen) {
+        await AsyncStorage.setItem(dateKey, today);
         if (__DEV__) console.log('📊 Daily snapshot saved:', data.snapshot?.date);
       }
     } catch (error) {
       if (__DEV__) console.error('❌ Error saving daily snapshot:', error.message);
+    } finally {
+      snapshotSaveLatch.release(saveKey);
     }
   };
 
@@ -8319,12 +8393,17 @@ function AppContent() {
     }
   };
 
-  // Save snapshot when data is loaded and prices are live
+  // Save snapshot when data is loaded, prices are live and this account's
+  // cloud stack has been read, so a sign in never snapshots the empty stack
+  // the reset left before its holdings arrive
   useEffect(() => {
-    if (dataLoaded && spotPricesLive && supabaseUser?.id && (hasGold || hasLifetimeAccess)) {
+    if (shouldSnapshot({
+      dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId,
+      userId: supabaseUser?.id, hasGold: hasGold || hasLifetimeAccess,
+    })) {
       saveDailySnapshot();
     }
-  }, [dataLoaded, spotPricesLive, supabaseUser?.id, hasGold, hasLifetimeAccess]);
+  }, [dataLoaded, spotPricesLive, hasSyncedOnce, syncedUserId, supabaseUser?.id, hasGold, hasLifetimeAccess]);
 
   // Fetch analytics when tab opens (data is cached, so only fetches once per session)
   // This effect triggers when: user navigates to Analytics tab, OR RevenueCat values become available while on Analytics
@@ -8386,9 +8465,11 @@ function AppContent() {
     if (currentScreen === 'Dashboard') fetchSparklineData();
   }, [currentScreen]);
 
+  // Again once a reply lands after a reset, which keeps Live but clears the
+  // sparklines
   useEffect(() => {
-    if (dataLoaded && spotPricesLive) fetchSparklineData();
-  }, [dataLoaded, spotPricesLive]);
+    if (dataLoaded && spotPricesLive && spotLandedOnce) fetchSparklineData();
+  }, [dataLoaded, spotPricesLive, spotLandedOnce]);
 
 
   // ============================================
@@ -8592,103 +8673,56 @@ function AppContent() {
   // API CALLS
   // ============================================
 
-  const fetchSpotPrices = async (silent = false) => {
-    if (!silent) {
-      setPriceSource('loading...');
-      priceSourceRef.current = 'loading...';
-    }
-    try {
+  // Resolves with what happened ('applied', 'stale', 'empty', 'timeout' or
+  // 'failed') and never rejects. The steps and the latest-only rules live in
+  // runSpotFetch, so tests can drive overlapping calls.
+  const fetchSpotPrices = (silent = false) => runSpotFetch({
+    gate: spotFetchGate.current,
+    silent,
+    // Timed from the request through the body read, so a reply whose body
+    // stalls can't leave the price source on loading or hold a pull to
+    // refresh open.
+    fetchRaw: () => {
       if (__DEV__) console.log('📡 Fetching spot prices from:', `${API_BASE_URL}/v1/prices`);
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(`${API_BASE_URL}/v1/prices`, {
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (__DEV__) console.log('✅ API Response Status:', response.status, response.statusText);
-
-      const raw = await response.json();
-      if (__DEV__) console.log('📊 API Response Data:', JSON.stringify(raw).substring(0, 300));
-
-      if (raw.prices) {
-        // Transform v1 nested response: { prices: { gold: { price, change_pct }, ... } }
-        const goldPrice = raw.prices.gold?.price;
-        const silverPrice = raw.prices.silver?.price;
-        const platinumPrice = raw.prices.platinum?.price;
-        const palladiumPrice = raw.prices.palladium?.price;
-
-        if (silverPrice && silverPrice > 10) {
-          setSilverSpot(silverPrice);
-          await AsyncStorage.setItem('stack_silver_spot', silverPrice.toString());
-        }
-        if (goldPrice && goldPrice > 1000) {
-          setGoldSpot(goldPrice);
-          await AsyncStorage.setItem('stack_gold_spot', goldPrice.toString());
-        }
-        if (platinumPrice && platinumPrice > 100) {
-          setPlatinumSpot(platinumPrice);
-          await AsyncStorage.setItem('stack_platinum_spot', platinumPrice.toString());
-        }
-        if (palladiumPrice && palladiumPrice > 100) {
-          setPalladiumSpot(palladiumPrice);
-          await AsyncStorage.setItem('stack_palladium_spot', palladiumPrice.toString());
-        }
-        setPriceSource(raw.source || 'live');
-        priceSourceRef.current = raw.source || 'live';
-        setPriceTimestamp(raw.timestamp || new Date().toISOString());
-        setLiveSpotMetals({
-          silver: !!(silverPrice && silverPrice > 10),
-          gold: !!(goldPrice && goldPrice > 1000),
-          platinum: !!(platinumPrice && platinumPrice > 100),
-          palladium: !!(palladiumPrice && palladiumPrice > 100),
-        });
-        setSpotPricesLive(true);
-        await AsyncStorage.setItem('stack_price_timestamp', raw.timestamp || new Date().toISOString());
-
-        // Compute daily change data from change_pct
-        const computeChange = (metalData) => {
-          if (!metalData) return { amount: null, percent: null, prevClose: null };
-          const pct = metalData.change_pct || 0;
-          const price = metalData.price || 0;
-          const prevClose = pct !== 0 ? price / (1 + pct / 100) : price;
-          return { amount: price - prevClose, percent: pct, prevClose };
-        };
-
-        setSpotChange({
-          gold: computeChange(raw.prices.gold),
-          silver: computeChange(raw.prices.silver),
-          platinum: computeChange(raw.prices.platinum),
-          palladium: computeChange(raw.prices.palladium),
-        });
-        if (__DEV__) console.log('📈 Change data computed from change_pct');
-
-        // Capture markets closed status (client-side fallback since v1 doesn't send marketsClosed)
-        const clientClosed = isMarketClosedClientSide();
-        setMarketsClosed(clientClosed);
-        if (clientClosed) {
-          if (__DEV__) console.log(`🔒 Markets closed — client: ${clientClosed}`);
-        }
-
-        if (__DEV__) console.log(`💰 Prices updated: Gold $${goldPrice}, Silver $${silverPrice} (Source: ${raw.source})`);
-      } else {
-        if (__DEV__) console.log('⚠️  API returned no prices data');
-        setPriceSource('cached');
-        priceSourceRef.current = 'cached';
-      }
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        if (__DEV__) console.log('⏱️ Spot prices fetch aborted (timeout or unmount)');
-        return;
-      }
-      if (__DEV__) console.error('❌ Error fetching spot prices:', error.message);
-      if (__DEV__) console.error('   Error details:', error);
-      setPriceSource('cached');
-      priceSourceRef.current = 'cached';
-    }
-  };
+      return fetchSpotRaw(fetch, `${API_BASE_URL}/v1/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS);
+    },
+    // Saved the way the background fetch saves them: every live spot, then
+    // the reply's time once the spots have landed.
+    save: (reply, savedAt) => saveSpotReply(AsyncStorage, reply, savedAt),
+    onSaveError: (saveError) => {
+      if (__DEV__) console.error('❌ Failed to save spot prices:', saveError?.message);
+    },
+    // Once no reply has landed for LIVE_GRACE_MS the header drops Live and
+    // the note says when the prices on screen were fetched. The next reply
+    // that lands turns Live back on.
+    onMiss: () => {
+      dropStaleLive({ liveAtRef: spotLiveAtRef, now: Date.now(), setLive: setSpotPricesLive });
+    },
+    getSource: () => priceSourceRef.current,
+    setSource: (source) => {
+      setPriceSource(source);
+      priceSourceRef.current = source;
+    },
+    apply: ({ reply, savedAt, source }) => {
+      const { spots, liveMetals, change } = reply;
+      if (liveMetals.silver) setSilverSpot(spots.silver);
+      if (liveMetals.gold) setGoldSpot(spots.gold);
+      if (liveMetals.platinum) setPlatinumSpot(spots.platinum);
+      if (liveMetals.palladium) setPalladiumSpot(spots.palladium);
+      setPriceSource(source);
+      priceSourceRef.current = source;
+      setPriceTimestamp(savedAt);
+      setLiveSpotMetals(liveMetals);
+      spotLiveAtRef.current = Date.now();
+      setSpotPricesLive(true);
+      setSpotLandedOnce(true);
+      // Day change from change_pct, and none for a metal whose price was thrown out
+      setSpotChange(change);
+      // Markets closed status (client-side fallback since v1 doesn't send marketsClosed)
+      setMarketsClosed(isMarketClosedClientSide());
+      if (__DEV__) console.log(`💰 Prices updated: Gold $${spots.gold}, Silver $${spots.silver} (Source: ${source})`);
+    },
+  });
 
   // Pull-to-refresh handler for dashboard
   const onRefreshDashboard = async () => {
@@ -9580,6 +9614,7 @@ function AppContent() {
 
     setTimeout(() => { setScanStatus(null); setScanMessage(''); }, 5000);
   };
+  performScanRef.current = performScan;
 
   // ============================================
   // SPREADSHEET IMPORT (with Dealer Templates)
@@ -11656,11 +11691,12 @@ function AppContent() {
                       <TouchableOpacity
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          Alert.alert('Scan Receipt', 'Choose a source', [
+                          const scanPicker = fitAlertButtons([
                             { text: 'Take Photo', onPress: () => performScan('camera') },
                             { text: 'Choose from Library', onPress: () => performScan('gallery') },
                             { text: 'Cancel', style: 'cancel' },
-                          ]);
+                          ], Platform.OS);
+                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(212,168,67,0.5)', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
                       >
@@ -14480,11 +14516,12 @@ function AppContent() {
                             if (chip.action === 'brief') {
                               fetchAndShowDailyBrief();
                             } else if (chip.action === 'scan') {
-                              Alert.alert('Scan Receipt', 'Choose a source', [
+                              const scanPicker = fitAlertButtons([
                                 { text: 'Take Photo', onPress: () => performScan('camera') },
                                 { text: 'Choose from Library', onPress: () => performScan('gallery') },
                                 { text: 'Cancel', style: 'cancel' },
-                              ]);
+                              ], Platform.OS);
+                              Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                             } else {
                               sendTroyMessage(chip.text);
                             }
@@ -14626,11 +14663,12 @@ function AppContent() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         if (chip.action === 'brief') fetchAndShowDailyBrief();
                         else if (chip.action === 'scan') {
-                          Alert.alert('Scan Receipt', 'Choose a source', [
+                          const scanPicker = fitAlertButtons([
                             { text: 'Take Photo', onPress: () => performScan('camera') },
                             { text: 'Choose from Library', onPress: () => performScan('gallery') },
                             { text: 'Cancel', style: 'cancel' },
-                          ]);
+                          ], Platform.OS);
+                          Alert.alert('Scan Receipt', SCAN_SOURCE_MESSAGE, scanPicker.buttons, scanPicker.options);
                         }
                         else sendTroyMessage(chip.text);
                       }}
@@ -14656,12 +14694,13 @@ function AppContent() {
               <TouchableOpacity
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  Alert.alert('Add to your stack', null, [
+                  const addSheet = fitAlertButtons([
                     { text: 'Take a Photo', onPress: () => performScan('camera') },
                     { text: 'Choose Photo', onPress: () => performScan('gallery') },
                     { text: 'Import Spreadsheet', onPress: () => importSpreadsheet() },
                     { text: 'Cancel', style: 'cancel' },
-                  ]);
+                  ], Platform.OS);
+                  Alert.alert('Add to your stack', SCAN_AI_NOTE, addSheet.buttons, addSheet.options);
                 }}
                 style={{
                   width: 32, height: 32, borderRadius: 16,
@@ -15493,7 +15532,7 @@ function AppContent() {
               {[
                 { icon: '📊', label: 'Live gold & silver spot prices' },
                 { icon: '📝', label: 'Manual holdings entry' },
-                { icon: '📸', label: 'AI receipt scanning (5/month)' },
+                { icon: '📸', label: 'Receipt scanning (5/month)' },
                 { icon: '📤', label: 'Export CSV & manual backup' },
                 { icon: '🌙', label: 'Dark mode & accessibility' },
                 { icon: '🔔', label: 'Price alerts & push notifications' },
@@ -15625,7 +15664,7 @@ function AppContent() {
                   )}
 
                   <View style={[styles.card, { backgroundColor: isDarkMode ? 'rgba(148,163,184,0.1)' : `${colors.gold}15` }]}>
-                    <Text style={{ color: colors.text, fontWeight: '600', marginBottom: 12, fontSize: scaledFonts.normal }}>AI Receipt Scanner</Text>
+                    <Text style={{ color: colors.text, fontWeight: '600', marginBottom: 12, fontSize: scaledFonts.normal }}>Receipt Scanner</Text>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity style={[styles.button, { backgroundColor: colors.gold, flex: 1 }]} onPress={() => performScan('camera')}>
                         <Text style={{ color: '#000', fontSize: scaledFonts.normal }} numberOfLines={1} adjustsFontSizeToFit={true}>Camera</Text>
@@ -15636,6 +15675,9 @@ function AppContent() {
                     </View>
                     <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 6, textAlign: 'center' }}>
                       Tip: Lay flat with good lighting for best results
+                    </Text>
+                    <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 4, textAlign: 'center' }}>
+                      Your photo is read by a third-party AI service. TroyStack doesn't keep it.
                     </Text>
                     {!hasGold && !hasLifetimeAccess && (
                       <Text style={{ color: colors.muted, fontSize: scaledFonts.tiny, marginTop: 8, textAlign: 'center' }}>
@@ -16148,14 +16190,14 @@ function AppContent() {
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Stack Pulse — Daily P/L and stack snapshot</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Metal Movers — Spot price changes across all metals</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Vault Watch — COMEX warehouse inventory for Ag, Au, Pt</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Market Intelligence — AI-curated news and analysis</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief — AI market summary delivered to your feed</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Market Intelligence — Daily news and analysis</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief — A market summary delivered to your feed</Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
           <Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium }]}>Stack Tab</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Add holdings manually with the "+" button</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} AI Receipt Scanner — Snap a photo to auto-extract purchase data</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Receipt Scanner — Snap a photo to auto-extract purchase data</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Swipe left on a holding to edit or delete</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Pull down to refresh live spot prices</Text>
           <View style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', padding: 10, borderRadius: 8, marginTop: 8 }}>
@@ -16170,7 +16212,7 @@ function AppContent() {
               <Text style={{ color: colors.gold, fontSize: scaledFonts.tiny, fontWeight: '600' }}>GOLD</Text>
             </View>
           </View>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Troy's Take — AI analysis of your holdings</Text>
+          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Troy's Take — Troy's read on your holdings</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Stack Value Chart — Track value over 1D to All Time</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Spot Price History — Historical charts for each metal</Text>
           <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Cost Basis Analysis — Total cost, P/L, and avg premium per metal</Text>
