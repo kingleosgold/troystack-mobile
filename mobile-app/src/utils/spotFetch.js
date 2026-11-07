@@ -24,6 +24,13 @@
 // An empty, timed out or failed call that's still newest also calls onMiss
 // with its outcome, so the screen can stop calling old prices Live once no
 // reply has landed for a while (see dropStaleLive).
+//
+// A good reply that goes stale during its save is held, not dropped. If the
+// newer call that overtook it then comes back empty, times out or fails, the
+// held reply shows instead (outcome 'applied', no onMiss), so a good reply
+// that already landed and saved isn't lost to a miss right behind it. A held
+// reply is only ever older than the call that uses it, and it's dropped once
+// any newer reply shows, so it can never replace newer prices on screen.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -63,6 +70,19 @@ export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS
   return live;
 };
 
+// Per gate: the newest held reply and the ticket of the last call whose
+// reply showed. Kept off the gate itself, since createLatestOnly also runs
+// the add form's spot lookups and knows nothing about replies.
+const heldByGate = new WeakMap();
+const heldFor = (gate) => {
+  let state = heldByGate.get(gate);
+  if (!state) {
+    state = { held: null, shownTicket: 0 };
+    heldByGate.set(gate, state);
+  }
+  return state;
+};
+
 export const runSpotFetch = async ({
   gate,
   silent = false,
@@ -76,7 +96,23 @@ export const runSpotFetch = async ({
   onMiss,
 }) => {
   const ticket = gate.begin();
+  const state = heldFor(gate);
+  // Shows a reply held from an older call, when one is newer than what's on
+  // screen. Returns whether it showed.
+  const showHeld = () => {
+    const { held } = state;
+    state.held = null;
+    if (!held || held.ticket <= state.shownTicket || held.ticket >= ticket) return false;
+    try {
+      apply({ reply: held.reply, savedAt: held.savedAt, source: held.source });
+    } catch {
+      return false;
+    }
+    state.shownTicket = ticket;
+    return true;
+  };
   const miss = (outcome) => {
+    if (showHeld()) return 'applied';
     try { if (onMiss) onMiss(outcome); } catch { /* the outcome still resolves */ }
     return outcome;
   };
@@ -97,9 +133,17 @@ export const runSpotFetch = async ({
       try { if (onSaveError) onSaveError(saveError); } catch { /* the reply still shows */ }
     }
     // A fetch that started during the save owns the screen from here, and
-    // its own save queues after this one.
-    if (!gate.isCurrent(ticket)) return 'stale';
+    // its own save queues after this one. This reply is held in case that
+    // fetch misses, unless a newer one is already held or showing.
+    if (!gate.isCurrent(ticket)) {
+      if (ticket > state.shownTicket && (!state.held || ticket > state.held.ticket)) {
+        state.held = { ticket, reply, savedAt, source: raw.source || 'live' };
+      }
+      return 'stale';
+    }
     apply({ reply, savedAt, source: raw.source || 'live' });
+    state.shownTicket = ticket;
+    state.held = null;
     return 'applied';
   } catch (error) {
     // A newer fetch is out, so it settles the source, and this failure can't
