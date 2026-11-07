@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, dropStaleLive, LIVE_GRACE_MS } from './spotFetch.js';
+import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, dropStaleLive, LIVE_GRACE_MS, SET_BACK_TOLERANCE_MS, setBackPast } from './spotFetch.js';
 import { createLatestOnly } from './latestOnly.js';
 import { FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
 
@@ -782,4 +782,55 @@ test('a held reply still shows on the same clock tick it landed', async () => {
   out.reject(new Error('offline'));
   assert.equal(await b, 'applied');
   assert.deepEqual(c.shown, [[4400, 1_000_000]]);
+});
+
+test('a held reply still shows after a time sync nudges the clock back a few ms', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const b = c.call(() => out.promise);
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  c.t -= 5;
+  out.reject(new Error('offline'));
+  assert.equal(await b, 'applied');
+  assert.deepEqual(c.shown, [[4400, 1_000_000]]);
+});
+
+test('a held reply still shows at exactly the tolerance and drops just past it', async () => {
+  for (const [back, want] of [[SET_BACK_TOLERANCE_MS, 'applied'], [SET_BACK_TOLERANCE_MS + 1, 'failed']]) {
+    const c = clocked();
+    const saving = deferred();
+    const a = c.call(async () => good(4400), () => saving.promise);
+    await new Promise((r) => setImmediate(r));
+    const out = deferred();
+    const b = c.call(() => out.promise);
+    saving.resolve();
+    assert.equal(await a, 'stale');
+    c.t -= back;
+    out.reject(new Error('offline'));
+    assert.equal(await b, want);
+    assert.equal(c.shown.length, want === 'applied' ? 1 : 0);
+  }
+});
+
+test('setBackPast counts only a step back past the tolerance', () => {
+  assert.equal(setBackPast({ at: 10_000, now: 10_000 }), false);
+  assert.equal(setBackPast({ at: 10_000, now: 10_000 - SET_BACK_TOLERANCE_MS }), false);
+  assert.equal(setBackPast({ at: 10_000, now: 10_000 - SET_BACK_TOLERANCE_MS - 1 }), true);
+  assert.equal(setBackPast({ at: 10_000, now: 20_000 }), false);
+  for (const at of [null, undefined, NaN, Infinity]) assert.equal(setBackPast({ at, now: 0 }), false);
+});
+
+test('dropStaleLive with setBackDrops keeps Live through a time sync nudge', () => {
+  const liveAt = 10_000_000;
+  const c = liveCheck(liveAt);
+  assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt - 5, setLive: (v) => c.sets.push(v), setBackDrops: true }), true);
+  assert.deepEqual(c.sets, []);
+  assert.equal(c.ref.current, liveAt);
+  // A real set-back still drops it.
+  assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt - SET_BACK_TOLERANCE_MS - 1, setLive: (v) => c.sets.push(v), setBackDrops: true }), false);
+  assert.deepEqual(c.sets, [false]);
 });
