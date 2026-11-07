@@ -50,7 +50,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
 import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
-import { runSpotFetch, dropStaleLive } from './src/utils/spotFetch';
+import { runSpotFetch, dropStaleLive, keepsLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8704,7 +8704,7 @@ function AppContent() {
       setPriceSource(source);
       priceSourceRef.current = source;
     },
-    apply: ({ reply, savedAt, source }) => {
+    apply: ({ reply, savedAt, source, landedAt }) => {
       const { spots, liveMetals, change } = reply;
       if (liveMetals.silver) setSilverSpot(spots.silver);
       if (liveMetals.gold) setGoldSpot(spots.gold);
@@ -8714,8 +8714,10 @@ function AppContent() {
       priceSourceRef.current = source;
       setPriceTimestamp(savedAt);
       setLiveSpotMetals(liveMetals);
-      spotLiveAtRef.current = Date.now();
-      setSpotPricesLive(true);
+      // Stamped from when the reply landed, so a reply held behind a newer
+      // fetch that missed keeps only the grace it had left.
+      spotLiveAtRef.current = landedAt;
+      setSpotPricesLive(keepsLive({ liveAt: landedAt, now: Date.now() }));
       setSpotLandedOnce(true);
       // Day change from change_pct, and none for a metal whose price was thrown out
       setSpotChange(change);

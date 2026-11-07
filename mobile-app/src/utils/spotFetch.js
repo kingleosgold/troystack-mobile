@@ -24,6 +24,18 @@
 // An empty, timed out or failed call that's still newest also calls onMiss
 // with its outcome, so the screen can stop calling old prices Live once no
 // reply has landed for a while (see dropStaleLive).
+//
+// A good reply that goes stale during its save is held, not dropped. If the
+// newer call that overtook it then comes back empty, times out or fails, the
+// held reply shows instead (outcome 'applied', no onMiss), so a good reply
+// that already landed and saved isn't lost to a miss right behind it. If the
+// newer call already missed before the save finished, the reply shows as soon
+// as its save does. Either way a reply only shows while it's newer than the
+// one on screen, so it can never replace newer prices. apply gets landedAt,
+// the clock time the reply landed, so Live counts its grace from then and
+// not from when a held reply finally shows. A held reply past that grace
+// isn't shown at all, so old prices can't come back as Live after the app
+// sat in the background.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -63,6 +75,19 @@ export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS
   return live;
 };
 
+// Per gate: the newest held reply and the ticket of the last call whose
+// reply showed. Kept off the gate itself, since createLatestOnly also runs
+// the add form's spot lookups and knows nothing about replies.
+const heldByGate = new WeakMap();
+const heldFor = (gate) => {
+  let state = heldByGate.get(gate);
+  if (!state) {
+    state = { held: null, shownTicket: 0, missedTicket: 0 };
+    heldByGate.set(gate, state);
+  }
+  return state;
+};
+
 export const runSpotFetch = async ({
   gate,
   silent = false,
@@ -72,11 +97,34 @@ export const runSpotFetch = async ({
   setSource,
   apply,
   now = () => new Date(),
+  clock = Date.now,
+  graceMs = LIVE_GRACE_MS,
   onSaveError,
   onMiss,
 }) => {
   const ticket = gate.begin();
+  const state = heldFor(gate);
+  // Shows a reply held from an older call, when one is newer than what's on
+  // screen. Returns whether it showed.
+  const showHeld = () => {
+    const { held } = state;
+    state.held = null;
+    if (!held || held.ticket <= state.shownTicket || held.ticket >= ticket) return false;
+    if (!keepsLive({ liveAt: held.landedAt, now: clock(), graceMs })) return false;
+    try {
+      apply({ reply: held.reply, savedAt: held.savedAt, source: held.source, landedAt: held.landedAt });
+    } catch {
+      return false;
+    }
+    // A newer reply still saving can show over this one while this call
+    // stays newest, the same as after a plain miss.
+    state.shownTicket = held.ticket;
+    state.missedTicket = ticket;
+    return true;
+  };
   const miss = (outcome) => {
+    if (showHeld()) return 'applied';
+    state.missedTicket = ticket;
     try { if (onMiss) onMiss(outcome); } catch { /* the outcome still resolves */ }
     return outcome;
   };
@@ -97,9 +145,29 @@ export const runSpotFetch = async ({
       try { if (onSaveError) onSaveError(saveError); } catch { /* the reply still shows */ }
     }
     // A fetch that started during the save owns the screen from here, and
-    // its own save queues after this one.
-    if (!gate.isCurrent(ticket)) return 'stale';
-    apply({ reply, savedAt, source: raw.source || 'live' });
+    // its own save queues after this one. This reply is held in case that
+    // fetch misses, unless a newer one is already held or showing. If the
+    // newest fetch already missed, it shows now.
+    const landedAt = clock();
+    const source = raw.source || 'live';
+    if (!gate.isCurrent(ticket)) {
+      if (ticket <= state.shownTicket) return 'stale';
+      if (gate.isCurrent(state.missedTicket)) {
+        state.held = null;
+        apply({ reply, savedAt, source, landedAt });
+        state.shownTicket = ticket;
+        return 'applied';
+      }
+      if (!state.held || ticket > state.held.ticket) {
+        state.held = { ticket, reply, savedAt, source, landedAt };
+      }
+      return 'stale';
+    }
+    // Cleared before apply, so an apply that throws can't let an older held
+    // reply show over this newer one's half applied prices.
+    state.held = null;
+    apply({ reply, savedAt, source, landedAt });
+    state.shownTicket = ticket;
     return 'applied';
   } catch (error) {
     // A newer fetch is out, so it settles the source, and this failure can't
