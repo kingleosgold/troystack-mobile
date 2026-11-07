@@ -22,8 +22,15 @@ function pngHeader(buf) {
 }
 
 // A tRNS chunk gives an RGB image transparency without an alpha channel.
+// Walks the chunks so a stray match inside image data can't count.
 function hasTrns(buf) {
-  return buf.includes(Buffer.from('tRNS', 'latin1'));
+  for (let at = 8; at + 8 <= buf.length; ) {
+    const type = buf.subarray(at + 4, at + 8).toString('latin1');
+    if (type === 'tRNS') return true;
+    if (type === 'IDAT' || type === 'IEND') return false; // tRNS must come before IDAT
+    at += 12 + buf.readUInt32BE(at);
+  }
+  return false;
 }
 
 const app = JSON.parse(read('app.json')).expo;
