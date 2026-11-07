@@ -32,10 +32,14 @@
 // newer call already missed before the save finished, the reply shows as soon
 // as its save does. Either way a reply only shows while it's newer than the
 // one on screen, so it can never replace newer prices. apply gets landedAt,
-// the clock time the reply landed, so Live counts its grace from then and
-// not from when a held reply finally shows. A held reply past that grace
-// isn't shown at all, so old prices can't come back as Live after the app
-// sat in the background.
+// the clock time the reply came in (read before its save), so Live counts
+// its grace from then and not from when the save ended or a held reply
+// finally shows. A reply that waits in the held slot isn't shown at all
+// once it's past that grace, or once the clock has moved back past its
+// landing, so old prices can't come back as Live after the app sat in the
+// background. A reply shown the moment its save ends (the newest call
+// already missed) shows either way, and App.js labels it Live or not from
+// landedAt.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -110,7 +114,10 @@ export const runSpotFetch = async ({
     const { held } = state;
     state.held = null;
     if (!held || held.ticket <= state.shownTicket || held.ticket >= ticket) return false;
-    if (!keepsLive({ liveAt: held.landedAt, now: clock(), graceMs })) return false;
+    // A clock set back past the landing could hide any time in the
+    // background, so the held reply is dropped rather than counted fresh.
+    const at = clock();
+    if (at < held.landedAt || !keepsLive({ liveAt: held.landedAt, now: at, graceMs })) return false;
     try {
       apply({ reply: held.reply, savedAt: held.savedAt, source: held.source, landedAt: held.landedAt });
     } catch {
@@ -139,6 +146,10 @@ export const runSpotFetch = async ({
       return miss('empty');
     }
     const savedAt = spotReplyTime(raw.timestamp, now());
+    // Stamped when the reply came in, before the save, so a slow save (or
+    // one the app slept through) can't make the prices look newer than they
+    // are.
+    const landedAt = clock();
     try {
       await save(reply, savedAt);
     } catch (saveError) {
@@ -148,7 +159,6 @@ export const runSpotFetch = async ({
     // its own save queues after this one. This reply is held in case that
     // fetch misses, unless a newer one is already held or showing. If the
     // newest fetch already missed, it shows now.
-    const landedAt = clock();
     const source = raw.source || 'live';
     if (!gate.isCurrent(ticket)) {
       if (ticket <= state.shownTicket) return 'stale';
