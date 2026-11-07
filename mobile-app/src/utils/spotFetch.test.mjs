@@ -271,7 +271,7 @@ test('App.js wires fetchSpotPrices to runSpotFetch with its gate, 10s read and s
   assert.match(body, /fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS\)/);
   assert.ok(body.includes('save: (reply, savedAt) => saveSpotReply(AsyncStorage, reply, savedAt),'));
   assert.ok(body.includes('getSource: () => priceSourceRef.current,'));
-  assert.ok(body.includes('setSpotPricesLive(true)'));
+  assert.ok(body.includes('setSpotPricesLive(keepsLive({ liveAt: landedAt, now: Date.now() }))'));
   assert.ok(body.includes('setPriceTimestamp(savedAt)'));
   assert.ok(!body.includes('AsyncStorage.multiSet('));
   assert.ok(!body.includes("setItem('stack_price_timestamp'"));
@@ -353,7 +353,8 @@ test('App.js drops Live on a miss past the grace and stamps each landed reply', 
   const start = src.indexOf('const fetchSpotPrices = (silent = false) => runSpotFetch({');
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   assert.match(body, /onMiss: \(\) => \{\s*dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive \}\);/);
-  assert.match(body, /spotLiveAtRef\.current = Date\.now\(\);\s*setSpotPricesLive\(true\);/);
+  assert.match(body, /apply: \(\{ reply, savedAt, source, landedAt \}\) => \{/);
+  assert.match(body, /spotLiveAtRef\.current = landedAt;\s*setSpotPricesLive\(keepsLive\(\{ liveAt: landedAt, now: Date\.now\(\) \}\)\);/);
   // Signing out keeps the market's prices, their stamp and Live.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.ok(!reset.includes('spotLiveAtRef.current'));
@@ -385,7 +386,7 @@ test('App.js keeps the widget syncing once a reply landed, and drops stale Live 
   // The widget effect runs on any landed reply this session, not only while Live.
   assert.match(src, /if \(dataLoaded && spotLandedOnce && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/);
   assert.ok(!/if \(dataLoaded && spotPricesLive && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/.test(src));
-  assert.match(src, /setSpotPricesLive\(true\);\s*setSpotLandedOnce\(true\);/);
+  assert.match(src, /setSpotPricesLive\(keepsLive\(\{ liveAt: landedAt, now: Date\.now\(\) \}\)\);\s*setSpotLandedOnce\(true\);/);
   // A reset holds the widget until a reply lands in the new session.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.match(reset, /setSpotLandedOnce\(false\);/);
@@ -611,4 +612,103 @@ test('a reply whose save ends while the newest call is still out is held, not sh
   later.resolve(good(4700));
   assert.equal(await third, 'applied');
   assert.deepEqual(s.applied.map((a) => a.reply.spots.gold), [4700]);
+});
+
+test('apply gets the clock time the reply landed', async () => {
+  const gate = createLatestOnly();
+  const got = [];
+  await runSpotFetch({
+    gate, fetchRaw: async () => good(), save: async () => {},
+    getSource: () => 'live', setSource: () => {}, apply: (a) => got.push(a.landedAt), clock: () => 1234,
+  });
+  assert.deepEqual(got, [1234]);
+});
+
+// A screen whose clock the test moves by hand.
+const clocked = () => {
+  const gate = createLatestOnly();
+  const c = { t: 1_000_000, shown: [], heard: [] };
+  c.call = (fetchRaw, save = async () => {}) => runSpotFetch({
+    gate, fetchRaw, save,
+    getSource: () => 'live', setSource: () => {},
+    apply: (a) => c.shown.push([a.reply.spots.gold, a.landedAt]),
+    onMiss: (o) => c.heard.push(o),
+    clock: () => c.t,
+  });
+  return c;
+};
+
+test('a held reply carries its landing time, not the time it finally shows', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const first = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  const later = deferred();
+  const second = c.call(() => later.promise);
+  saving.resolve();
+  assert.equal(await first, 'stale');
+  c.t += 8000;
+  later.reject(timeoutError());
+  assert.equal(await second, 'applied');
+  assert.deepEqual(c.shown, [[4400, 1_000_000]]);
+});
+
+test('a held reply past the grace never shows, even through a newer call that went stale', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  // C is out when A's save ends, so A is held. Then the app sleeps.
+  const outC = deferred();
+  const callC = c.call(() => outC.promise);
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  c.t += LIVE_GRACE_MS + 1;
+  // On foreground D starts, C goes stale, and D fails.
+  const outD = deferred();
+  const callD = c.call(() => outD.promise);
+  outC.reject(timeoutError());
+  assert.equal(await callC, 'stale');
+  outD.reject(new Error('offline'));
+  assert.equal(await callD, 'failed');
+  assert.deepEqual(c.shown, []);
+  assert.deepEqual(c.heard, ['failed']);
+});
+
+test('a newer reply whose save ends after a held one showed still shows', async () => {
+  const c = clocked();
+  const savingA = deferred();
+  const savingB = deferred();
+  const a = c.call(async () => good(4400), () => savingA.promise);
+  await new Promise((r) => setImmediate(r));
+  const b = c.call(async () => good(4500), () => savingB.promise);
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const third = c.call(() => out.promise);
+  savingA.resolve();
+  assert.equal(await a, 'stale');
+  out.reject(new Error('offline'));
+  assert.equal(await third, 'applied');
+  savingB.resolve();
+  assert.equal(await b, 'applied');
+  assert.deepEqual(c.shown.map(([g]) => g), [4400, 4500]);
+});
+
+test('a newest reply whose apply throws does not let an older held reply show', async () => {
+  const gate = createLatestOnly();
+  const shown = [];
+  const saving = deferred();
+  const call = (fetchRaw, { save = async () => {}, apply } = {}) => runSpotFetch({
+    gate, fetchRaw, save, getSource: () => 'live', setSource: () => {},
+    apply: apply || ((x) => shown.push(x.reply.spots.gold)),
+  });
+  const a = call(async () => good(4400), { save: () => saving.promise });
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const b = call(() => out.promise, { apply: () => { throw new Error('render'); } });
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  out.resolve(good(4600));
+  assert.equal(await b, 'failed');
+  assert.deepEqual(shown, []);
 });
