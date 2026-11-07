@@ -28,9 +28,12 @@
 // A good reply that goes stale during its save is held, not dropped. If the
 // newer call that overtook it then comes back empty, times out or fails, the
 // held reply shows instead (outcome 'applied', no onMiss), so a good reply
-// that already landed and saved isn't lost to a miss right behind it. A held
-// reply is only ever older than the call that uses it, and it's dropped once
-// any newer reply shows, so it can never replace newer prices on screen.
+// that already landed and saved isn't lost to a miss right behind it. If the
+// newer call already missed before the save finished, the reply shows as soon
+// as its save does. Either way a reply only shows while it's newer than the
+// one on screen, so it can never replace newer prices. A held reply lives
+// only until the newest call settles, which its fetch timeout bounds, so old
+// prices can't come back as Live later.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -77,7 +80,7 @@ const heldByGate = new WeakMap();
 const heldFor = (gate) => {
   let state = heldByGate.get(gate);
   if (!state) {
-    state = { held: null, shownTicket: 0 };
+    state = { held: null, shownTicket: 0, missedTicket: 0 };
     heldByGate.set(gate, state);
   }
   return state;
@@ -113,6 +116,7 @@ export const runSpotFetch = async ({
   };
   const miss = (outcome) => {
     if (showHeld()) return 'applied';
+    state.missedTicket = ticket;
     try { if (onMiss) onMiss(outcome); } catch { /* the outcome still resolves */ }
     return outcome;
   };
@@ -134,9 +138,17 @@ export const runSpotFetch = async ({
     }
     // A fetch that started during the save owns the screen from here, and
     // its own save queues after this one. This reply is held in case that
-    // fetch misses, unless a newer one is already held or showing.
+    // fetch misses, unless a newer one is already held or showing. If the
+    // newest fetch already missed, it shows now.
     if (!gate.isCurrent(ticket)) {
-      if (ticket > state.shownTicket && (!state.held || ticket > state.held.ticket)) {
+      if (ticket <= state.shownTicket) return 'stale';
+      if (gate.isCurrent(state.missedTicket)) {
+        apply({ reply, savedAt, source: raw.source || 'live' });
+        state.shownTicket = ticket;
+        state.held = null;
+        return 'applied';
+      }
+      if (!state.held || ticket > state.held.ticket) {
         state.held = { ticket, reply, savedAt, source: raw.source || 'live' };
       }
       return 'stale';

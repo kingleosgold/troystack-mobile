@@ -579,3 +579,36 @@ test('a held reply whose apply throws falls back to the miss', async () => {
   assert.deepEqual(heard, ['failed']);
   assert.equal(source, 'cached');
 });
+
+test('a reply whose save ends after the newer call already missed shows right away, and is not held', async () => {
+  const s = screen();
+  const saving = deferred();
+  const first = s.call(async () => good(4400), { save: () => saving.promise });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await s.call(async () => { throw new Error('offline'); }), 'failed');
+  assert.equal(s.source, 'cached');
+  saving.resolve();
+  assert.equal(await first, 'applied');
+  assert.deepEqual(s.applied.map((a) => a.reply.spots.gold), [4400]);
+  // Nothing lingers to bring old prices back on a later miss.
+  assert.equal(await s.call(async () => { throw new Error('offline'); }), 'failed');
+  assert.deepEqual(s.applied.map((a) => a.reply.spots.gold), [4400]);
+  assert.equal(s.source, 'cached');
+});
+
+test('a reply whose save ends while the newest call is still out is held, not shown', async () => {
+  const s = screen();
+  const saving = deferred();
+  const first = s.call(async () => good(4400), { save: () => saving.promise });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await s.call(async () => { throw new Error('offline'); }), 'failed');
+  // A third call is out now, so the second call's miss no longer owns the screen.
+  const later = deferred();
+  const third = s.call(() => later.promise);
+  saving.resolve();
+  assert.equal(await first, 'stale');
+  assert.deepEqual(s.applied, []);
+  later.resolve(good(4700));
+  assert.equal(await third, 'applied');
+  assert.deepEqual(s.applied.map((a) => a.reply.spots.gold), [4700]);
+});
