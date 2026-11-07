@@ -11364,7 +11364,7 @@ function AppContent() {
   if (!isAuthenticated) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Image source={require('./assets/icon.png')} style={{ width: 80, height: 80, borderRadius: 16, marginBottom: 16 }} />
+        <Image source={require('./assets/troy-coin.png')} style={{ width: 80, height: 80, marginBottom: 16 }} />
         <Text style={{ color: colors.text, fontSize: scaledFonts.xlarge, fontWeight: '700', marginBottom: 8 }}>TroyStack</Text>
         <Text style={{ color: colors.muted, marginBottom: 32 }}>Authenticate to continue</Text>
         <TouchableOpacity style={[styles.button, { backgroundColor: colors.silver }]} onPress={authenticate}>
@@ -13707,7 +13707,7 @@ function AppContent() {
                           <View style={{ height: 2, backgroundColor: '#D4A843' }} />
                           <View style={{ padding: 20, paddingTop: 16 }}>
                             <View style={{ alignItems: 'center', marginBottom: 12 }}>
-                              <Image source={require('./assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 10, marginBottom: 8 }} />
+                              <Image source={require('./assets/troy-coin.png')} style={{ width: 44, height: 44, marginBottom: 8 }} />
                               <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700', letterSpacing: 3, textTransform: 'uppercase' }}>My Stack</Text>
                             </View>
                             <Text style={{ color: '#ffffff', fontSize: 36, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>${formatCurrency(totalMeltValue, 0)}</Text>

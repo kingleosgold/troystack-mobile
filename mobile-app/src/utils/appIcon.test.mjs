@@ -72,3 +72,19 @@ test('the splash sits on the app background', () => {
   assert.equal(colorType, 2);
   assert.equal(hasTrns(buf), false);
 });
+
+// Sign in, the lock screen and the share card show the coin cutout, not the
+// 1 MB opaque app icon with its square tile. 240 px covers 80pt at 3x.
+test('in-app logos use the transparent coin cutout', () => {
+  const buf = read('assets/troy-coin.png');
+  assert.deepEqual(pngHeader(buf), { width: 240, height: 240, colorType: 6 });
+  assert.ok(buf.length < 200 * 1024, `troy-coin.png is ${buf.length} bytes`);
+  const auth = read('src/screens/AuthScreen.tsx').toString();
+  assert.match(auth, /require\('\.\.\/\.\.\/assets\/troy-coin\.png'\)/);
+  assert.doesNotMatch(auth, /assets\/icon\.png/);
+  const appJs = read('App.js').toString();
+  assert.equal((appJs.match(/<Image source=\{require\('\.\/assets\/troy-coin\.png'\)\}/g) || []).length, 2);
+  // The only icon.png left in App.js is Troy's audio artwork, where iOS wants a square.
+  assert.equal((appJs.match(/assets\/icon\.png/g) || []).length, 1);
+  assert.match(appJs, /artwork: Image\.resolveAssetSource\(require\('\.\/assets\/icon\.png'\)\)/);
+});
