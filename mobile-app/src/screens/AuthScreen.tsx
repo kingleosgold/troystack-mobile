@@ -21,8 +21,8 @@ import { useAuth } from '../contexts/AuthContext';
 import GoogleLogo from '../components/icons/GoogleLogo';
 import { signUpNextStep } from '../utils/signUpResult';
 
-// App icon
-const AppIcon = require('../../assets/icon.png');
+// The TROY coin, cut out so it sits on the screen without a square tile
+const CoinLogo = require('../../assets/troy-coin.png');
 
 type AuthMode = 'signIn' | 'signUp';
 
@@ -231,7 +231,7 @@ export default function AuthScreen({ onAuthSuccess, initialMode = 'signIn' }: Au
           >
             {/* Logo Section */}
             <View style={styles.logoSection}>
-              <Image source={AppIcon} style={styles.logoImage} />
+              <Image source={CoinLogo} style={styles.logoImage} />
               <Text style={styles.logoTitle}>TroyStack</Text>
             </View>
 
@@ -542,7 +542,6 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 80,
     height: 80,
-    borderRadius: 16,
     marginBottom: 16,
   },
   logoTitle: {
