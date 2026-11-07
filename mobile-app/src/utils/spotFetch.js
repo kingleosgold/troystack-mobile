@@ -36,10 +36,10 @@
 // its grace from then and not from when the save ended or a held reply
 // finally shows. A reply that waits in the held slot isn't shown at all
 // once it's past that grace, or once the clock has moved back past its
-// landing by more than SET_BACK_TOLERANCE_MS, so old prices can't come back as Live after the app sat in the
-// background. A reply shown the moment its save ends (the newest call
-// already missed) shows either way, and App.js labels it Live or not from
-// landedAt.
+// landing by more than SET_BACK_TOLERANCE_MS, so old prices can't come
+// back as Live after the app sat in the background. A reply shown the
+// moment its save ends (the newest call already missed) shows either way,
+// and App.js labels it Live or not from landedAt.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];

@@ -834,3 +834,13 @@ test('dropStaleLive with setBackDrops keeps Live through a time sync nudge', () 
   assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt - SET_BACK_TOLERANCE_MS - 1, setLive: (v) => c.sets.push(v), setBackDrops: true }), false);
   assert.deepEqual(c.sets, [false]);
 });
+
+test('dropStaleLive keeps the stamp through a nudge, so the grace still ends on time', () => {
+  const liveAt = 10_000_000;
+  const c = liveCheck(liveAt);
+  assert.equal(c.run(liveAt - 5), true);
+  assert.equal(c.ref.current, liveAt);
+  assert.equal(c.run(liveAt + LIVE_GRACE_MS), true);
+  assert.equal(c.run(liveAt + LIVE_GRACE_MS + 1), false);
+  assert.deepEqual(c.sets, [false]);
+});
