@@ -36,10 +36,10 @@
 // its grace from then and not from when the save ended or a held reply
 // finally shows. A reply that waits in the held slot isn't shown at all
 // once it's past that grace, or once the clock has moved back past its
-// landing, so old prices can't come back as Live after the app sat in the
-// background. A reply shown the moment its save ends (the newest call
-// already missed) shows either way, and App.js labels it Live or not from
-// landedAt.
+// landing by more than SET_BACK_TOLERANCE_MS, so old prices can't come
+// back as Live after the app sat in the background. A reply shown the
+// moment its save ends (the newest call already missed) shows either way,
+// and App.js labels it Live or not from landedAt.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -49,6 +49,17 @@ export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'fai
 // blip or two keeps Live and five minutes of misses, or a first fetch after
 // a long time in the background that misses, drops it.
 export const LIVE_GRACE_MS = 5 * 60 * 1000;
+
+// How far the clock may step back before it counts as set back. A phone's
+// network time sync can nudge the clock back a few milliseconds, which hides
+// no time in the background, so a step that small still counts as fresh.
+export const SET_BACK_TOLERANCE_MS = 1000;
+
+// Whether the clock at now (ms) has moved back past at (ms) by more than the
+// tolerance.
+export const setBackPast = ({ at, now, toleranceMs = SET_BACK_TOLERANCE_MS }) => (
+  typeof at === 'number' && Number.isFinite(at) && now < at - toleranceMs
+);
 
 // Whether prices that landed at liveAt (ms) still count as live at now (ms).
 // Nothing landed yet means not live. A clock that moved back counts as fresh.
@@ -64,10 +75,10 @@ export const keepsLive = ({ liveAt, now, graceMs = LIVE_GRACE_MS }) => (
 // With setBackDrops, a clock set back past liveAt drops Live outright. The
 // app passes it on foreground, where a set-back may hide time spent in the
 // background, so the grace doesn't restart from the set-back. A set-back
-// smaller than the time since liveAt can't be seen on the wall clock.
+// smaller than the time since liveAt can't be seen on the wall clock, and
+// one within SET_BACK_TOLERANCE_MS of liveAt counts as no set-back at all.
 export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS, setBackDrops = false }) => {
-  const liveAt = liveAtRef.current;
-  if (typeof liveAt === 'number' && Number.isFinite(liveAt) && now < liveAt) {
+  if (setBackPast({ at: liveAtRef.current, now })) {
     liveAtRef.current = now;
     if (setBackDrops) {
       setLive(false);
@@ -116,8 +127,9 @@ export const runSpotFetch = async ({
     if (!held || held.ticket <= state.shownTicket || held.ticket >= ticket) return false;
     // A clock set back past the landing could hide any time in the
     // background, so the held reply is dropped rather than counted fresh.
+    // A step back within the tolerance (a time sync nudge) still shows it.
     const at = clock();
-    if (at < held.landedAt || !keepsLive({ liveAt: held.landedAt, now: at, graceMs })) return false;
+    if (setBackPast({ at: held.landedAt, now: at }) || !keepsLive({ liveAt: held.landedAt, now: at, graceMs })) return false;
     try {
       apply({ reply: held.reply, savedAt: held.savedAt, source: held.source, landedAt: held.landedAt });
     } catch {
