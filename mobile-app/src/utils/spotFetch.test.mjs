@@ -712,3 +712,74 @@ test('a newest reply whose apply throws does not let an older held reply show', 
   assert.equal(await b, 'failed');
   assert.deepEqual(shown, []);
 });
+
+test('landedAt is read when the reply comes in, not after its save', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const call = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  // The save runs long (or the app sleeps through it).
+  c.t += 9000;
+  saving.resolve();
+  assert.equal(await call, 'applied');
+  assert.deepEqual(c.shown, [[4400, 1_000_000]]);
+});
+
+test('a save that outlasts the grace hands apply a landing past the grace', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const call = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  c.t += LIVE_GRACE_MS + 1;
+  saving.resolve();
+  assert.equal(await call, 'applied');
+  const [[, landedAt]] = c.shown;
+  assert.equal(keepsLive({ liveAt: landedAt, now: c.t }), false);
+});
+
+test('a held reply past the grace by its landing never shows, though its save ended inside it', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const b = c.call(() => out.promise);
+  c.t += LIVE_GRACE_MS - 1000;
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  c.t += 2000;
+  out.reject(timeoutError());
+  assert.equal(await b, 'timeout');
+  assert.deepEqual(c.shown, []);
+  assert.deepEqual(c.heard, ['timeout']);
+});
+
+test('a held reply never shows once the clock moved back past its landing', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const b = c.call(() => out.promise);
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  c.t -= 60 * 60 * 1000;
+  out.reject(new Error('offline'));
+  assert.equal(await b, 'failed');
+  assert.deepEqual(c.shown, []);
+  assert.deepEqual(c.heard, ['failed']);
+});
+
+test('a held reply still shows on the same clock tick it landed', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  const out = deferred();
+  const b = c.call(() => out.promise);
+  saving.resolve();
+  assert.equal(await a, 'stale');
+  out.reject(new Error('offline'));
+  assert.equal(await b, 'applied');
+  assert.deepEqual(c.shown, [[4400, 1_000_000]]);
+});
