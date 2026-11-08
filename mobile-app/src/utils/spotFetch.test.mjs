@@ -770,6 +770,27 @@ test('a reply shown the moment its save ends reads not live after a clock set ba
   assert.equal(landedLive({ landedAt, now: c.t }), false);
 });
 
+test('the newest reply reads not live when the clock steps back past the tolerance during its save', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  c.t -= SET_BACK_TOLERANCE_MS + 1000;
+  saving.resolve();
+  assert.equal(await a, 'applied');
+  const [[, landedAt]] = c.shown;
+  assert.equal(landedLive({ landedAt, now: c.t }), false);
+  // A nudge within the tolerance still reads live.
+  const d = clocked();
+  const saving2 = deferred();
+  const b = d.call(async () => good(4400), () => saving2.promise);
+  await new Promise((r) => setImmediate(r));
+  d.t -= SET_BACK_TOLERANCE_MS;
+  saving2.resolve();
+  assert.equal(await b, 'applied');
+  assert.equal(landedLive({ landedAt: d.shown[0][1], now: d.t }), true);
+});
+
 test('a held reply past the grace by its landing never shows, though its save ended inside it', async () => {
   const c = clocked();
   const saving = deferred();

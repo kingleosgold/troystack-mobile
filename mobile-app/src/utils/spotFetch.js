@@ -70,7 +70,8 @@ export const keepsLive = ({ liveAt, now, graceMs = LIVE_GRACE_MS }) => (
 // Whether a reply that landed at landedAt (ms) shows as Live at now (ms).
 // Unlike keepsLive, a clock set back past the landing by more than the
 // tolerance reads not live, since the set-back may hide time the app spent
-// asleep during the save. The next reply that lands turns Live back on.
+// asleep during the save. That holds for the newest call's own reply too.
+// The next reply that lands turns Live back on.
 export const landedLive = ({ landedAt, now, graceMs = LIVE_GRACE_MS }) => (
   keepsLive({ liveAt: landedAt, now, graceMs }) && !setBackPast({ at: landedAt, now })
 );
