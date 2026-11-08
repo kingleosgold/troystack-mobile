@@ -39,7 +39,7 @@
 // landing by more than SET_BACK_TOLERANCE_MS, so old prices can't come
 // back as Live after the app sat in the background. A reply shown the
 // moment its save ends (the newest call already missed) shows either way,
-// and App.js labels it Live or not from landedAt with landedLive.
+// and App.js labels it Live or not from landedAt with stampLive.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
