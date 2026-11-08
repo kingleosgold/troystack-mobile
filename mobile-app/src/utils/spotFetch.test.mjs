@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, landedLive, dropStaleLive, LIVE_GRACE_MS, SET_BACK_TOLERANCE_MS, setBackPast } from './spotFetch.js';
+import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, landedLive, dropStaleLive, stampLive, LIVE_GRACE_MS, SET_BACK_TOLERANCE_MS, setBackPast } from './spotFetch.js';
 import { createLatestOnly } from './latestOnly.js';
 import { FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
 
@@ -271,7 +271,7 @@ test('App.js wires fetchSpotPrices to runSpotFetch with its gate, 10s read and s
   assert.match(body, /fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS\)/);
   assert.ok(body.includes('save: (reply, savedAt) => saveSpotReply(AsyncStorage, reply, savedAt),'));
   assert.ok(body.includes('getSource: () => priceSourceRef.current,'));
-  assert.ok(body.includes('setSpotPricesLive(landedLive({ landedAt, now: Date.now() }))'));
+  assert.ok(body.includes('stampLive({ liveAtRef: spotLiveAtRef, landedAt, now: Date.now(), setLive: setSpotPricesLive });'));
   assert.ok(!body.includes('setSpotPricesLive(keepsLive('));
   assert.ok(body.includes('setPriceTimestamp(savedAt)'));
   assert.ok(!body.includes('AsyncStorage.multiSet('));
@@ -355,7 +355,8 @@ test('App.js drops Live on a miss past the grace and stamps each landed reply', 
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   assert.match(body, /onMiss: \(\) => \{\s*dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive \}\);/);
   assert.match(body, /apply: \(\{ reply, savedAt, source, landedAt \}\) => \{/);
-  assert.match(body, /spotLiveAtRef\.current = landedAt;\s*setSpotPricesLive\(landedLive\(\{ landedAt, now: Date\.now\(\) \}\)\);/);
+  assert.ok(body.includes('stampLive({ liveAtRef: spotLiveAtRef, landedAt, now: Date.now(), setLive: setSpotPricesLive });'));
+  assert.ok(!body.includes('spotLiveAtRef.current = landedAt'));
   // Signing out keeps the market's prices, their stamp and Live.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.ok(!reset.includes('spotLiveAtRef.current'));
@@ -387,7 +388,7 @@ test('App.js keeps the widget syncing once a reply landed, and drops stale Live 
   // The widget effect runs on any landed reply this session, not only while Live.
   assert.match(src, /if \(dataLoaded && spotLandedOnce && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/);
   assert.ok(!/if \(dataLoaded && spotPricesLive && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/.test(src));
-  assert.match(src, /setSpotPricesLive\(landedLive\(\{ landedAt, now: Date\.now\(\) \}\)\);\s*setSpotLandedOnce\(true\);/);
+  assert.match(src, /stampLive\(\{ liveAtRef: spotLiveAtRef, landedAt, now: Date\.now\(\), setLive: setSpotPricesLive \}\);\s*setSpotLandedOnce\(true\);/);
   // A reset holds the widget until a reply lands in the new session.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.match(reset, /setSpotLandedOnce\(false\);/);
@@ -408,9 +409,10 @@ test('dropStaleLive keeps Live inside the grace and drops it after', () => {
   const c = liveCheck(1_000_000);
   assert.equal(c.run(1_000_000 + LIVE_GRACE_MS), true);
   assert.deepEqual(c.sets, []);
+  assert.equal(c.ref.current, 1_000_000);
   assert.equal(c.run(1_000_000 + LIVE_GRACE_MS + 1), false);
   assert.deepEqual(c.sets, [false]);
-  assert.equal(c.ref.current, 1_000_000);
+  assert.equal(c.ref.current, null);
 });
 
 test('dropStaleLive counts the grace from a clock set back, not from the old stamp', () => {
@@ -431,8 +433,20 @@ test('dropStaleLive with nothing landed drops Live and leaves the stamp empty', 
     const c = liveCheck(liveAt);
     assert.equal(c.run(5_000), false);
     assert.deepEqual(c.sets, [false]);
-    assert.ok(c.ref.current === liveAt || (Number.isNaN(liveAt) && Number.isNaN(c.ref.current)));
+    assert.equal(c.ref.current, null);
   }
+});
+
+test('dropStaleLive after the grace ran out keeps Live off through a clock set back', () => {
+  const liveAt = 10_000_000;
+  const c = liveCheck(liveAt);
+  assert.equal(c.run(liveAt + LIVE_GRACE_MS + 1), false);
+  assert.equal(c.ref.current, null);
+  // The clock goes back before liveAt while the app stays open. Before, the
+  // miss re-stamped to now and answered true while Live was off.
+  assert.equal(c.run(liveAt - 60 * 60 * 1000), false);
+  assert.equal(c.ref.current, null);
+  assert.deepEqual(c.sets, [false, false]);
 });
 
 test('dropStaleLive with setBackDrops drops Live on a clock set back and waits for a reply', () => {
@@ -444,7 +458,7 @@ test('dropStaleLive with setBackDrops drops Live on a clock set back and waits f
   const back = liveAt - 60 * 60 * 1000;
   assert.equal(run(back, true), false);
   assert.deepEqual(sets, [false]);
-  assert.equal(ref.current, back);
+  assert.equal(ref.current, null);
   // Inside the grace and on a normal clock, setBackDrops changes nothing.
   const c = liveCheck(liveAt);
   assert.equal(dropStaleLive({ liveAtRef: c.ref, now: liveAt + 1000, setLive: (v) => c.sets.push(v), setBackDrops: true }), true);
@@ -453,9 +467,10 @@ test('dropStaleLive with setBackDrops drops Live on a clock set back and waits f
   const g = liveCheck(liveAt);
   assert.equal(dropStaleLive({ liveAtRef: g.ref, now: liveAt + LIVE_GRACE_MS + 1, setLive: (v) => g.sets.push(v), setBackDrops: true }), false);
   assert.deepEqual(g.sets, [false]);
-  // A miss after the drop keeps Live off and never turns it on.
-  assert.equal(run(back + 1000, false), true);
+  // A miss after the drop keeps Live off, says so and never turns it on.
+  assert.equal(run(back + 1000, false), false);
   assert.ok(!sets.includes(true));
+  assert.equal(ref.current, null);
   // Nothing landed yet still just drops Live.
   const e = liveCheck(null);
   assert.equal(dropStaleLive({ liveAtRef: e.ref, now: 5_000, setLive: (v) => e.sets.push(v), setBackDrops: true }), false);
@@ -897,4 +912,52 @@ test('dropStaleLive keeps the stamp through a nudge, so the grace still ends on 
   assert.equal(c.run(liveAt + LIVE_GRACE_MS), true);
   assert.equal(c.run(liveAt + LIVE_GRACE_MS + 1), false);
   assert.deepEqual(c.sets, [false]);
+});
+
+// stampLive: the screen's Live stamp for each landed reply.
+test('stampLive keeps the stamp only while Live is on', () => {
+  const landedAt = 10_000_000;
+  const stamp = (now, current = 'old') => {
+    const ref = { current };
+    const sets = [];
+    const live = stampLive({ liveAtRef: ref, landedAt, now, setLive: (v) => sets.push(v) });
+    return { live, ref, sets };
+  };
+  const fresh = stamp(landedAt + 1000);
+  assert.deepEqual([fresh.live, fresh.ref.current, fresh.sets], [true, landedAt, [true]]);
+  const nudge = stamp(landedAt - SET_BACK_TOLERANCE_MS);
+  assert.deepEqual([nudge.live, nudge.ref.current, nudge.sets], [true, landedAt, [true]]);
+  const back = stamp(landedAt - SET_BACK_TOLERANCE_MS - 1);
+  assert.deepEqual([back.live, back.ref.current, back.sets], [false, null, [false]]);
+  const old = stamp(landedAt + LIVE_GRACE_MS + 1);
+  assert.deepEqual([old.live, old.ref.current, old.sets], [false, null, [false]]);
+});
+
+test('a reply landing not Live, a miss, then a fresh reply turns Live back on', () => {
+  const ref = { current: null };
+  let live = null;
+  const setLive = (v) => { live = v; };
+  const landedAt = 10_000_000;
+  // The clock was set back since the reply landed: it shows, not Live.
+  assert.equal(stampLive({ liveAtRef: ref, landedAt, now: landedAt - 60_000, setLive }), false);
+  assert.equal(live, false);
+  assert.equal(ref.current, null);
+  // A miss on the set-back clock keeps Live off and says so. Before, it
+  // re-stamped to now and answered true while Live was off.
+  assert.equal(dropStaleLive({ liveAtRef: ref, now: landedAt - 59_000, setLive }), false);
+  assert.equal(live, false);
+  assert.equal(ref.current, null);
+  // So does a foreground on that clock.
+  assert.equal(dropStaleLive({ liveAtRef: ref, now: landedAt - 58_000, setLive, setBackDrops: true }), false);
+  assert.equal(live, false);
+  // The next reply lands on the clock it reads: Live again, stamp set.
+  const next = landedAt - 57_000;
+  assert.equal(stampLive({ liveAtRef: ref, landedAt: next, now: next + 10, setLive }), true);
+  assert.equal(live, true);
+  assert.equal(ref.current, next);
+  // And the grace runs from it as before.
+  assert.equal(dropStaleLive({ liveAtRef: ref, now: next + LIVE_GRACE_MS, setLive }), true);
+  assert.equal(live, true);
+  assert.equal(dropStaleLive({ liveAtRef: ref, now: next + LIVE_GRACE_MS + 1, setLive }), false);
+  assert.equal(live, false);
 });
