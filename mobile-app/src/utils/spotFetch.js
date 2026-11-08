@@ -39,7 +39,7 @@
 // landing by more than SET_BACK_TOLERANCE_MS, so old prices can't come
 // back as Live after the app sat in the background. A reply shown the
 // moment its save ends (the newest call already missed) shows either way,
-// and App.js labels it Live or not from landedAt.
+// and App.js labels it Live or not from landedAt with landedLive.
 import { readSpotReply, spotReplyTime } from './spotReply.js';
 
 export const SPOT_FETCH_OUTCOMES = ['applied', 'stale', 'empty', 'timeout', 'failed'];
@@ -65,6 +65,14 @@ export const setBackPast = ({ at, now, toleranceMs = SET_BACK_TOLERANCE_MS }) =>
 // Nothing landed yet means not live. A clock that moved back counts as fresh.
 export const keepsLive = ({ liveAt, now, graceMs = LIVE_GRACE_MS }) => (
   typeof liveAt === 'number' && Number.isFinite(liveAt) && now - liveAt <= graceMs
+);
+
+// Whether a reply that landed at landedAt (ms) shows as Live at now (ms).
+// Unlike keepsLive, a clock set back past the landing by more than the
+// tolerance reads not live, since the set-back may hide time the app spent
+// asleep during the save. The next reply that lands turns Live back on.
+export const landedLive = ({ landedAt, now, graceMs = LIVE_GRACE_MS }) => (
+  keepsLive({ liveAt: landedAt, now, graceMs }) && !setBackPast({ at: landedAt, now })
 );
 
 // Drops Live once the prices that landed at liveAtRef.current are older than

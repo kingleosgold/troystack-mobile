@@ -50,7 +50,7 @@ import { GUEST_MODE_KEY, SEEN_FIRST_LAUNCH_KEY, isFirstLaunch, guestModeAtLaunch
 import { quickPicksFor, applyQuickPick, isQuickPickChosen, formAfterMetalChange } from './src/utils/quickPicks';
 import { spotHeader, spotNote, metalNotLive, heldNotLive, partialNote, liveMovers } from './src/utils/spotNote';
 import { saveSpotReply, fetchSpotRaw, FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './src/utils/spotReply';
-import { runSpotFetch, dropStaleLive, keepsLive } from './src/utils/spotFetch';
+import { runSpotFetch, dropStaleLive, landedLive } from './src/utils/spotFetch';
 import { todaysUnitValue, offersTodaysValue, applyTodaysValue, formAfterTodaysValueChange, localDateString } from './src/utils/todaysValue';
 import { spotForSave, premiumForSave, formWithTypedPremium, openedPremium, formAfterPriceChange } from './src/utils/spotSave';
 import { createLatestOnly } from './src/utils/latestOnly';
@@ -8715,9 +8715,10 @@ function AppContent() {
       setPriceTimestamp(savedAt);
       setLiveSpotMetals(liveMetals);
       // Stamped from when the reply landed, so a reply held behind a newer
-      // fetch that missed keeps only the grace it had left.
+      // fetch that missed keeps only the grace it had left. A clock set back
+      // since the landing reads not live, as the held slot does.
       spotLiveAtRef.current = landedAt;
-      setSpotPricesLive(keepsLive({ liveAt: landedAt, now: Date.now() }));
+      setSpotPricesLive(landedLive({ landedAt, now: Date.now() }));
       setSpotLandedOnce(true);
       // Day change from change_pct, and none for a metal whose price was thrown out
       setSpotChange(change);
