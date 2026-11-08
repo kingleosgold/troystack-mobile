@@ -88,7 +88,8 @@ export const stampLive = ({ liveAtRef, landedAt, now, setLive, graceMs = LIVE_GR
 };
 
 // Drops Live once the prices that landed at liveAtRef.current are older than
-// the grace. An empty liveAtRef means Live is already off. A phone clock set
+// the grace, and empties liveAtRef when it does. An empty liveAtRef means
+// Live is already off. A phone clock set
 // back past liveAt would otherwise keep Live until the clock caught up again,
 // so liveAt moves back to now and the grace counts from the moment the
 // set-back is seen. The next reply that lands stamps liveAt fresh. Returns
@@ -109,7 +110,10 @@ export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS
     liveAtRef.current = now;
   }
   const live = keepsLive({ liveAt: liveAtRef.current, now, graceMs });
-  if (!live) setLive(false);
+  if (!live) {
+    liveAtRef.current = null;
+    setLive(false);
+  }
   return live;
 };
 

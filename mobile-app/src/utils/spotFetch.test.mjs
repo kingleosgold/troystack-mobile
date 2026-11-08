@@ -409,9 +409,10 @@ test('dropStaleLive keeps Live inside the grace and drops it after', () => {
   const c = liveCheck(1_000_000);
   assert.equal(c.run(1_000_000 + LIVE_GRACE_MS), true);
   assert.deepEqual(c.sets, []);
+  assert.equal(c.ref.current, 1_000_000);
   assert.equal(c.run(1_000_000 + LIVE_GRACE_MS + 1), false);
   assert.deepEqual(c.sets, [false]);
-  assert.equal(c.ref.current, 1_000_000);
+  assert.equal(c.ref.current, null);
 });
 
 test('dropStaleLive counts the grace from a clock set back, not from the old stamp', () => {
@@ -432,8 +433,20 @@ test('dropStaleLive with nothing landed drops Live and leaves the stamp empty', 
     const c = liveCheck(liveAt);
     assert.equal(c.run(5_000), false);
     assert.deepEqual(c.sets, [false]);
-    assert.ok(c.ref.current === liveAt || (Number.isNaN(liveAt) && Number.isNaN(c.ref.current)));
+    assert.equal(c.ref.current, null);
   }
+});
+
+test('dropStaleLive after the grace ran out keeps Live off through a clock set back', () => {
+  const liveAt = 10_000_000;
+  const c = liveCheck(liveAt);
+  assert.equal(c.run(liveAt + LIVE_GRACE_MS + 1), false);
+  assert.equal(c.ref.current, null);
+  // The clock goes back before liveAt while the app stays open. Before, the
+  // miss re-stamped to now and answered true while Live was off.
+  assert.equal(c.run(liveAt - 60 * 60 * 1000), false);
+  assert.equal(c.ref.current, null);
+  assert.deepEqual(c.sets, [false, false]);
 });
 
 test('dropStaleLive with setBackDrops drops Live on a clock set back and waits for a reply', () => {
