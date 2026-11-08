@@ -76,23 +76,37 @@ export const landedLive = ({ landedAt, now, graceMs = LIVE_GRACE_MS }) => (
   keepsLive({ liveAt: landedAt, now, graceMs }) && !setBackPast({ at: landedAt, now })
 );
 
+// Sets Live for a reply that landed at landedAt (ms), read at now (ms) with
+// landedLive. liveAtRef.current holds landedAt only while Live is on and is
+// empty otherwise, so dropStaleLive never counts a grace for prices that
+// weren't Live. Returns whether Live is on.
+export const stampLive = ({ liveAtRef, landedAt, now, setLive, graceMs = LIVE_GRACE_MS }) => {
+  const live = landedLive({ landedAt, now, graceMs });
+  liveAtRef.current = live ? landedAt : null;
+  setLive(live);
+  return live;
+};
+
 // Drops Live once the prices that landed at liveAtRef.current are older than
-// the grace. A phone clock set back past liveAt would otherwise keep Live
-// until the clock caught up again, so liveAt moves back to now and the grace
-// counts from the moment the set-back is seen. The next reply that lands
-// stamps liveAt fresh. Returns whether Live stays.
-// With setBackDrops, a clock set back past liveAt drops Live outright. The
-// app passes it on foreground, where a set-back may hide time spent in the
-// background, so the grace doesn't restart from the set-back. A set-back
-// smaller than the time since liveAt can't be seen on the wall clock, and
-// one within SET_BACK_TOLERANCE_MS of liveAt counts as no set-back at all.
+// the grace. An empty liveAtRef means Live is already off. A phone clock set
+// back past liveAt would otherwise keep Live until the clock caught up again,
+// so liveAt moves back to now and the grace counts from the moment the
+// set-back is seen. The next reply that lands stamps liveAt fresh. Returns
+// whether Live is on afterwards.
+// With setBackDrops, a clock set back past liveAt drops Live outright and
+// empties the stamp. The app passes it on foreground, where a set-back may
+// hide time spent in the background, so the grace doesn't restart from the
+// set-back. A set-back smaller than the time since liveAt can't be seen on
+// the wall clock, and one within SET_BACK_TOLERANCE_MS of liveAt counts as
+// no set-back at all.
 export const dropStaleLive = ({ liveAtRef, now, setLive, graceMs = LIVE_GRACE_MS, setBackDrops = false }) => {
   if (setBackPast({ at: liveAtRef.current, now })) {
-    liveAtRef.current = now;
     if (setBackDrops) {
+      liveAtRef.current = null;
       setLive(false);
       return false;
     }
+    liveAtRef.current = now;
   }
   const live = keepsLive({ liveAt: liveAtRef.current, now, graceMs });
   if (!live) setLive(false);
