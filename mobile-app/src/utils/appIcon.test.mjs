@@ -75,10 +75,10 @@ test('the splash sits on the app background', () => {
 
 // Android 12 and up ignore the legacy splash image and draw the splash icon
 // inside a 192dp circle on a 288dp canvas, so the coin came out small. The
-// expo-splash-screen plugin takes a square image instead. The coin fills
-// about 62 percent of it, which keeps its rim inside that circle (two thirds
-// of the canvas), and imageWidth 256 keeps it about 158pt wide on iPhone,
-// as the legacy splash drew it.
+// expo-splash-screen plugin takes a square image instead and sets it 256dp
+// wide on that canvas. The coin fills about 62 percent of the image, so it's
+// about 158dp wide and its rim stays inside the circle. iPhone shows the same
+// 158pt coin, close to the 163pt the legacy splash drew on a 393pt phone.
 test('the splash screen plugin draws the square coin on the app background', () => {
   const entry = app.plugins.find((p) => Array.isArray(p) && p[0] === 'expo-splash-screen');
   assert.ok(entry, 'expo-splash-screen plugin is configured');
