@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, dropStaleLive, LIVE_GRACE_MS, SET_BACK_TOLERANCE_MS, setBackPast } from './spotFetch.js';
+import { runSpotFetch, SPOT_FETCH_OUTCOMES, keepsLive, landedLive, dropStaleLive, LIVE_GRACE_MS, SET_BACK_TOLERANCE_MS, setBackPast } from './spotFetch.js';
 import { createLatestOnly } from './latestOnly.js';
 import { FOREGROUND_PRICE_FETCH_TIMEOUT_MS } from './spotReply.js';
 
@@ -271,7 +271,8 @@ test('App.js wires fetchSpotPrices to runSpotFetch with its gate, 10s read and s
   assert.match(body, /fetchSpotRaw\(fetch, `\$\{API_BASE_URL\}\/v1\/prices`, FOREGROUND_PRICE_FETCH_TIMEOUT_MS\)/);
   assert.ok(body.includes('save: (reply, savedAt) => saveSpotReply(AsyncStorage, reply, savedAt),'));
   assert.ok(body.includes('getSource: () => priceSourceRef.current,'));
-  assert.ok(body.includes('setSpotPricesLive(keepsLive({ liveAt: landedAt, now: Date.now() }))'));
+  assert.ok(body.includes('setSpotPricesLive(landedLive({ landedAt, now: Date.now() }))'));
+  assert.ok(!body.includes('setSpotPricesLive(keepsLive('));
   assert.ok(body.includes('setPriceTimestamp(savedAt)'));
   assert.ok(!body.includes('AsyncStorage.multiSet('));
   assert.ok(!body.includes("setItem('stack_price_timestamp'"));
@@ -354,7 +355,7 @@ test('App.js drops Live on a miss past the grace and stamps each landed reply', 
   const body = src.slice(start, src.indexOf('const onRefreshDashboard', start));
   assert.match(body, /onMiss: \(\) => \{\s*dropStaleLive\(\{ liveAtRef: spotLiveAtRef, now: Date\.now\(\), setLive: setSpotPricesLive \}\);/);
   assert.match(body, /apply: \(\{ reply, savedAt, source, landedAt \}\) => \{/);
-  assert.match(body, /spotLiveAtRef\.current = landedAt;\s*setSpotPricesLive\(keepsLive\(\{ liveAt: landedAt, now: Date\.now\(\) \}\)\);/);
+  assert.match(body, /spotLiveAtRef\.current = landedAt;\s*setSpotPricesLive\(landedLive\(\{ landedAt, now: Date\.now\(\) \}\)\);/);
   // Signing out keeps the market's prices, their stamp and Live.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.ok(!reset.includes('spotLiveAtRef.current'));
@@ -386,7 +387,7 @@ test('App.js keeps the widget syncing once a reply landed, and drops stale Live 
   // The widget effect runs on any landed reply this session, not only while Live.
   assert.match(src, /if \(dataLoaded && spotLandedOnce && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/);
   assert.ok(!/if \(dataLoaded && spotPricesLive && \(hasGold \|\| hasLifetimeAccess\)\) \{\s*syncWidget\(\);/.test(src));
-  assert.match(src, /setSpotPricesLive\(keepsLive\(\{ liveAt: landedAt, now: Date\.now\(\) \}\)\);\s*setSpotLandedOnce\(true\);/);
+  assert.match(src, /setSpotPricesLive\(landedLive\(\{ landedAt, now: Date\.now\(\) \}\)\);\s*setSpotLandedOnce\(true\);/);
   // A reset holds the widget until a reply lands in the new session.
   const reset = src.slice(src.indexOf('const resetAllState = (fullReset = true) => {'), src.indexOf('const clearAllData = async () => {'));
   assert.match(reset, /setSpotLandedOnce\(false\);/);
@@ -735,6 +736,59 @@ test('a save that outlasts the grace hands apply a landing past the grace', asyn
   assert.equal(await call, 'applied');
   const [[, landedAt]] = c.shown;
   assert.equal(keepsLive({ liveAt: landedAt, now: c.t }), false);
+});
+
+test('landedLive is keepsLive that also reads a clock set back past the landing as not live', () => {
+  const landedAt = 1_000_000;
+  assert.equal(landedLive({ landedAt, now: landedAt }), true);
+  assert.equal(landedLive({ landedAt, now: landedAt + LIVE_GRACE_MS }), true);
+  assert.equal(landedLive({ landedAt, now: landedAt + LIVE_GRACE_MS + 1 }), false);
+  // A time sync nudge back within the tolerance still reads live.
+  assert.equal(landedLive({ landedAt, now: landedAt - SET_BACK_TOLERANCE_MS }), true);
+  // Past the tolerance it may hide time asleep, so it reads not live.
+  assert.equal(landedLive({ landedAt, now: landedAt - SET_BACK_TOLERANCE_MS - 1 }), false);
+  assert.equal(landedLive({ landedAt, now: landedAt - 60_000 }), false);
+  assert.equal(keepsLive({ liveAt: landedAt, now: landedAt - 60_000 }), true);
+  // Nothing landed yet.
+  assert.equal(landedLive({ landedAt: null, now: landedAt }), false);
+  assert.equal(landedLive({ landedAt: NaN, now: landedAt }), false);
+});
+
+test('a reply shown the moment its save ends reads not live after a clock set back during the save', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  // A newer call misses while the older one is still saving.
+  const b = c.call(async () => { throw timeoutError(); });
+  assert.equal(await b, 'timeout');
+  // The phone sleeps through the save and its clock is set back.
+  c.t -= 60_000;
+  saving.resolve();
+  assert.equal(await a, 'applied');
+  const [[, landedAt]] = c.shown;
+  assert.equal(landedLive({ landedAt, now: c.t }), false);
+});
+
+test('the newest reply reads not live when the clock steps back past the tolerance during its save', async () => {
+  const c = clocked();
+  const saving = deferred();
+  const a = c.call(async () => good(4400), () => saving.promise);
+  await new Promise((r) => setImmediate(r));
+  c.t -= SET_BACK_TOLERANCE_MS + 1000;
+  saving.resolve();
+  assert.equal(await a, 'applied');
+  const [[, landedAt]] = c.shown;
+  assert.equal(landedLive({ landedAt, now: c.t }), false);
+  // A nudge within the tolerance still reads live.
+  const d = clocked();
+  const saving2 = deferred();
+  const b = d.call(async () => good(4400), () => saving2.promise);
+  await new Promise((r) => setImmediate(r));
+  d.t -= SET_BACK_TOLERANCE_MS;
+  saving2.resolve();
+  assert.equal(await b, 'applied');
+  assert.equal(landedLive({ landedAt: d.shown[0][1], now: d.t }), true);
 });
 
 test('a held reply past the grace by its landing never shows, though its save ended inside it', async () => {
