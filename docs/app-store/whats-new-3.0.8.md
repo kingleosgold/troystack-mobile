@@ -4,7 +4,7 @@ Paste into App Store Connect only on Jon's click. No store build or submission r
 
 ## Text (no use of the word AI)
 
-- A fresh look: the TROY coin is now the app icon, the splash screen and the widget's logo.
+- A fresh look: a new TROY coin for the app icon, the splash screen and the Ask Troy widget.
 - Start right away as a guest. Your stack stays when you sign in later.
 - The app now opens on your Dashboard, with your whole stack at a glance.
 - Until live prices load, you see your saved prices and when they were fetched.
@@ -12,7 +12,7 @@ Paste into App Store Connect only on Jon's click. No store build or submission r
 - Don't remember what you paid? Use today's value as your price.
 - Premium over spot now stays put when you edit a holding.
 - Compare Dealers is open to everyone, adds Money Metals, and tells you if a link can't open.
-- Scanning a receipt from the widget now lets you pick a photo from your library too.
+- Scanning a receipt from the Ask Troy widget now lets you pick a photo from your library too.
 - Steadier sync between your phone and your account.
 
 ## Notes for the reviewer
