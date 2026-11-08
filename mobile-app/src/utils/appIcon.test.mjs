@@ -73,6 +73,27 @@ test('the splash sits on the app background', () => {
   assert.equal(hasTrns(buf), false);
 });
 
+// Android 12 and up ignore the legacy splash image and draw the splash icon
+// inside a 192dp circle on a 288dp canvas, so the coin came out small. The
+// expo-splash-screen plugin takes a square image instead. The coin fills
+// about two thirds of it, which keeps it inside that circle, and imageWidth
+// 240 keeps it about 160pt wide on iPhone, as the legacy splash drew it.
+test('the splash screen plugin draws the square coin on the app background', () => {
+  const entry = app.plugins.find((p) => Array.isArray(p) && p[0] === 'expo-splash-screen');
+  assert.ok(entry, 'expo-splash-screen plugin is configured');
+  const cfg = entry[1];
+  assert.equal(cfg.backgroundColor, app.splash.backgroundColor);
+  assert.equal(cfg.imageWidth, 240);
+  const buf = read(cfg.image);
+  const { width, height, colorType } = pngHeader(buf);
+  assert.equal(width, height, 'splash icon is square');
+  assert.ok(width >= 720, `splash icon is ${width} px, want 3x of 240`);
+  assert.equal(colorType, 2);
+  assert.equal(hasTrns(buf), false);
+  const pkg = JSON.parse(read('package.json'));
+  assert.ok(pkg.dependencies['expo-splash-screen'], 'expo-splash-screen is a direct dependency');
+});
+
 // Sign in, the lock screen and the share card show the coin cutout, not the
 // 1 MB opaque app icon with its square tile. 240 px covers 80pt at 3x.
 test('in-app logos use the transparent coin cutout', () => {

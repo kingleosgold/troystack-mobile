@@ -2,7 +2,7 @@
   "expo": {
     "name": "TroyStack",
     "slug": "stack-tracker-pro",
-    "version": "3.0.7",
+    "version": "3.0.8",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -111,7 +111,16 @@
       ],
       "./plugins/withWidgetNativeModule.js",
       "@bacons/apple-targets",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 240,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0E"
+        }
+      ]
     ],
     "extra": {
       "apiUrl": "https://api.stacktrackergold.com",
