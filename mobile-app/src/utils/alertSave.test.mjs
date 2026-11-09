@@ -272,5 +272,24 @@ test('fetchPriceAlerts moves the ref with the list and skips after an account ch
   const ref = fn.indexOf('priceAlertsRef.current = parsed;');
   const set = fn.indexOf('setPriceAlerts(parsed);');
   assert.ok(read > 0 && gate > read && ref > gate && set > ref);
-  assert.match(fn, /loadedAlerts\(JSON\.parse\(val\), atStart, priceAlertsRef\.current\)/);
+  assert.match(fn, /loadedAlerts\(stored, atStart, priceAlertsRef\.current\)/);
+  assert.ok(fn.indexOf('if (parsed !== stored) await savePriceAlerts(parsed);') > set, 'a merged list is saved');
+});
+
+test('a stored alert deleted or dropped while the list loaded stays gone', () => {
+  const x = { id: 'x' }, y = { id: 'y' };
+  const start = [x, y];
+  const current = [y];
+  assert.deepEqual(loadedAlerts([x, y], start, current), [y]);
+});
+
+test('a load with nothing changed returns the stored array itself, so nothing is saved again', () => {
+  const start = [];
+  const stored = [{ id: 'a' }];
+  assert.equal(loadedAlerts(stored, start, start), stored);
+});
+
+test('a stored list that is not an array or holds nulls merges safely', () => {
+  assert.deepEqual(loadedAlerts({}, [], [{ id: 'n' }]), [{ id: 'n' }]);
+  assert.deepEqual(loadedAlerts([null, { id: 'a' }], [], [{ id: 'n' }]), [{ id: 'n' }, { id: 'a' }]);
 });

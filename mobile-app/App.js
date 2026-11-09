@@ -7440,9 +7440,13 @@ function AppContent() {
         // An alert made while the stored list was loading stays, along with
         // the stored ones, and the ref moves with the list so the next toggle,
         // delete or sync reads it.
-        const parsed = loadedAlerts(JSON.parse(val), atStart, priceAlertsRef.current);
+        const stored = JSON.parse(val);
+        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current);
         priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
+        // A change made while it loaded saved a list without the stored
+        // alerts, so the merged list goes back to storage.
+        if (parsed !== stored) await savePriceAlerts(parsed);
         if (__DEV__) console.log(`🔔 Loaded ${parsed.length} price alerts from local storage`);
       }
     } catch (error) {

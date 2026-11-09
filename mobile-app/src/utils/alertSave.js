@@ -74,7 +74,7 @@ export function deletedSinceStart(id, atStart, current) {
  * screen while they loaded, that's the stored list. If an alert was made in
  * the meantime, the screen's list stays and the stored alerts it doesn't
  * carry are added after it, so neither the new alert nor the stored ones are
- * lost. Nothing stored could have been deleted or toggled before it showed.
+ * lost, unless one was on the screen at the start and is gone now.
  * @param {Array<{id: string}>} stored
  * @param {Array<{id: string}>} atStart the list when the load began
  * @param {Array<{id: string}>} current the list now
@@ -83,5 +83,10 @@ export function loadedAlerts(stored, atStart, current) {
   const list = Array.isArray(stored) ? stored : [];
   if (current === atStart) return list;
   const have = new Set((current || []).map(a => a.id));
-  return [...(current || []), ...list.filter(a => a && !have.has(a.id))];
+  // A stored alert that was on the screen when the load began and is gone
+  // now was deleted, or dropped by a sync, while it loaded, so it stays gone.
+  return [
+    ...(current || []),
+    ...list.filter(a => a && !have.has(a.id) && !deletedSinceStart(a.id, atStart, current)),
+  ];
 }
