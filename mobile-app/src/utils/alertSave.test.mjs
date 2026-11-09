@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -123,4 +123,90 @@ test('syncAlertsFromBackend merges into the latest list and writes nothing after
   assert.ok(loop > 0 && gate > loop && merge > gate, 'the gate and the merge come after the re-POSTs');
   assert.ok(fn.indexOf('priceAlertsRef.current', merge) > merge);
   assert.ok(fn.indexOf('setPriceAlerts(final)') > merge);
+});
+
+test('an alert deleted while the sync ran stays gone', () => {
+  const atStart = [{ id: 'a', enabled: true }, { id: 'b', enabled: true }];
+  const current = [{ id: 'b', enabled: true }];
+  const final = mergeSyncedAlerts({
+    backendAlerts: [{ id: 'a', enabled: true }, { id: 'b', enabled: true }],
+    syncedLocal: [], seenIds: new Set(['a', 'b']), current, atStart,
+  });
+  assert.deepEqual(final.map(a => a.id), ['b']);
+});
+
+test('a clear all while the sync ran stays cleared', () => {
+  const atStart = [{ id: 'a' }, { id: 'l' }];
+  const final = mergeSyncedAlerts({
+    backendAlerts: [{ id: 'a' }], syncedLocal: [{ id: 'l' }], seenIds: new Set(['a', 'l']), current: [], atStart,
+  });
+  assert.deepEqual(final, []);
+});
+
+test('a toggle made while the sync ran keeps the switch the user set', () => {
+  const final = mergeSyncedAlerts({
+    backendAlerts: [{ id: 'a', enabled: true, targetPrice: 30 }],
+    syncedLocal: [], seenIds: new Set(['a']),
+    atStart: [{ id: 'a', enabled: true }], current: [{ id: 'a', enabled: false }],
+  });
+  assert.deepEqual(final, [{ id: 'a', enabled: false, targetPrice: 30 }]);
+});
+
+test('a switch nobody touched during the sync takes the server copy', () => {
+  const final = mergeSyncedAlerts({
+    backendAlerts: [{ id: 'a', enabled: true }], syncedLocal: [], seenIds: new Set(['a']),
+    atStart: [{ id: 'a', enabled: false }], current: [{ id: 'a', enabled: false }],
+  });
+  assert.equal(final[0].enabled, true);
+});
+
+test('a sync that started before the list loaded drops nothing it kept', () => {
+  const final = mergeSyncedAlerts({
+    backendAlerts: [{ id: 'a' }], syncedLocal: [{ id: 'l' }], seenIds: new Set(['a', 'l']), current: [], atStart: [],
+  });
+  assert.deepEqual(final.map(a => a.id), ['a', 'l']);
+});
+
+test('deletedSinceStart only counts an alert that left the screen', () => {
+  assert.equal(deletedSinceStart('a', [{ id: 'a' }], []), true);
+  assert.equal(deletedSinceStart('a', [{ id: 'a' }], [{ id: 'a' }]), false);
+  assert.equal(deletedSinceStart('a', [], []), false);
+  assert.equal(deletedSinceStart('a', undefined, undefined), false);
+});
+
+test('syncAlertsFromBackend notes the screen at start and skips re-POSTing a deleted alert', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const snap = fn.indexOf('const atStart = priceAlertsRef.current');
+  assert.ok(snap > 0 && snap < fn.indexOf('await getDeviceId()'), 'snapshots before the first await');
+  const loop = fn.indexOf('for (const alert of localOnly)');
+  const skip = fn.indexOf('deletedSinceStart(alert.id, atStart, priceAlertsRef.current)');
+  assert.ok(skip > loop && skip < fn.indexOf('method: \'POST\''));
+  assert.match(fn, /mergeSyncedAlerts\(\{[^}]*atStart/);
+});
+
+test('a re-POST that lands after a delete deletes it again, but never after an account change', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const ok = fn.indexOf('if (r.success)');
+  const gen = fn.indexOf('if (accountChangedGenRef.current !== accountGen) break;', ok);
+  const again = fn.indexOf('deletedSinceStart(alert.id, atStart, priceAlertsRef.current)', ok);
+  const del = fn.indexOf("method: 'DELETE'", ok);
+  assert.ok(ok > 0 && gen > ok && again > gen && del > again);
+  assert.match(fn, /syncedLocal\.push\(\{ \.\.\.alert, enabled \}\)/);
+});
+
+test('toggle, delete and clear all update the ref the sync reads straight away', () => {
+  for (const [name, next] of [
+    ['const togglePriceAlert = async', 'const deletePriceAlert = async'],
+    ['const deletePriceAlert = async', 'const deletePriceAlertDirect = async'],
+    ['const deletePriceAlertDirect = async', 'const clearAllAlerts = '],
+    ['const clearAllAlerts = ', 'HOME SCREEN WIDGET'],
+  ]) {
+    const fn = appJs.slice(appJs.indexOf(name), appJs.indexOf(next));
+    assert.match(fn, /priceAlertsRef\.current = /, name);
+    assert.ok(fn.indexOf('priceAlertsRef.current = ') < fn.indexOf('setPriceAlerts('), name);
+  }
 });

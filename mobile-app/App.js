@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7457,6 +7457,9 @@ function AppContent() {
     // A sign out, account switch or wipe while this runs means the lists it
     // read belong to the account that's gone, so it writes nothing then.
     const accountGen = accountChangedGenRef.current;
+    // What was on the screen when the sync started, so a delete or a toggle
+    // made while it runs isn't undone by the server copy it reads.
+    const atStart = priceAlertsRef.current;
     try {
       const deviceId = await getDeviceId();
       const userId = supabaseUser?.id || null;
@@ -7486,6 +7489,10 @@ function AppContent() {
         const syncedLocal = [];
 
         for (const alert of localOnly) {
+          if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) continue;
+          // A toggle made since the sync read storage sends the switch the user set.
+          const onScreen = priceAlertsRef.current.find(a => a.id === alert.id);
+          const enabled = (onScreen || alert).enabled !== false;
           try {
             const res = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
               method: 'POST',
@@ -7497,11 +7504,25 @@ function AppContent() {
                 metal: alert.metal,
                 targetPrice: alert.targetPrice,
                 direction: alert.direction,
-                enabled: alert.enabled !== false,
+                enabled,
               }),
             });
             const r = await res.json();
-            if (r.success) syncedLocal.push(alert);
+            if (r.success) {
+              // Deleted while this POST was out, so the user's DELETE may have
+              // landed first. Delete it again so it can't come back or fire.
+              // A sign out, switch or wipe also empties the screen, and that
+              // alert still belongs to the old account, so leave it alone then.
+              if (accountChangedGenRef.current !== accountGen) break;
+              if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) {
+                fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
+                  method: 'DELETE',
+                  headers: await withSession(),
+                }).catch(() => {});
+              } else {
+                syncedLocal.push({ ...alert, enabled });
+              }
+            }
           } catch (e) { /* discard orphan */ }
         }
 
@@ -7510,7 +7531,7 @@ function AppContent() {
         // Keep backend alerts, the local ones that synced and any alert created
         // while the re-POSTs were out.
         const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
-        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current });
+        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart });
         priceAlertsRef.current = final;
         setPriceAlerts(final);
         await savePriceAlerts(final);
@@ -7610,7 +7631,8 @@ function AppContent() {
   // Toggle a price alert enabled/disabled (local + backend PATCH)
   const togglePriceAlert = async (alertId, enabled) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const updated = priceAlerts.map(a => a.id === alertId ? { ...a, enabled } : a);
+    const updated = priceAlertsRef.current.map(a => a.id === alertId ? { ...a, enabled } : a);
+    priceAlertsRef.current = updated;
     setPriceAlerts(updated);
     await savePriceAlerts(updated);
     try {
@@ -7635,7 +7657,8 @@ function AppContent() {
           onPress: async () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             if (__DEV__) console.log('🗑️ [Push] Deleting price alert:', alertId);
-            const updated = priceAlerts.filter(a => a.id !== alertId);
+            const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
+            priceAlertsRef.current = updated;
             setPriceAlerts(updated);
             await savePriceAlerts(updated);
 
@@ -7660,7 +7683,8 @@ function AppContent() {
   // Direct delete (no confirmation — used by swipe gesture)
   const deletePriceAlertDirect = async (alertId) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const updated = priceAlerts.filter(a => a.id !== alertId);
+    const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
+    priceAlertsRef.current = updated;
     setPriceAlerts(updated);
     await savePriceAlerts(updated);
     try {
@@ -7676,6 +7700,7 @@ function AppContent() {
       {
         text: 'Delete All', style: 'destructive', onPress: async () => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          priceAlertsRef.current = [];
           setPriceAlerts([]);
           await savePriceAlerts([]);
           try {

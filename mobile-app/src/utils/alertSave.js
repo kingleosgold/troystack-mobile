@@ -40,11 +40,31 @@ export function alertNotSavedCopy(response) {
 // dropped it from the screen until the next sync. Keep any alert on the
 // screen now whose id the sync never saw. An id it saw and didn't keep is an
 // orphan the server refused, so it stays dropped.
-// current is the list on the screen now. seenIds holds every id the sync read
-// from the server or from storage.
-export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current }) {
-  const kept = [...backendAlerts, ...syncedLocal];
+// The same gap let a delete, a clear all or a toggle made while the sync ran
+// come back from the server copy it read before. An alert that was on the
+// screen when the sync started and is gone now was deleted, so it stays gone,
+// and one whose switch moved since then keeps the switch the user set.
+// current is the list on the screen now. atStart is the list on the screen
+// when the sync started. seenIds holds every id the sync read from the server
+// or from storage.
+export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current, atStart }) {
+  const nowById = new Map((current || []).map(a => [a.id, a]));
+  const startById = new Map((atStart || []).map(a => [a.id, a]));
+  const kept = [...backendAlerts, ...syncedLocal]
+    .filter(a => !(startById.has(a.id) && !nowById.has(a.id)))
+    .map(a => {
+      const was = startById.get(a.id);
+      const is = nowById.get(a.id);
+      if (was && is && was.enabled !== is.enabled) return { ...a, enabled: is.enabled };
+      return a;
+    });
   const keptIds = new Set(kept.map(a => a.id));
   const createdSince = (current || []).filter(a => !keptIds.has(a.id) && !seenIds.has(a.id));
   return [...createdSince, ...kept];
+}
+
+// An alert deleted while the sync ran shouldn't go back up to the server.
+// It was on the screen when the sync started and isn't on it now.
+export function deletedSinceStart(id, atStart, current) {
+  return (atStart || []).some(a => a.id === id) && !(current || []).some(a => a.id === id);
 }
