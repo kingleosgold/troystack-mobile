@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7454,6 +7454,9 @@ function AppContent() {
 
   // Fetch alerts from backend — backend is source of truth, discard orphaned local alerts
   const syncAlertsFromBackend = async () => {
+    // A sign out, account switch or wipe while this runs means the lists it
+    // read belong to the account that's gone, so it writes nothing then.
+    const accountGen = accountChangedGenRef.current;
     try {
       const deviceId = await getDeviceId();
       const userId = supabaseUser?.id || null;
@@ -7502,8 +7505,13 @@ function AppContent() {
           } catch (e) { /* discard orphan */ }
         }
 
-        // Only keep backend alerts + successfully synced local alerts
-        const final = [...backendAlerts, ...syncedLocal];
+        if (accountChangedGenRef.current !== accountGen) return;
+
+        // Keep backend alerts, the local ones that synced and any alert created
+        // while the re-POSTs were out.
+        const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
+        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current });
+        priceAlertsRef.current = final;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);

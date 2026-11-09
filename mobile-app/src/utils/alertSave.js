@@ -33,3 +33,18 @@ export function alertNotSavedCopy(response) {
   if (response && (response.status === 400 || response.status === 422)) return ALERT_REJECTED;
   return ALERT_NOT_SAVED;
 }
+
+// syncAlertsFromBackend reads storage, then awaits a re-POST for each
+// local-only alert. An alert created in that gap is on the screen and on the
+// server but in neither list the sync read, so writing only those lists
+// dropped it from the screen until the next sync. Keep any alert on the
+// screen now whose id the sync never saw. An id it saw and didn't keep is an
+// orphan the server refused, so it stays dropped.
+// current is the list on the screen now. seenIds holds every id the sync read
+// from the server or from storage.
+export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current }) {
+  const kept = [...backendAlerts, ...syncedLocal];
+  const keptIds = new Set(kept.map(a => a.id));
+  const createdSince = (current || []).filter(a => !keptIds.has(a.id) && !seenIds.has(a.id));
+  return [...createdSince, ...kept];
+}
