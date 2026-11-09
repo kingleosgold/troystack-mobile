@@ -68,3 +68,20 @@ export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current
 export function deletedSinceStart(id, atStart, current) {
   return (atStart || []).some(a => a.id === id) && !(current || []).some(a => a.id === id);
 }
+
+/**
+ * The list to show once the stored alerts load. If nothing changed on the
+ * screen while they loaded, that's the stored list. If an alert was made in
+ * the meantime, the screen's list stays and the stored alerts it doesn't
+ * carry are added after it, so neither the new alert nor the stored ones are
+ * lost. Nothing stored could have been deleted or toggled before it showed.
+ * @param {Array<{id: string}>} stored
+ * @param {Array<{id: string}>} atStart the list when the load began
+ * @param {Array<{id: string}>} current the list now
+ */
+export function loadedAlerts(stored, atStart, current) {
+  const list = Array.isArray(stored) ? stored : [];
+  if (current === atStart) return list;
+  const have = new Set((current || []).map(a => a.id));
+  return [...(current || []), ...list.filter(a => a && !have.has(a.id))];
+}

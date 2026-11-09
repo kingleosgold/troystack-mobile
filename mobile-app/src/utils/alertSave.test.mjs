@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -248,4 +248,29 @@ test('a single alert toggle or delete carries the session token', () => {
     const opts = call.slice(0, call.indexOf('});'));
     assert.match(opts, /headers: await withSession\(/);
   }
+});
+
+test('the stored alerts load as is when nothing changed while loading', () => {
+  const start = [];
+  const stored = [{ id: 'a' }, { id: 'b' }];
+  assert.deepEqual(loadedAlerts(stored, start, start), stored);
+  assert.deepEqual(loadedAlerts(null, start, start), []);
+});
+
+test('an alert made while the stored list loaded stays, with the stored ones after it', () => {
+  const start = [];
+  const current = [{ id: 'new' }];
+  assert.deepEqual(loadedAlerts([{ id: 'a' }, { id: 'new' }], start, current), [{ id: 'new' }, { id: 'a' }]);
+});
+
+test('fetchPriceAlerts moves the ref with the list and skips after an account change', () => {
+  const start = appJs.indexOf('const fetchPriceAlerts = async');
+  const end = appJs.indexOf('const savePriceAlerts = async');
+  const fn = appJs.slice(start, end);
+  const read = fn.indexOf("AsyncStorage.getItem('stack_price_alerts')");
+  const gate = fn.indexOf('if (accountChangedGenRef.current !== accountGen) return;');
+  const ref = fn.indexOf('priceAlertsRef.current = parsed;');
+  const set = fn.indexOf('setPriceAlerts(parsed);');
+  assert.ok(read > 0 && gate > read && ref > gate && set > ref);
+  assert.match(fn, /loadedAlerts\(JSON\.parse\(val\), atStart, priceAlertsRef\.current\)/);
 });

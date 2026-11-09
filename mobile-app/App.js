@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7431,10 +7431,17 @@ function AppContent() {
 
   // Load price alerts from local storage
   const fetchPriceAlerts = async () => {
+    const accountGen = accountChangedGenRef.current;
+    const atStart = priceAlertsRef.current;
     try {
       const val = await AsyncStorage.getItem('stack_price_alerts');
+      if (accountChangedGenRef.current !== accountGen) return;
       if (val) {
-        const parsed = JSON.parse(val);
+        // An alert made while the stored list was loading stays, along with
+        // the stored ones, and the ref moves with the list so the next toggle,
+        // delete or sync reads it.
+        const parsed = loadedAlerts(JSON.parse(val), atStart, priceAlertsRef.current);
+        priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
         if (__DEV__) console.log(`🔔 Loaded ${parsed.length} price alerts from local storage`);
       }
