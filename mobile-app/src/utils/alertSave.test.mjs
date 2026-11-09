@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -90,4 +90,37 @@ test('a sign out that failed leaves the alert owner count alone', () => {
   assert.ok(failed > 0);
   assert.equal(bumps.length, 1);
   assert.ok(bumps[0] > failed, 'moves only after the sign out took');
+});
+
+test('a sync keeps an alert created while its re-POSTs were out', () => {
+  const backendAlerts = [{ id: 'b1' }];
+  const syncedLocal = [{ id: 'l1' }];
+  const seenIds = new Set(['b1', 'l1', 'orphan']);
+  const current = [{ id: 'new' }, { id: 'b1' }, { id: 'orphan' }];
+  const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current });
+  assert.deepEqual(final.map(a => a.id), ['new', 'b1', 'l1']);
+});
+
+test('a sync drops an orphan the server refused even if it is still on the screen', () => {
+  const final = mergeSyncedAlerts({ backendAlerts: [], syncedLocal: [], seenIds: new Set(['x']), current: [{ id: 'x' }] });
+  assert.deepEqual(final, []);
+});
+
+test('a sync with nothing on the screen writes the server and synced lists', () => {
+  const final = mergeSyncedAlerts({ backendAlerts: [{ id: 'b' }], syncedLocal: [{ id: 'l' }], seenIds: new Set(['b', 'l']), current: undefined });
+  assert.deepEqual(final.map(a => a.id), ['b', 'l']);
+});
+
+test('syncAlertsFromBackend merges into the latest list and writes nothing after an account change', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  assert.ok(start > 0 && end > start);
+  const fn = appJs.slice(start, end);
+  const loop = fn.indexOf('for (const alert of localOnly)');
+  const merge = fn.indexOf('mergeSyncedAlerts(');
+  const gate = fn.indexOf('accountChangedGenRef.current !== accountGen');
+  assert.ok(fn.indexOf('const accountGen = accountChangedGenRef.current') >= 0);
+  assert.ok(loop > 0 && gate > loop && merge > gate, 'the gate and the merge come after the re-POSTs');
+  assert.ok(fn.indexOf('priceAlertsRef.current', merge) > merge);
+  assert.ok(fn.indexOf('setPriceAlerts(final)') > merge);
 });
