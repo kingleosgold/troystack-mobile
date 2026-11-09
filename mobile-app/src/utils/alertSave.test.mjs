@@ -405,3 +405,14 @@ test('an alert sync sends nothing for an account that is not the one signed in n
   const signOut = appJs.slice(start, appJs.indexOf('// Helper function to format currency', start));
   assert.ok(!/lastAccountIdRef\.current =/.test(signOut));
 });
+
+test('an alert sync merges nothing onto a screen that belongs to another account', () => {
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  // Right after the count check and before the merge, so a guest sync that
+  // reached no POST can't lay the guest list over a signed-in screen.
+  assert.match(sync, /if \(accountChangedGenRef\.current !== accountGen\) return;(\s*\/\/[^\n]*\n)+\s*if \(userId !== \(lastAccountIdRef\.current \|\| null\)\) return;\s*\n\s*\/\/ Keep backend alerts/);
+  const check = sync.lastIndexOf('if (userId !== (lastAccountIdRef.current || null)) return;');
+  assert.ok(check < sync.indexOf('mergeSyncedAlerts('));
+  assert.ok(check < sync.indexOf('setPriceAlerts(final)'));
+  assert.ok(check < sync.indexOf('await savePriceAlerts(final)'));
+});
