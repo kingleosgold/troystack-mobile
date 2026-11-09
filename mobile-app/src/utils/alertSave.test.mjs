@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -415,4 +415,35 @@ test('an alert sync merges nothing onto a screen that belongs to another account
   assert.ok(check < sync.indexOf('mergeSyncedAlerts('));
   assert.ok(check < sync.indexOf('setPriceAlerts(final)'));
   assert.ok(check < sync.indexOf('await savePriceAlerts(final)'));
+});
+
+test('the alert sync reruns when an account lands after the launch sync', () => {
+  const start = { ran: false, userId: null };
+  // Launch as a guest or before the session lands.
+  let s = nextAlertSync(start, null);
+  assert.equal(s.run, true);
+  // The restored session or a guest's sign in lands.
+  s = nextAlertSync(s.last, 'a');
+  assert.equal(s.run, true);
+  // A rerender with the same account runs nothing.
+  assert.equal(nextAlertSync(s.last, 'a').run, false);
+  // A switch straight to another account syncs it.
+  const b = nextAlertSync(s.last, 'b');
+  assert.equal(b.run, true);
+  // A sign out runs none, and signing back in to the same account syncs again.
+  const out = nextAlertSync(b.last, null);
+  assert.equal(out.run, false);
+  assert.equal(nextAlertSync(out.last, 'b').run, true);
+  // A launch with the session already there runs once.
+  const signedIn = nextAlertSync(start, 'a');
+  assert.equal(signedIn.run, true);
+  assert.equal(nextAlertSync(signedIn.last, 'a').run, false);
+  assert.equal(nextAlertSync(start, undefined).last.userId, null);
+});
+
+test('the alert sync effect follows the signed-in account', () => {
+  assert.match(appJs, /const next = nextAlertSync\(alertSyncLastRef\.current, supabaseUser\?\.id\);\s*alertSyncLastRef\.current = next\.last;\s*if \(!next\.run\) return;[\s\S]{0,120}?syncAlertsFromBackend\(\);\s*\}, \[dataLoaded, supabaseUser\?\.id\]\);/);
+  // The layout effect that names the account runs before it, so the sync's
+  // account check passes for the account that just landed.
+  assert.ok(appJs.indexOf('lastAccountIdRef.current = supabaseUser?.id || null;') < appJs.indexOf('nextAlertSync(alertSyncLastRef.current'));
 });
