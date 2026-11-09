@@ -2,24 +2,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pushOffAlert, SETTINGS_NAME } from './pushOffAlert.js';
+import { pushOffAlert } from './pushOffAlert.js';
 
 const here = new URL('.', import.meta.url);
-const appJson = JSON.parse(readFileSync(new URL('../../app.json', here), 'utf8'));
 const appJs = readFileSync(new URL('../../App.js', here), 'utf8');
 
-test('a refused permission on iPhone names the app as Settings lists it', () => {
-  const { title, message, openSettings } = pushOffAlert({ platform: 'ios', granted: false });
-  assert.equal(title, 'Notifications are off');
-  assert.equal(message, 'Open Settings, tap Troy and turn on notifications.');
-  assert.equal(openSettings, true);
+test('a refused permission points at the Notifications row the button opens to', () => {
+  for (const platform of ['ios', 'android']) {
+    const { title, message, openSettings } = pushOffAlert({ platform, granted: false });
+    assert.equal(title, 'Notifications are off');
+    assert.equal(message, 'Tap Open Settings, then Notifications, and turn them on.');
+    assert.doesNotMatch(message, /iOS|iPhone|Android| in Apps/);
+    assert.equal(openSettings, true);
+  }
 });
 
-test('a refused permission on Android never mentions iOS', () => {
-  const { message, openSettings } = pushOffAlert({ platform: 'android', granted: false });
-  assert.equal(message, 'Open Settings, find TroyStack in Apps and turn on notifications.');
-  assert.doesNotMatch(message, /iOS|iPhone/);
-  assert.equal(openSettings, true);
+test("the copy's button name matches the alert's button in App.js", () => {
+  assert.match(appJs, /text: 'Open Settings', onPress: \(\) => Linking\.openSettings\(\)/);
 });
 
 test('a granted permission with no token never sends the person to Settings', () => {
@@ -37,11 +36,6 @@ test('no copy uses the old name or an em dash', () => {
       assert.doesNotMatch(`${title} ${message}`, /Stack Tracker|—/);
     }
   }
-});
-
-test('the names match the ones app.json gives each phone', () => {
-  assert.equal(SETTINGS_NAME.ios, appJson.expo.ios.infoPlist.CFBundleDisplayName);
-  assert.equal(SETTINGS_NAME.android, appJson.expo.name);
 });
 
 test('App.js no longer tells anyone to use the iOS Settings app for Stack Tracker', () => {

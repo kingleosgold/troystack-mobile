@@ -89,7 +89,6 @@ let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: curren
 
 ## Files Changed
 - ✅ `mobile-app/targets/widget/StackTrackerWidget.swift`
-- ✅ `mobile-app/plugins/ios-widget/widget-files/StackTrackerWidget.swift`
 
 ## Technical Details
 
