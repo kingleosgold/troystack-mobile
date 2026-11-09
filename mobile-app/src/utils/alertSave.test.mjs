@@ -67,3 +67,17 @@ test('createPriceAlert adds to the latest list, not the one from before the awai
 test('Create Alert shows it is busy while the save is out', () => {
   assert.match(appJs, /onPress=\{createPriceAlert\}\s*disabled=\{creatingAlert\}/);
 });
+
+test('a save that lands after a sign out, switch or wipe writes nothing to the phone', () => {
+  const start = appJs.indexOf('const createPriceAlert = async');
+  const end = appJs.indexOf('const togglePriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const noted = fn.indexOf('const accountGen = accountGenRef.current');
+  const post = fn.indexOf("fetch(`${API_BASE_URL}/v1/push/price-alerts`");
+  const check = fn.indexOf('if (accountGenRef.current !== accountGen) return;');
+  assert.ok(noted > 0 && noted < post, 'notes the account before the POST');
+  assert.ok(check > post, 'checks it after the POST');
+  assert.ok(check < fn.indexOf('if (!saved)'), 'before the not saved alert');
+  assert.ok(check < fn.indexOf('savePriceAlerts('), 'before any local write');
+  assert.ok(check < fn.indexOf("'Alert Created'"));
+});

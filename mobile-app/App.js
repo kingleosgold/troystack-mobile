@@ -7520,6 +7520,9 @@ function AppContent() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       const alertId = generateUUID();
+      // A sign out, account switch or wipe while the save is out moves the
+      // count, and the alert then belongs to the account that's gone.
+      const accountGen = accountGenRef.current;
       const deviceId = await getDeviceId();
 
       // Alerts fire from the server, so it has to save there to count.
@@ -7545,6 +7548,10 @@ function AppContent() {
       } catch (error) {
         if (__DEV__) console.error('❌ [Push] Failed to create alert on backend:', error);
       }
+
+      // It stays on the server under the old account or device. Writing it here would put it in the next account's list and
+      // storage, and that account's sync would post it again as its own.
+      if (accountGenRef.current !== accountGen) return;
 
       if (!saved) {
         // The form keeps what they typed so they can try again.
