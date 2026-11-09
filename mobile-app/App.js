@@ -7935,18 +7935,33 @@ function AppContent() {
   // server this session rather than fire unseen until the next launch. It
   // stops once the account changes, since the alert is the old account's and
   // the next session's token would carry the DELETE.
-  const sendAlertDelete = async (alertId) => {
-    const accountGen = accountChangedGenRef.current;
-    const deleted = alertsDeletedRef.current;
+  // The account, the count and the deleted ids come from the moment of the
+  // delete, before its save, since a save that reads storage first can
+  // outlast an account change.
+  const alertDeleteScope = () => ({
+    accountGen: accountChangedGenRef.current,
+    deleted: alertsDeletedRef.current,
+    userId: lastAccountIdRef.current || null,
+  });
+
+  const sendAlertDelete = async (alertId, scope = alertDeleteScope()) => {
+    const { accountGen, deleted, userId } = scope;
+    const gone = () => accountChangedGenRef.current !== accountGen
+      || alertsDeletedRef.current !== deleted
+      || (lastAccountIdRef.current || null) !== userId;
     for (let attempt = 0; attempt <= ALERT_DELETE_RETRY_MS.length; attempt++) {
       if (attempt > 0) {
         await new Promise(resolve => setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1]));
       }
-      if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;
+      if (gone()) return;
       let res = null;
       try {
         const headers = await withSession();
-        if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;
+        if (gone()) return;
+        // No token on an account is a session read that timed out or a sign
+        // out under way. The DELETE would be refused, so it waits and tries
+        // again, and a sign out that lands moves the count and ends it.
+        if (userId && !headers.Authorization) continue;
         res = await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
           method: 'DELETE',
           headers,
@@ -7973,6 +7988,7 @@ function AppContent() {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             if (__DEV__) console.log('🗑️ [Push] Deleting price alert:', alertId);
             alertsDeletedRef.current.add(alertId);
+            const scope = alertDeleteScope();
             const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
             priceAlertsRef.current = updated;
             setPriceAlerts(updated);
@@ -7980,7 +7996,7 @@ function AppContent() {
 
             // Delete from backend. Its retries run on their own, so the
             // haptic doesn't wait on them.
-            sendAlertDelete(alertId);
+            sendAlertDelete(alertId, scope);
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           },
@@ -7993,11 +8009,12 @@ function AppContent() {
   const deletePriceAlertDirect = async (alertId) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     alertsDeletedRef.current.add(alertId);
+    const scope = alertDeleteScope();
     const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
     priceAlertsRef.current = updated;
     setPriceAlerts(updated);
     await saveAlertsAfterChange(updated, [alertId]);
-    sendAlertDelete(alertId);
+    sendAlertDelete(alertId, scope);
   };
 
   // Clear all price alerts (local + backend batch delete)

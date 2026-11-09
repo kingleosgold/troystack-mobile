@@ -264,10 +264,10 @@ test('a single alert toggle or delete carries the session token', () => {
   const calls = fns.split('/v1/push/price-alerts/${alertId}`').slice(1);
   assert.equal(calls.length, 1, 'one PATCH, the DELETEs go through sendAlertDelete');
   assert.match(calls[0].slice(0, calls[0].indexOf('});')), /headers: await withSession\(/);
-  assert.equal(fns.split('sendAlertDelete(alertId);').length - 1, 2, 'both deletes send through sendAlertDelete');
+  assert.equal(fns.split('sendAlertDelete(alertId, scope);').length - 1, 2, 'both deletes send through sendAlertDelete');
   const send = sendAlertDeleteSource();
   const read = send.indexOf('const headers = await withSession();');
-  const gate = send.indexOf('if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;', read);
+  const gate = send.indexOf('if (gone()) return;', read);
   const del = send.indexOf("method: 'DELETE'", gate);
   assert.ok(read > 0 && gate > read && del > gate, 'the account is checked after reading the session, right before the DELETE');
 });
@@ -635,7 +635,7 @@ test('a load drops a stored copy of an alert deleted this session, and keeps ide
 
 test('both deletes note the id, the sync, merge and load read the set, and a wipe clears it', () => {
   assert.match(appJs, /const alertsDeletedRef = useRef\(new Set\(\)\);/);
-  assert.equal((appJs.match(/alertsDeletedRef\.current\.add\(alertId\);\s*const updated = priceAlertsRef\.current\.filter\(a => a\.id !== alertId\);/g) || []).length, 2);
+  assert.equal((appJs.match(/alertsDeletedRef\.current\.add\(alertId\);\s*const scope = alertDeleteScope\(\);\s*const updated = priceAlertsRef\.current\.filter\(a => a\.id !== alertId\);/g) || []).length, 2);
   assert.equal((appJs.match(/deletedSinceStart\(alert\.id, \[\.\.\.alertsSurfacedRef\.current, \.\.\.atStart\], priceAlertsRef\.current, alertsDeletedRef\.current\)/g) || []).length, 2);
   assert.match(appJs, /mergeSyncedAlerts\(\{[^}]*deleted: alertsDeletedRef\.current \}\)/);
   assert.match(appJs, /loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current, unsaved, alertsDeletedRef\.current\)/);
@@ -691,7 +691,7 @@ test('a failed single DELETE is retried a bounded number of times with growing w
 test('a single DELETE stops retrying once the account changes or a reset clears the deleted ids', () => {
   const send = sendAlertDeleteSource();
   const wait = send.indexOf('setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1])');
-  const gate = send.indexOf('if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;', wait);
+  const gate = send.indexOf('if (gone()) return;', wait);
   const read = send.indexOf('const headers = await withSession();', gate);
   assert.ok(wait > 0 && gate > wait && read > gate, 'checked after each wait, before reading the session');
 });
@@ -738,4 +738,28 @@ test('the account change claims the stored alerts after the account lands, check
   const regate = fn.indexOf('if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;', write);
   const ref = fn.indexOf('if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;', regate);
   assert.ok(regate > write && ref > regate, 'the screen takes the owner after the write, while still that account');
+});
+
+test('a single delete takes its account, count and deleted ids before its save, and stops if a guest signed in since', () => {
+  for (const name of ['const deletePriceAlert = async', 'const deletePriceAlertDirect = async']) {
+    const start = appJs.indexOf(name);
+    const fn = appJs.slice(start, appJs.indexOf('};', appJs.indexOf('sendAlertDelete(alertId, scope);', start)));
+    const scope = fn.indexOf('const scope = alertDeleteScope();');
+    const save = fn.indexOf('await saveAlertsAfterChange(updated, [alertId]);');
+    assert.ok(scope > 0 && save > scope, name + ' takes the scope before the save');
+  }
+  const scopeFn = appJs.slice(appJs.indexOf('const alertDeleteScope = () =>'), appJs.indexOf('const sendAlertDelete = async'));
+  assert.match(scopeFn, /accountGen: accountChangedGenRef\.current/);
+  assert.match(scopeFn, /deleted: alertsDeletedRef\.current/);
+  assert.match(scopeFn, /userId: lastAccountIdRef\.current \|\| null/);
+  const send = sendAlertDeleteSource();
+  assert.match(send, /\(lastAccountIdRef\.current \|\| null\) !== userId/);
+});
+
+test('a single delete with no token on an account waits and tries again rather than send it bare', () => {
+  const send = sendAlertDeleteSource();
+  const read = send.indexOf('const headers = await withSession();');
+  const token = send.indexOf('if (userId && !headers.Authorization) continue;', read);
+  const del = send.indexOf("method: 'DELETE'", read);
+  assert.ok(read > 0 && token > read && del > token);
 });
