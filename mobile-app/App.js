@@ -2868,6 +2868,10 @@ function AppContent() {
   // since its read of the stored list threw. A load that starts after that
   // keeps them rather than show the stored list alone.
   const alertsUnsavedRef = useRef([]);
+  // The account whose stored alerts the screen list carries, or null for a
+  // guest's own. When another account lands the list goes, so its alerts
+  // aren't saved, and then sent up, as the new account's.
+  const alertsOwnerRef = useRef(null);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -3302,6 +3306,7 @@ function AppContent() {
     lastIntelligenceFetchRef.current = { count: 0, fetchedAt: 0 };
     setPriceAlerts([]);
     alertsUnsavedRef.current = [];
+    alertsOwnerRef.current = null;
     setAnalyticsSnapshots([]);
     setAnalyticsRange('1M');
     setSpotHistoryMetal({
@@ -4792,7 +4797,21 @@ function AppContent() {
       accountGenRef.current += 1;
       accountChangedGenRef.current += 1;
     }
-    lastAccountIdRef.current = supabaseUser?.id || null;
+    const nextId = supabaseUser?.id || null;
+    // Alerts on the screen from another account, left by a session that
+    // expired without a sign out, go before this account can save them as its
+    // own. The next load or sync reads this account's.
+    if (nextId && alertsOwnerRef.current && alertsOwnerRef.current !== nextId) {
+      priceAlertsRef.current = [];
+      setPriceAlerts([]);
+      alertsLoadedRef.current = false;
+      alertsSurfacedRef.current = [];
+      alertsUnsavedRef.current = [];
+      alertsOwnerRef.current = null;
+      // A load still out read the list that just went, so it stands down.
+      alertsSyncGenRef.current += 1;
+    }
+    lastAccountIdRef.current = nextId;
   }, [supabaseUser?.id]);
 
   // Supabase Holdings Sync - sync on app load when user is already signed in
@@ -5203,14 +5222,16 @@ function AppContent() {
   // and again when an account lands after that, so a session that lands
   // after the launch sync or a guest who signs in gets the account's alerts
   // now. See nextAlertSync in src/utils/alertSave.js.
+  // It waits for the stored session to land, so a launch doesn't sync as a
+  // guest an account's alerts that are about to be its own.
   useEffect(() => {
-    if (!dataLoaded) return;
+    if (!dataLoaded || authLoading) return;
     const next = nextAlertSync(alertSyncLastRef.current, supabaseUser?.id);
     alertSyncLastRef.current = next.last;
     if (!next.run) return;
     if (__DEV__) console.log('🔄 [Push] Syncing price alerts from backend');
     syncAlertsFromBackend();
-  }, [dataLoaded, supabaseUser?.id]);
+  }, [dataLoaded, authLoading, supabaseUser?.id]);
 
   // Handle notification received in foreground (for logging)
   useEffect(() => {
@@ -7474,7 +7495,7 @@ function AppContent() {
     const syncGen = alertsSyncGenRef.current;
     const atStart = priceAlertsRef.current;
     try {
-      const val = await readStoredAlerts();
+      const [val, valOwner] = await readStoredAlerts();
       if (accountChangedGenRef.current !== accountGen) return;
       // A sync that landed while this read ran already has the stored alerts
       // and dropped the ones the server no longer keeps, so its list stands.
@@ -7493,6 +7514,7 @@ function AppContent() {
         // delete or sync reads it.
         const stored = JSON.parse(val);
         const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current, unsaved);
+        notedAlertsOwner(valOwner);
         priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
         // A change made while it loaded saved a list without the stored
@@ -7506,21 +7528,34 @@ function AppContent() {
   };
 
   // The stored alerts as raw JSON, or null when there are none this account
-  // may read in. Another account's, left by a session that expired without a
-  // sign out, are on the server under that account, so they read as none.
+  // may read in, and their owner. Another account's, left by a session that
+  // expired without a sign out, are on the server under that account, so they
+  // read as none.
   const readStoredAlerts = async () => {
     const [[, val], [, owner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
-    return storedAlertsFor(val, owner, lastAccountIdRef.current || null);
+    const mine = storedAlertsFor(val, owner, lastAccountIdRef.current || null);
+    return [mine, mine ? (owner || null) : null];
+  };
+
+  // Once stored alerts are on the screen, the screen carries their owner.
+  const notedAlertsOwner = (owner) => {
+    if (owner) alertsOwnerRef.current = owner;
   };
 
   // Save price alerts to AsyncStorage, under the account signed in now. A
-  // guest's save leaves the owner as it is.
+  // guest's own list has no owner. A guest still showing an account's list,
+  // a launch before the stored session lands say, leaves its owner as is.
   const savePriceAlerts = async (alerts) => {
     try {
       const owner = lastAccountIdRef.current || null;
       const json = JSON.stringify(alerts);
-      if (owner) await AsyncStorage.multiSet([['stack_price_alerts', json], [ALERTS_OWNER_KEY, owner]]);
-      else await AsyncStorage.setItem('stack_price_alerts', json);
+      if (owner) {
+        alertsOwnerRef.current = owner;
+        await AsyncStorage.multiSet([['stack_price_alerts', json], [ALERTS_OWNER_KEY, owner]]);
+      } else {
+        await AsyncStorage.setItem('stack_price_alerts', json);
+        if (!alertsOwnerRef.current) await AsyncStorage.removeItem(ALERTS_OWNER_KEY);
+      }
     } catch (error) {
       if (__DEV__) console.error('❌ Error saving price alerts:', error);
     }
@@ -7538,8 +7573,10 @@ function AppContent() {
     }
     const accountGen = accountChangedGenRef.current;
     let stored = [];
+    let storedOwner = null;
     try {
-      const val = await readStoredAlerts();
+      const [val, valOwner] = await readStoredAlerts();
+      storedOwner = valOwner;
       // Corrupt JSON holds nothing to keep.
       try { stored = val ? JSON.parse(val) : []; } catch (e) { stored = []; }
     } catch (e) {
@@ -7562,6 +7599,7 @@ function AppContent() {
       ...merged.filter(a => !onScreen.has(a.id)),
     ];
     alertsLoadedRef.current = true;
+    notedAlertsOwner(storedOwner);
     priceAlertsRef.current = merged;
     setPriceAlerts(merged);
     await savePriceAlerts(merged);
@@ -7603,12 +7641,16 @@ function AppContent() {
         // Try to push any local-only alerts to backend, keep only those that succeed
         const [[, storedVal], [, storedOwner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
         // Another account's alerts, left by a session that expired without a
-        // sign out, are on the server under that account. A guest sync leaves
-        // them alone, since the stored session may still land. An account
-        // sends none of them up and drops them from its list.
-        if (!userId && alertsOwnedElsewhere(storedOwner, null)) return;
-        const localAlerts = storedAlertsFor(storedVal, storedOwner, userId);
+        // sign out, are on the server under that account. The sync waits for
+        // the stored session to land, so whoever is here now sends none of
+        // them up and drops them from the list, the screen's copy included.
+        const foreign = alertsOwnedElsewhere(storedOwner, userId);
+        const localAlerts = foreign ? null : storedVal;
         const localParsed = localAlerts ? JSON.parse(localAlerts) : [];
+        let foreignIds = [];
+        if (foreign) {
+          try { foreignIds = (JSON.parse(storedVal) || []).map(a => a && a.id).filter(Boolean); } catch (e) { foreignIds = []; }
+        }
         const backendIds = new Set(backendAlerts.map(a => a.id));
         const localOnly = localParsed.filter(a => !backendIds.has(a.id));
         const syncedLocal = [];
@@ -7682,11 +7724,13 @@ function AppContent() {
 
         // Keep backend alerts, the local ones that synced and any alert created
         // while the re-POSTs were out.
-        const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
+        const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id), ...foreignIds]);
         const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart: [...alertsSurfacedRef.current, ...atStart] });
         priceAlertsRef.current = final;
         alertsSyncGenRef.current += 1;
         alertsLoadedRef.current = true;
+        // The list is whoever is here now's, so a guest's save drops the owner.
+        alertsOwnerRef.current = userId;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);
@@ -7772,18 +7816,21 @@ function AppContent() {
       // A read that threw leaves the stored list unknown, so writing the
       // screen list would wipe it. Corrupt JSON holds nothing to keep.
       let readThrew = false;
+      let storedOwner = null;
       if (!alertsLoadedRef.current) {
         try {
           readThrew = true;
-          const val = await readStoredAlerts();
+          const [val, valOwner] = await readStoredAlerts();
           readThrew = false;
           stored = val ? JSON.parse(val) : null;
+          storedOwner = valOwner;
           readStored = true;
         } catch (e) { stored = null; }
         if (accountChangedGenRef.current !== accountGen) return;
         // A load or a sync that landed while it read has the stored list now.
         if (alertsLoadedRef.current) stored = null;
       }
+      if (stored) notedAlertsOwner(storedOwner);
       // It's saved on the server, so the next load and sync bring it back.
       const skipLocalSave = readThrew && !alertsLoadedRef.current;
       const updated = withCreatedAlert(alert, priceAlertsRef.current, stored);
