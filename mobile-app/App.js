@@ -2838,6 +2838,10 @@ function AppContent() {
   // can't put the last account's owner or stack back on the phone. Unlike
   // signedInIdRef it never reads null while the same account stays signed in.
   const accountGenRef = useRef(0);
+  // Goes up only once a sign out has taken, the account has changed or a wipe
+  // has started, never for a sign out that failed. A Create Alert save that
+  // lands after it moves belongs to the account that's gone.
+  const accountChangedGenRef = useRef(0);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -3312,6 +3316,7 @@ function AppContent() {
       // The loading screen holds through the wipe too
       setSigningOut(true);
       accountGenRef.current += 1;
+      accountChangedGenRef.current += 1;
       await AsyncStorage.clear();
       await clearPendingDeletes();
       accountGenRef.current += 1;
@@ -3457,6 +3462,7 @@ function AppContent() {
       if (signOutError) return false;
       // A sync the auto sync started again while that ran stops here too
       accountGenRef.current += 1;
+      accountChangedGenRef.current += 1;
       // 2. A web plan belongs to the account, not the phone
       webPlanGenRef.current += 1;
       rcPlanRef.current = { rcGold: false, rcLifetime: false, rcTier: 'free' };
@@ -4748,7 +4754,10 @@ function AppContent() {
   // that was signed in can be running, so a sign in from no account leaves
   // the count alone.
   useLayoutEffect(() => {
-    if (lastAccountIdRef.current) accountGenRef.current += 1;
+    if (lastAccountIdRef.current) {
+      accountGenRef.current += 1;
+      accountChangedGenRef.current += 1;
+    }
     lastAccountIdRef.current = supabaseUser?.id || null;
   }, [supabaseUser?.id]);
 
@@ -7521,8 +7530,9 @@ function AppContent() {
 
       const alertId = generateUUID();
       // A sign out, account switch or wipe while the save is out moves the
-      // count, and the alert then belongs to the account that's gone.
-      const accountGen = accountGenRef.current;
+      // count, and the alert then belongs to the account that's gone. A sign
+      // out that failed leaves it, so that save still lands here.
+      const accountGen = accountChangedGenRef.current;
       const deviceId = await getDeviceId();
 
       // Alerts fire from the server, so it has to save there to count.
@@ -7551,7 +7561,7 @@ function AppContent() {
 
       // It stays on the server under the old account or device. Writing it here would put it in the next account's list and
       // storage, and that account's sync would post it again as its own.
-      if (accountGenRef.current !== accountGen) return;
+      if (accountChangedGenRef.current !== accountGen) return;
 
       if (!saved) {
         // The form keeps what they typed so they can try again.
