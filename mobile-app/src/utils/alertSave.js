@@ -72,6 +72,13 @@ export function deletedSinceStart(id, atStart, current, deleted) {
   return (atStart || []).some(a => a.id === id) && !(current || []).some(a => a.id === id);
 }
 
+// Ids of server alerts the user deleted this session, so a sync can send
+// their DELETE again.
+export function deletedOnServer(backendAlerts, deleted) {
+  if (!deleted || !deleted.size) return [];
+  return (backendAlerts || []).filter(a => a && deleted.has(a.id)).map(a => a.id);
+}
+
 /**
  * The list to show once the stored alerts load. If nothing changed on the
  * screen while they loaded, that's the stored list. If an alert was made in

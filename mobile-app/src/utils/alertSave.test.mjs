@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -629,4 +629,24 @@ test('both deletes note the id, the sync, merge and load read the set, and a wip
   assert.match(appJs, /mergeSyncedAlerts\(\{[^}]*deleted: alertsDeletedRef\.current \}\)/);
   assert.match(appJs, /loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current, unsaved, alertsDeletedRef\.current\)/);
   assert.match(appJs, /alertsOwnerRef\.current = null;\s*alertsDeletedRef\.current = new Set\(\);/);
+});
+
+test('deletedOnServer lists only server alerts deleted this session', () => {
+  const backend = [{ id: 'a' }, { id: 'x' }, null];
+  assert.deepEqual(deletedOnServer(backend, new Set(['x', 'gone'])), ['x']);
+  assert.deepEqual(deletedOnServer(backend, new Set()), []);
+  assert.deepEqual(deletedOnServer(backend, null), []);
+  assert.deepEqual(deletedOnServer(null, new Set(['x'])), []);
+});
+
+test('a sync deletes again a server copy of a deleted alert, once the merged list is saved, checking the account after reading the session', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const save = fn.indexOf('await savePriceAlerts(final);');
+  const list = fn.indexOf('deletedOnServer(backendAlerts, alertsDeletedRef.current)');
+  const headers = fn.indexOf('const delHeaders = await withSession();', list);
+  const gen = fn.indexOf('if (accountChangedGenRef.current !== accountGen) return;', list);
+  const del = fn.indexOf("method: 'DELETE'", list);
+  assert.ok(save > 0 && list > save && headers > list && gen > headers && del > gen);
 });
