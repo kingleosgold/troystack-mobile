@@ -342,23 +342,15 @@ sidebarNavItems = [
 
 ### Build Plugins
 
-#### mobile-app/plugins/ios-widget/withWidget.js
-- **Purpose:** Expo config plugin — creates widget extension directory, copies Swift files, sets up Xcode project
-- **Creates:** Widget entitlements, Assets.xcassets (AccentColor, WidgetBackground, AppIcon, TroyIcon)
-- **Last modified:** 2026-04-07
-
 #### mobile-app/plugins/withWidgetNativeModule.js
 - **Purpose:** Copies WidgetKitModule.swift/.m to iOS project for RN-to-WidgetKit bridge
 - **Last modified:** 2026-01-19
 
-### Plugin Widget Files (synced copies)
-- `plugins/ios-widget/widget-files/StackTrackerWidget.swift`
-- `plugins/ios-widget/widget-files/WidgetViews.swift`
-- `plugins/ios-widget/widget-files/WidgetData.swift`
+### Plugin Widget Files
 - `plugins/ios-widget/widget-files/WidgetKitModule.swift`
 - `plugins/ios-widget/widget-files/WidgetKitModule.m`
 
-> **Important:** `targets/widget/` and `plugins/ios-widget/widget-files/` must stay in sync. Always copy after editing.
+> The widget extension's Swift lives only in `targets/widget/`, built by `@bacons/apple-targets`. The plugin folder holds just the React Native bridge that `withWidgetNativeModule.js` copies into the app target.
 
 ---
 

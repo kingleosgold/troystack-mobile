@@ -2,19 +2,15 @@
 // TroyStack widget. Feature copy carries no AI wording (the no-AI copy rule
 // from #186, which keeps the disclosures) and the portfolio widget goes by the
 // app's name, not the old Stack Tracker Gold. Builds compile targets/widget
-// through @bacons/apple-targets, and plugins/ios-widget keeps a second copy,
-// so both are read and must say the same.
+// through @bacons/apple-targets, the only copy of the widget's Swift.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const COPIES = [
-  'targets/widget/StackTrackerWidget.swift',
-  'plugins/ios-widget/widget-files/StackTrackerWidget.swift',
-];
+const COPIES = ['targets/widget/StackTrackerWidget.swift'];
 
 // Every .configurationDisplayName("...") and .description("...") string.
 const galleryStrings = (src) => [...src.matchAll(/\.(configurationDisplayName|description)\("([^"]*)"\)/g)]
@@ -30,13 +26,18 @@ for (const file of COPIES) {
 
   test(`${file} gallery copy says no AI and no old app name`, () => {
     for (const { text } of strings) {
-      assert.doesNotMatch(text, /\bAI\b/, text);
+      assert.doesNotMatch(text, /\bAI\b/i, text);
       assert.doesNotMatch(text, /Stack Tracker/i, text);
     }
   });
 }
 
-test('both widget copies show the same gallery copy', () => {
-  const [a, b] = COPIES.map((f) => galleryStrings(readFileSync(path.join(root, f), 'utf8')));
-  assert.deepEqual(a, b);
+test('the plugin folder keeps no stale copy of the widget', () => {
+  for (const name of ['StackTrackerWidget.swift', 'WidgetViews.swift', 'WidgetData.swift']) {
+    assert.equal(existsSync(path.join(root, 'plugins/ios-widget/widget-files', name)), false, name);
+  }
+  // withWidgetNativeModule.js still copies the React Native bridge from here.
+  for (const name of ['WidgetKitModule.swift', 'WidgetKitModule.m']) {
+    assert.equal(existsSync(path.join(root, 'plugins/ios-widget/widget-files', name)), true, name);
+  }
 });
