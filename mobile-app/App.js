@@ -39,6 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
+import { alertSaved, ALERT_NOT_SAVED } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2909,6 +2910,7 @@ function AppContent() {
 
   // Price Alerts State (free feature)
   const [priceAlerts, setPriceAlerts] = useState([]);
+  const creatingAlertRef = useRef(false);
   const [showAddAlertModal, setShowAddAlertModal] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [newAlert, setNewAlert] = useState({
@@ -7505,53 +7507,69 @@ function AppContent() {
       return;
     }
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    const alertId = generateUUID();
-    const deviceId = await getDeviceId();
-
-    // Save to backend first
+    // A second tap while the first save is still out would create a duplicate.
+    if (creatingAlertRef.current) return;
+    creatingAlertRef.current = true;
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
-        method: 'POST',
-        headers: await withSession({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          id: alertId,
-          userId: supabaseUser?.id || null,
-          device_id: deviceId,
-          metal: newAlert.metal,
-          targetPrice: targetPrice,
-          direction: newAlert.direction,
-          enabled: true,
-        }),
-      });
-      const result = await response.json();
-      if (__DEV__) console.log('🔔 [Push] Backend create response:', JSON.stringify(result));
-    } catch (error) {
-      if (__DEV__) console.error('❌ [Push] Failed to create alert on backend:', error);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      const alertId = generateUUID();
+      const deviceId = await getDeviceId();
+
+      // Alerts fire from the server, so it has to save there to count.
+      let saved = false;
+      try {
+        const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
+          method: 'POST',
+          headers: await withSession({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            id: alertId,
+            userId: supabaseUser?.id || null,
+            device_id: deviceId,
+            metal: newAlert.metal,
+            targetPrice: targetPrice,
+            direction: newAlert.direction,
+            enabled: true,
+          }),
+        });
+        const result = await response.json().catch(() => null);
+        saved = alertSaved(response, result);
+        if (__DEV__) console.log('🔔 [Push] Backend create response:', response.status, JSON.stringify(result));
+      } catch (error) {
+        if (__DEV__) console.error('❌ [Push] Failed to create alert on backend:', error);
+      }
+
+      if (!saved) {
+        // The form keeps what they typed so they can try again.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert(ALERT_NOT_SAVED.title, ALERT_NOT_SAVED.message);
+        return;
+      }
+
+      // Also save locally
+      const alert = {
+        id: alertId,
+        metal: newAlert.metal,
+        direction: newAlert.direction,
+        targetPrice: targetPrice,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      const updated = [alert, ...priceAlerts];
+      setPriceAlerts(updated);
+      await savePriceAlerts(updated);
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setNewAlert({ metal: 'silver', targetPrice: '', direction: 'above' });
+
+      Alert.alert(
+        'Alert Created',
+        alertCreatedMessage({ platform: Platform.OS, metal: newAlert.metal, direction: newAlert.direction, targetPrice })
+      );
+    } finally {
+      creatingAlertRef.current = false;
     }
-
-    // Also save locally
-    const alert = {
-      id: alertId,
-      metal: newAlert.metal,
-      direction: newAlert.direction,
-      targetPrice: targetPrice,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated = [alert, ...priceAlerts];
-    setPriceAlerts(updated);
-    await savePriceAlerts(updated);
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setNewAlert({ metal: 'silver', targetPrice: '', direction: 'above' });
-
-    Alert.alert(
-      'Alert Created',
-      alertCreatedMessage({ platform: Platform.OS, metal: newAlert.metal, direction: newAlert.direction, targetPrice })
-    );
   };
 
   // Toggle a price alert enabled/disabled (local + backend PATCH)
