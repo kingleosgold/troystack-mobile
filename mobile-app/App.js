@@ -38,7 +38,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
-import { pushOffAlert } from './src/utils/pushOffAlert';
+import { pushOffAlert, alertCreatedMessage, pushHint } from './src/utils/pushOffAlert';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7550,7 +7550,7 @@ function AppContent() {
 
     Alert.alert(
       'Alert Created',
-      `You'll be notified when ${newAlert.metal} goes ${newAlert.direction} $${targetPrice.toFixed(2)}/oz.`
+      alertCreatedMessage({ platform: Platform.OS, metal: newAlert.metal, direction: newAlert.direction, targetPrice })
     );
   };
 
@@ -16508,8 +16508,9 @@ function AppContent() {
         {!expoPushToken && (
           <View style={{ marginTop: 16, alignItems: 'center' }}>
             <Text style={{ color: colors.error, fontSize: 12, textAlign: 'center', marginBottom: 10 }}>
-              Push notifications not enabled. Tap below to allow notifications.
+              {pushHint({ platform: Platform.OS }).text}
             </Text>
+            {pushHint({ platform: Platform.OS }).showEnableButton && (
             <TouchableOpacity
               style={{
                 backgroundColor: '#FF9500',
@@ -16538,6 +16539,7 @@ function AppContent() {
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Enable Notifications</Text>
             </TouchableOpacity>
+            )}
           </View>
         )}
 

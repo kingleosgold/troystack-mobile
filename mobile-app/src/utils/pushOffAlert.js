@@ -8,7 +8,8 @@
  * Settings would only send them in a circle. Android builds don't carry
  * Firebase yet, so there it always means push can't reach the phone and
  * "try again later" would never come true. Once Firebase is in, the Android
- * branch goes back to the shared words (a test fails until it does).
+ * branches here, in alertCreatedMessage and in pushHint all go back to the
+ * shared words (a test fails until they do).
  * Nothing here imports React Native, so it runs under `node --test`.
  */
 
@@ -31,5 +32,36 @@ export function pushOffAlert({ platform, granted }) {
     title: 'Notifications are off',
     message: 'Tap Open Settings, then Notifications, and turn them on.',
     openSettings: true,
+  };
+}
+
+/**
+ * The words after a price alert saves. Android can't get the push yet, so
+ * there it says the alert is saved and can't reach the phone yet, instead
+ * of promising a notification that never comes.
+ */
+export function alertCreatedMessage({ platform, metal, direction, targetPrice }) {
+  const target = `${metal} goes ${direction} $${targetPrice.toFixed(2)}/oz`;
+  if (platform === 'android') {
+    return `Alert saved for when ${target}. Price alert notifications can't reach Android phones yet.`;
+  }
+  return `You'll be notified when ${target}.`;
+}
+
+/**
+ * The red hint under Create Alert when there's no push token. On Android
+ * turning notifications on can't help yet, so it says so and hides the
+ * Enable Notifications button rather than send the person in a circle.
+ */
+export function pushHint({ platform }) {
+  if (platform === 'android') {
+    return {
+      text: "Price alert notifications can't reach Android phones yet. Your alerts are still saved.",
+      showEnableButton: false,
+    };
+  }
+  return {
+    text: 'Push notifications not enabled. Tap below to allow notifications.',
+    showEnableButton: true,
   };
 }
