@@ -391,3 +391,17 @@ test('a stored alerts read that throws in Create keeps the store as it was', () 
   // The screen still shows it.
   assert.ok(fn.indexOf('setPriceAlerts(updated)') < fn.indexOf('if (!skipLocalSave)'));
 });
+
+test('an alert sync sends nothing for an account that is not the one signed in now', () => {
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  // Checked after the headers resolve, right before the POST goes.
+  assert.match(sync, /if \(userId && !postHeaders\.Authorization\) return;(\s*\/\/[^\n]*\n)+\s*if \(userId !== \(lastAccountIdRef\.current \|\| null\)\) return;\s*\/\/[^\n]*\n\s*const onScreen/);
+  // It returns rather than breaks, since a break would merge and drop the
+  // unsent local alerts as orphans.
+  assert.ok(!/lastAccountIdRef\.current \|\| null\)\) break/.test(sync));
+  // The ref still names the account signing out until the session goes, so
+  // a guest sync is stopped through the server sign out too.
+  const start = appJs.indexOf('const performSignOut = async () => {');
+  const signOut = appJs.slice(start, appJs.indexOf('// Helper function to format currency', start));
+  assert.ok(!/lastAccountIdRef\.current =/.test(signOut));
+});

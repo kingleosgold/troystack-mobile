@@ -7534,6 +7534,12 @@ function AppContent() {
             // An account with no session token is a sign out still under way
             // (it moves the count only once it's done), so write nothing.
             if (userId && !postHeaders.Authorization) return;
+            // A sync that started as a guest or as another account holds
+            // alerts that aren't this account's to send. That's a launch sync
+            // the session landed under, or one still out while a sign out
+            // waits on the server. Nothing is written, so the next launch's
+            // sync sends them.
+            if (userId !== (lastAccountIdRef.current || null)) return;
             // A toggle made since the sync read storage sends the switch the user set.
             const onScreen = priceAlertsRef.current.find(a => a.id === alert.id);
             const enabled = (onScreen || alert).enabled !== false;
