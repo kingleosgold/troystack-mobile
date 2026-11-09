@@ -217,3 +217,42 @@ export function alertDeleteRetryable(res) {
   const status = Number(res.status);
   return status >= 500 || status === 408 || status === 429;
 }
+
+/**
+ * Sends one deleted alert's DELETE, and again after each wait in retryMs if
+ * it didn't reach the server. Before each try, after its wait, and again
+ * after reading the session, it stops once gone() says the delete no longer
+ * belongs to this session. An account with no token waits and tries again
+ * rather than send the DELETE bare. The screen passes in the real session,
+ * fetch and timer, and the tests pass fakes.
+ * @param {object} opts
+ * @param {() => boolean} opts.gone true once the account or the deleted ids changed
+ * @param {() => Promise<object>} opts.getHeaders the session headers
+ * @param {(headers: object) => Promise<object>} opts.send the DELETE, its Response
+ * @param {(ms: number) => Promise<void>} opts.wait
+ * @param {boolean} opts.needsToken true when the delete was made on an account
+ * @param {number[]} [opts.retryMs]
+ * @param {(error: unknown) => void} [opts.onError]
+ * @returns {Promise<'gone'|'done'|'exhausted'>}
+ */
+export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken, retryMs = ALERT_DELETE_RETRY_MS, onError }) {
+  for (let attempt = 0; attempt <= retryMs.length; attempt++) {
+    if (attempt > 0) await wait(retryMs[attempt - 1]);
+    if (gone()) return 'gone';
+    let res = null;
+    try {
+      const headers = await getHeaders();
+      if (gone()) return 'gone';
+      // No token on an account is a session read that timed out or a sign
+      // out under way. The DELETE would be refused, so it waits and tries
+      // again, and a sign out that lands moves the count and ends it.
+      if (needsToken && !headers.Authorization) continue;
+      res = await send(headers);
+    } catch (error) {
+      if (onError) onError(error);
+      res = null;
+    }
+    if (!alertDeleteRetryable(res)) return 'done';
+  }
+  return 'exhausted';
+}

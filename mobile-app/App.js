@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, alertDeleteRetryable, ALERT_DELETE_RETRY_MS } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, runAlertDelete } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7950,29 +7950,19 @@ function AppContent() {
     const gone = () => accountChangedGenRef.current !== accountGen
       || alertsDeletedRef.current !== deleted
       || (lastAccountIdRef.current || null) !== userId;
-    for (let attempt = 0; attempt <= ALERT_DELETE_RETRY_MS.length; attempt++) {
-      if (attempt > 0) {
-        await new Promise(resolve => setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1]));
-      }
-      if (gone()) return;
-      let res = null;
-      try {
-        const headers = await withSession();
-        if (gone()) return;
-        // No token on an account is a session read that timed out or a sign
-        // out under way. The DELETE would be refused, so it waits and tries
-        // again, and a sign out that lands moves the count and ends it.
-        if (userId && !headers.Authorization) continue;
-        res = await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
-          method: 'DELETE',
-          headers,
-        });
-      } catch (error) {
+    await runAlertDelete({
+      gone,
+      getHeaders: () => withSession(),
+      send: headers => fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
+        method: 'DELETE',
+        headers,
+      }),
+      wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
+      needsToken: !!userId,
+      onError: error => {
         if (__DEV__) console.error('❌ [Push] Failed to delete alert from backend:', error);
-        res = null;
-      }
-      if (!alertDeleteRetryable(res)) return;
-    }
+      },
+    });
   };
 
   // Delete a price alert (local + backend)

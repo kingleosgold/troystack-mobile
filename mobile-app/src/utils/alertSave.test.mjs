@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, runAlertDelete } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -265,11 +265,11 @@ test('a single alert toggle or delete carries the session token', () => {
   assert.equal(calls.length, 1, 'one PATCH, the DELETEs go through sendAlertDelete');
   assert.match(calls[0].slice(0, calls[0].indexOf('});')), /headers: await withSession\(/);
   assert.equal(fns.split('sendAlertDelete(alertId, scope);').length - 1, 2, 'both deletes send through sendAlertDelete');
+  // runAlertDelete checks the account after reading the session, right
+  // before the DELETE (tested below). The DELETE carries the headers it read.
   const send = sendAlertDeleteSource();
-  const read = send.indexOf('const headers = await withSession();');
-  const gate = send.indexOf('if (gone()) return;', read);
-  const del = send.indexOf("method: 'DELETE'", gate);
-  assert.ok(read > 0 && gate > read && del > gate, 'the account is checked after reading the session, right before the DELETE');
+  assert.match(send, /getHeaders: \(\) => withSession\(\)/);
+  assert.match(send, /send: headers => fetch\([^)]*\{\s*method: 'DELETE',\s*headers,\s*\}\)/);
 });
 
 test('the stored alerts load as is when nothing changed while loading', () => {
@@ -683,17 +683,92 @@ test('a failed single DELETE is retried a bounded number of times with growing w
   for (let i = 1; i < ALERT_DELETE_RETRY_MS.length; i++) {
     assert.ok(ALERT_DELETE_RETRY_MS[i] > ALERT_DELETE_RETRY_MS[i - 1]);
   }
-  const send = sendAlertDeleteSource();
-  assert.match(send, /attempt <= ALERT_DELETE_RETRY_MS\.length/);
-  assert.match(send, /if \(!alertDeleteRetryable\(res\)\) return;/);
 });
 
-test('a single DELETE stops retrying once the account changes or a reset clears the deleted ids', () => {
+// A fake session, fetch and timer for runAlertDelete. answers is what each
+// DELETE returns in turn (a Response-like object, null, or an Error to throw).
+function deleteHarness({ answers = [], headers = { Authorization: 'Bearer t' }, needsToken = true, goneAt = null } = {}) {
+  const log = [];
+  let sends = 0;
+  let checks = 0;
+  const opts = {
+    gone: () => {
+      checks++;
+      const out = goneAt != null && checks >= goneAt;
+      log.push(out ? 'gone' : 'here');
+      return out;
+    },
+    getHeaders: async () => {
+      log.push('headers');
+      return typeof headers === 'function' ? headers() : headers;
+    },
+    send: async (h) => {
+      log.push('send');
+      const a = answers[sends++];
+      if (a instanceof Error) throw a;
+      return a === undefined ? null : a;
+    },
+    wait: async (ms) => { log.push(`wait ${ms}`); },
+    needsToken,
+    retryMs: [10, 20, 30],
+    onError: () => log.push('error'),
+  };
+  return { opts, log, sent: () => sends };
+}
+
+test('a single DELETE that lands goes once and stops', async () => {
+  const h = deleteHarness({ answers: [{ ok: true, status: 204 }] });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 1);
+  assert.ok(!h.log.some(l => l.startsWith('wait')));
+});
+
+test('a single DELETE that keeps failing waits each retry in turn, then gives up to the next sync', async () => {
+  const h = deleteHarness({ answers: [null, { ok: false, status: 503 }, new Error('net'), { ok: false, status: 429 }] });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 4, 'the first try and three retries');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20', 'wait 30']);
+  assert.equal(h.log.filter(l => l === 'error').length, 1, 'a throw is reported and retried');
+});
+
+test('a single DELETE retried until it lands stops there', async () => {
+  const h = deleteHarness({ answers: [{ ok: false, status: 500 }, { ok: false, status: 404 }] });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 2);
+});
+
+test('a refused single DELETE is not sent again', async () => {
+  const h = deleteHarness({ answers: [{ ok: false, status: 401 }] });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 1);
+});
+
+test('a single DELETE stops retrying once the account changes or a reset clears the deleted ids', async () => {
+  // gone() is checked before reading the session and again after. The third
+  // check is the one after the first wait.
+  const h = deleteHarness({ answers: [null, null], goneAt: 3 });
+  assert.equal(await runAlertDelete(h.opts), 'gone');
+  assert.equal(h.sent(), 1);
+  assert.deepEqual(h.log, ['here', 'headers', 'here', 'send', 'wait 10', 'gone']);
+});
+
+test('a single DELETE stops when the account changes while the session is read', async () => {
+  const h = deleteHarness({ answers: [{ ok: true, status: 200 }], goneAt: 2 });
+  assert.equal(await runAlertDelete(h.opts), 'gone');
+  assert.equal(h.sent(), 0, 'the next session\'s token never carries it');
+  assert.deepEqual(h.log, ['here', 'headers', 'gone']);
+});
+
+test('the screen sends its single DELETE through runAlertDelete with its scope check and the real session', () => {
   const send = sendAlertDeleteSource();
-  const wait = send.indexOf('setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1])');
-  const gate = send.indexOf('if (gone()) return;', wait);
-  const read = send.indexOf('const headers = await withSession();', gate);
-  assert.ok(wait > 0 && gate > wait && read > gate, 'checked after each wait, before reading the session');
+  assert.match(send, /await runAlertDelete\(\{/);
+  assert.match(send, /\bgone,/);
+  assert.match(send, /getHeaders: \(\) => withSession\(\)/);
+  assert.match(send, /needsToken: !!userId/);
+  assert.match(send, /method: 'DELETE'/);
+  assert.match(send, /setTimeout\(resolve, ms\)/);
+  assert.match(send, /accountChangedGenRef\.current !== accountGen/);
+  assert.match(send, /alertsDeletedRef\.current !== deleted/);
 });
 
 test('both sync re-DELETEs stop on an account with no token or a guest who signed in since, after reading the session', () => {
@@ -756,10 +831,25 @@ test('a single delete takes its account, count and deleted ids before its save, 
   assert.match(send, /\(lastAccountIdRef\.current \|\| null\) !== userId/);
 });
 
-test('a single delete with no token on an account waits and tries again rather than send it bare', () => {
-  const send = sendAlertDeleteSource();
-  const read = send.indexOf('const headers = await withSession();');
-  const token = send.indexOf('if (userId && !headers.Authorization) continue;', read);
-  const del = send.indexOf("method: 'DELETE'", read);
-  assert.ok(read > 0 && token > read && del > token);
+test('a single delete with no token on an account waits and tries again rather than send it bare', async () => {
+  let reads = 0;
+  const h = deleteHarness({
+    answers: [{ ok: true, status: 200 }],
+    headers: () => (++reads < 3 ? {} : { Authorization: 'Bearer t' }),
+  });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 1, 'sent once, only with a token');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20']);
+});
+
+test('a single delete with no token on an account that never gets one gives up without sending', async () => {
+  const h = deleteHarness({ headers: {} });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 0);
+});
+
+test('a guest\'s single delete goes without a token', async () => {
+  const h = deleteHarness({ headers: {}, needsToken: false, answers: [{ ok: true, status: 200 }] });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 1);
 });
