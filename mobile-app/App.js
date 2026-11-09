@@ -7652,10 +7652,12 @@ function AppContent() {
       // and saving it alone would write over them, a switched off one the
       // server no longer lists included. Read them in first.
       let stored = null;
+      let readStored = false;
       if (!alertsLoadedRef.current) {
         try {
           const val = await AsyncStorage.getItem('stack_price_alerts');
           stored = val ? JSON.parse(val) : null;
+          readStored = true;
         } catch (e) { stored = null; }
         if (accountChangedGenRef.current !== accountGen) return;
         // A load or a sync that landed while it read has the stored list now.
@@ -7668,10 +7670,11 @@ function AppContent() {
           ...alertsSurfacedRef.current,
           ...updated.filter(a => a.id !== alertId && !onScreen.has(a.id)),
         ];
-        // The screen now carries everything stored, so later creates don't
-        // read storage again and bring back an alert deleted since.
-        alertsLoadedRef.current = true;
       }
+      // The screen now carries everything stored, an empty store included,
+      // so later creates don't read storage again and bring back an alert
+      // deleted since.
+      if (readStored) alertsLoadedRef.current = true;
       priceAlertsRef.current = updated;
       setPriceAlerts(updated);
       await savePriceAlerts(updated);

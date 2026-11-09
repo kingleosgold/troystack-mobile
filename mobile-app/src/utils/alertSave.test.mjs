@@ -351,5 +351,6 @@ test('a stored alert Create surfaced and the user then deleted stays gone after 
 test('createPriceAlert notes the stored alerts it surfaced and marks the list read', () => {
   const start = appJs.indexOf('const createPriceAlert = async');
   const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
-  assert.match(fn, /if \(stored\) \{[\s\S]*?alertsSurfacedRef\.current = \[[\s\S]*?alertsLoadedRef\.current = true;[\s\S]*?\}\s*priceAlertsRef\.current = updated;/);
+  assert.match(fn, /if \(stored\) \{[\s\S]*?alertsSurfacedRef\.current = \[[\s\S]*?\}[\s\S]*?if \(readStored\) alertsLoadedRef\.current = true;\s*priceAlertsRef\.current = updated;/);
+  assert.match(fn, /JSON\.parse\(val\) : null;\s*readStored = true;/);
 });
