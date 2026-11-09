@@ -2864,6 +2864,10 @@ function AppContent() {
   // load or sync already running counts them as on the screen at its start,
   // so a delete or toggle of one made since isn't undone.
   const alertsSurfacedRef = useRef([]);
+  // Ids of alerts Create put on the screen but couldn't write to storage,
+  // since its read of the stored list threw. A load that starts after that
+  // keeps them rather than show the stored list alone.
+  const alertsUnsavedRef = useRef([]);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -3297,6 +3301,7 @@ function AppContent() {
     setIntelligenceBriefs([]);
     lastIntelligenceFetchRef.current = { count: 0, fetchedAt: 0 };
     setPriceAlerts([]);
+    alertsUnsavedRef.current = [];
     setAnalyticsSnapshots([]);
     setAnalyticsRange('1M');
     setSpotHistoryMetal({
@@ -7474,6 +7479,9 @@ function AppContent() {
       // and dropped the ones the server no longer keeps, so its list stands.
       if (alertsSyncGenRef.current !== syncGen) return;
       alertsLoadedRef.current = true;
+      // The screen list is whole from here on, so later saves carry them.
+      const unsaved = alertsUnsavedRef.current;
+      alertsUnsavedRef.current = [];
       // A load already out read the same stored list, so once this one has
       // put it on the screen that one stands down rather than bring back an
       // alert deleted after this one landed.
@@ -7483,7 +7491,7 @@ function AppContent() {
         // the stored ones, and the ref moves with the list so the next toggle,
         // delete or sync reads it.
         const stored = JSON.parse(val);
-        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current);
+        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current, unsaved);
         priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
         // A change made while it loaded saved a list without the stored
@@ -7773,7 +7781,8 @@ function AppContent() {
       if (readStored) alertsLoadedRef.current = true;
       priceAlertsRef.current = updated;
       setPriceAlerts(updated);
-      if (!skipLocalSave) await savePriceAlerts(updated);
+      if (skipLocalSave) alertsUnsavedRef.current = [...alertsUnsavedRef.current, alertId];
+      else await savePriceAlerts(updated);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setNewAlert({ metal: 'silver', targetPrice: '', direction: 'above' });
