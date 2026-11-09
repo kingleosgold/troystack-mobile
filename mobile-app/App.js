@@ -16237,13 +16237,16 @@ function AppContent() {
           </View>
         )}
 
-        <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium }]}>Push Notifications</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief: Daily market summary push</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Price Alerts: Triggered when your targets are hit</Text>
-          <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Breaking News & COMEX: Major events and vault changes</Text>
-          <Text style={[styles.privacyItem, { color: colors.muted, fontSize: scaledFonts.small, marginTop: 4 }]}>Manage in Settings {'\u2192'} Notifications</Text>
-        </View>
+        {/* Push can't reach Android until its builds carry Firebase, so this card is iPhone only for now. */}
+        {Platform.OS !== 'android' && (
+          <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium }]}>Push Notifications</Text>
+            <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Your Daily Brief: Daily market summary push</Text>
+            <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Price Alerts: Triggered when your targets are hit</Text>
+            <Text style={[styles.privacyItem, { color: colors.text, fontSize: scaledFonts.small }]}>{'\u2022'} Breaking News & COMEX: Major events and vault changes</Text>
+            <Text style={[styles.privacyItem, { color: colors.muted, fontSize: scaledFonts.small, marginTop: 4 }]}>Manage in Settings {'\u2192'} Notifications</Text>
+          </View>
+        )}
 
         <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
           <Text style={[styles.cardTitle, { color: colors.text, fontSize: scaledFonts.medium }]}>Support</Text>

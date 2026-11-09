@@ -146,3 +146,7 @@ test("the app guide's bullet rows carry no em dash", () => {
   assert.ok(rows.length >= 20);
   for (const row of rows) assert.doesNotMatch(row, /—/);
 });
+
+test("the app guide's Push Notifications card stays off Android while push can't reach it", () => {
+  assert.match(appJs, /\{Platform\.OS !== 'android' && \(\s*<View[^\n]*>\s*<Text[^\n]*>Push Notifications<\/Text>/);
+});
