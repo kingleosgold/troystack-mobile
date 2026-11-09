@@ -194,3 +194,17 @@ export function storedAlertsFor(val, owner, accountId) {
   if (accountId && alertsOwnedElsewhere(owner, accountId)) return null;
   return val;
 }
+
+// Waits before each retry of a single alert DELETE that didn't reach the
+// server. Three tries after the first, then the next sync's re-DELETE takes it.
+export const ALERT_DELETE_RETRY_MS = [2000, 8000, 30000];
+
+// Whether a single alert DELETE is worth sending again. A request that threw
+// (null), a timeout, a rate limit or a server error may land next time. Any
+// other answer, a 2xx, a 404 for one already gone or an auth refusal, won't
+// change by sending it again.
+export function alertDeleteRetryable(res) {
+  if (!res) return true;
+  const status = Number(res.status);
+  return status >= 500 || status === 408 || status === 429;
+}

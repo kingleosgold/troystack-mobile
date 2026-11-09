@@ -2,9 +2,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
+
+function sendAlertDeleteSource() {
+  const start = appJs.indexOf('const sendAlertDelete = async');
+  const end = appJs.indexOf('const deletePriceAlert = async');
+  assert.ok(start > 0 && end > start);
+  return appJs.slice(start, end);
+}
 
 test('a 2xx with success true is saved', () => {
   assert.equal(alertSaved({ ok: true, status: 200 }, { success: true }), true);
@@ -253,13 +260,16 @@ test('a single alert toggle or delete carries the session token', () => {
   const start = appJs.indexOf('const togglePriceAlert = async');
   const end = appJs.indexOf('const clearAllAlerts = ');
   assert.ok(start > 0 && end > start);
-  const fns = appJs.slice(start, end);
+  const fns = appJs.slice(start, end).replace(sendAlertDeleteSource(), '');
   const calls = fns.split('/v1/push/price-alerts/${alertId}`').slice(1);
-  assert.equal(calls.length, 3, 'one PATCH and two DELETEs');
-  for (const call of calls) {
-    const opts = call.slice(0, call.indexOf('});'));
-    assert.match(opts, /headers: await withSession\(/);
-  }
+  assert.equal(calls.length, 1, 'one PATCH, the DELETEs go through sendAlertDelete');
+  assert.match(calls[0].slice(0, calls[0].indexOf('});')), /headers: await withSession\(/);
+  assert.equal(fns.split('sendAlertDelete(alertId);').length - 1, 2, 'both deletes send through sendAlertDelete');
+  const send = sendAlertDeleteSource();
+  const read = send.indexOf('const headers = await withSession();');
+  const gate = send.indexOf('if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;', read);
+  const del = send.indexOf("method: 'DELETE'", gate);
+  assert.ok(read > 0 && gate > read && del > gate, 'the account is checked after reading the session, right before the DELETE');
 });
 
 test('the stored alerts load as is when nothing changed while loading', () => {
@@ -649,4 +659,38 @@ test('a sync deletes again a server copy of a deleted alert, once the merged lis
   const gen = fn.indexOf('if (accountChangedGenRef.current !== accountGen) return;', list);
   const del = fn.indexOf("method: 'DELETE'", list);
   assert.ok(save > 0 && list > save && headers > list && gen > headers && del > gen);
+});
+
+test('a single alert DELETE that threw, timed out, was rate limited or hit a server error goes again', () => {
+  assert.equal(alertDeleteRetryable(null), true);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 500 }), true);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 503 }), true);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 408 }), true);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 429 }), true);
+});
+
+test('a single alert DELETE that landed, found it gone or was refused is not sent again', () => {
+  assert.equal(alertDeleteRetryable({ ok: true, status: 200 }), false);
+  assert.equal(alertDeleteRetryable({ ok: true, status: 204 }), false);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 404 }), false);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 401 }), false);
+  assert.equal(alertDeleteRetryable({ ok: false, status: 403 }), false);
+});
+
+test('a failed single DELETE is retried a bounded number of times with growing waits', () => {
+  assert.ok(ALERT_DELETE_RETRY_MS.length >= 1 && ALERT_DELETE_RETRY_MS.length <= 5);
+  for (let i = 1; i < ALERT_DELETE_RETRY_MS.length; i++) {
+    assert.ok(ALERT_DELETE_RETRY_MS[i] > ALERT_DELETE_RETRY_MS[i - 1]);
+  }
+  const send = sendAlertDeleteSource();
+  assert.match(send, /attempt <= ALERT_DELETE_RETRY_MS\.length/);
+  assert.match(send, /if \(!alertDeleteRetryable\(res\)\) return;/);
+});
+
+test('a single DELETE stops retrying once the account changes or a reset clears the deleted ids', () => {
+  const send = sendAlertDeleteSource();
+  const wait = send.indexOf('setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1])');
+  const gate = send.indexOf('if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;', wait);
+  const read = send.indexOf('const headers = await withSession();', gate);
+  assert.ok(wait > 0 && gate > wait && read > gate, 'checked after each wait, before reading the session');
 });
