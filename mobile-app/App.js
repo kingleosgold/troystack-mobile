@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2842,6 +2842,9 @@ function AppContent() {
   // has started, never for a sign out that failed. A Create Alert save that
   // lands after it moves belongs to the account that's gone.
   const accountChangedGenRef = useRef(0);
+  // Moves each time the alert sync commits its list. The sync folds in the
+  // stored alerts itself, so a stored list read before it landed is stale.
+  const alertsSyncGenRef = useRef(0);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -7431,11 +7434,26 @@ function AppContent() {
 
   // Load price alerts from local storage
   const fetchPriceAlerts = async () => {
+    const accountGen = accountChangedGenRef.current;
+    const syncGen = alertsSyncGenRef.current;
+    const atStart = priceAlertsRef.current;
     try {
       const val = await AsyncStorage.getItem('stack_price_alerts');
+      if (accountChangedGenRef.current !== accountGen) return;
+      // A sync that landed while this read ran already has the stored alerts
+      // and dropped the ones the server no longer keeps, so its list stands.
+      if (alertsSyncGenRef.current !== syncGen) return;
       if (val) {
-        const parsed = JSON.parse(val);
+        // An alert made while the stored list was loading stays, along with
+        // the stored ones, and the ref moves with the list so the next toggle,
+        // delete or sync reads it.
+        const stored = JSON.parse(val);
+        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current);
+        priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
+        // A change made while it loaded saved a list without the stored
+        // alerts, so the merged list goes back to storage.
+        if (parsed !== stored) await savePriceAlerts(parsed);
         if (__DEV__) console.log(`🔔 Loaded ${parsed.length} price alerts from local storage`);
       }
     } catch (error) {
@@ -7542,6 +7560,7 @@ function AppContent() {
         const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
         const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart });
         priceAlertsRef.current = final;
+        alertsSyncGenRef.current += 1;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);
