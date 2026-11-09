@@ -7490,13 +7490,20 @@ function AppContent() {
 
         for (const alert of localOnly) {
           if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) continue;
-          // A toggle made since the sync read storage sends the switch the user set.
-          const onScreen = priceAlertsRef.current.find(a => a.id === alert.id);
-          const enabled = (onScreen || alert).enabled !== false;
           try {
+            // A sign out, switch or wipe means this POST would go up under the
+            // next session, so check after reading it, right before sending.
+            const postHeaders = await withSession({ 'Content-Type': 'application/json' });
+            if (accountChangedGenRef.current !== accountGen) break;
+            // An account with no session token is a sign out still under way
+            // (it moves the count only once it's done), so write nothing.
+            if (userId && !postHeaders.Authorization) return;
+            // A toggle made since the sync read storage sends the switch the user set.
+            const onScreen = priceAlertsRef.current.find(a => a.id === alert.id);
+            const enabled = (onScreen || alert).enabled !== false;
             const res = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
               method: 'POST',
-              headers: await withSession({ 'Content-Type': 'application/json' }),
+              headers: postHeaders,
               body: JSON.stringify({
                 id: alert.id,
                 userId: userId,
@@ -7515,9 +7522,11 @@ function AppContent() {
               // alert still belongs to the old account, so leave it alone then.
               if (accountChangedGenRef.current !== accountGen) break;
               if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) {
+                const delHeaders = await withSession();
+                if (accountChangedGenRef.current !== accountGen) break;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
                   method: 'DELETE',
-                  headers: await withSession(),
+                  headers: delHeaders,
                 }).catch(() => {});
               } else {
                 syncedLocal.push({ ...alert, enabled });

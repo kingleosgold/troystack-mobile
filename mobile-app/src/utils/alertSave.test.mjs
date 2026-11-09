@@ -210,3 +210,29 @@ test('toggle, delete and clear all update the ref the sync reads straight away',
     assert.ok(fn.indexOf('priceAlertsRef.current = ') < fn.indexOf('setPriceAlerts('), name);
   }
 });
+
+test('the re-POST loop checks the account before every POST', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const loop = fn.indexOf('for (const alert of localOnly)');
+  const headers = fn.indexOf("const postHeaders = await withSession(", loop);
+  const gate = fn.indexOf('if (accountChangedGenRef.current !== accountGen) break;', loop);
+  const post = fn.indexOf("method: 'POST'", loop);
+  assert.ok(loop > 0 && headers > loop && gate > headers && gate < post,
+    'the session is read, then the account checked, then the POST sent');
+  assert.match(fn, /headers: postHeaders/);
+  const noToken = fn.indexOf('if (userId && !postHeaders.Authorization) return;', headers);
+  assert.ok(noToken > headers && noToken < post, 'a signed-in sync with no token sends nothing and writes nothing');
+});
+
+test('the cleanup DELETE checks the account after reading the session', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const read = fn.indexOf('const delHeaders = await withSession()');
+  const gate = fn.indexOf('if (accountChangedGenRef.current !== accountGen) break;', read);
+  const del = fn.indexOf("method: 'DELETE'", read);
+  assert.ok(read > 0 && gate > read && del > gate);
+  assert.match(fn, /headers: delHeaders/);
+});
