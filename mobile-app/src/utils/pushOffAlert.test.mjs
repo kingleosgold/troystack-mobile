@@ -6,6 +6,7 @@ import { pushOffAlert } from './pushOffAlert.js';
 
 const here = new URL('.', import.meta.url);
 const appJs = readFileSync(new URL('../../App.js', here), 'utf8');
+const appJson = JSON.parse(readFileSync(new URL('../../app.json', here), 'utf8'));
 
 test('a refused permission points at the Notifications row the button opens to', () => {
   for (const platform of ['ios', 'android']) {
@@ -27,6 +28,30 @@ test('a granted permission with no token never sends the person to Settings', ()
     assert.equal(openSettings, false);
     assert.doesNotMatch(message, /Settings/);
   }
+});
+
+test("Android with permission on says push can't reach it yet, not try again later", () => {
+  const { title, message, openSettings } = pushOffAlert({ platform: 'android', granted: true });
+  assert.equal(title, "Notifications aren't on Android yet");
+  assert.equal(message, "Price alert notifications can't reach Android phones yet. Your alerts are still saved.");
+  assert.doesNotMatch(message, /try again/i);
+  assert.equal(openSettings, false);
+});
+
+test('the Android words hold only while Android builds lack Firebase', () => {
+  // Adding google-services.json makes Android push work, so the Android
+  // branch in pushOffAlert has to go when this fails.
+  assert.equal(appJson.expo?.android?.googleServicesFile, undefined);
+});
+
+test('App.js passes the platform the Android words depend on', () => {
+  assert.match(appJs, /pushOffAlert\(\{ platform: Platform\.OS, granted \}\)/);
+});
+
+test('iPhone with permission on keeps the try again later words', () => {
+  const { title, message } = pushOffAlert({ platform: 'ios', granted: true });
+  assert.equal(title, "Notifications didn't turn on");
+  assert.match(message, /try again later/);
 });
 
 test('no copy uses the old name or an em dash', () => {
