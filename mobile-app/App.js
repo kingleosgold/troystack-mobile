@@ -7647,7 +7647,7 @@ function AppContent() {
     try {
       await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withSession({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ enabled }),
       });
     } catch (e) { /* silent */ }
@@ -7675,6 +7675,7 @@ function AppContent() {
             try {
               const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
                 method: 'DELETE',
+                headers: await withSession(),
               });
               const result = await response.json();
               if (__DEV__) console.log('🗑️ [Push] Backend delete response:', JSON.stringify(result));
@@ -7697,7 +7698,10 @@ function AppContent() {
     setPriceAlerts(updated);
     await savePriceAlerts(updated);
     try {
-      await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
+        method: 'DELETE',
+        headers: await withSession(),
+      });
     } catch (e) { /* silent */ }
   };
 
