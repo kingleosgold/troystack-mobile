@@ -7950,7 +7950,7 @@ function AppContent() {
     const gone = () => accountChangedGenRef.current !== accountGen
       || alertsDeletedRef.current !== deleted
       || (lastAccountIdRef.current || null) !== userId;
-    await runAlertDelete({
+    const result = await runAlertDelete({
       gone,
       getHeaders: () => withSession(),
       send: headers => fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
@@ -7963,6 +7963,9 @@ function AppContent() {
         if (__DEV__) console.error('❌ [Push] Failed to delete alert from backend:', error);
       },
     });
+    // Every try on this account found no session token, so no DELETE went
+    // out. The next sync's re-DELETE takes it, and the log shows why it waited.
+    if (result === 'no-session') logLifecycleEvent('alerts:delete_no_session');
   };
 
   // Delete a price alert (local + backend)

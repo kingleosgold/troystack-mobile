@@ -256,6 +256,8 @@ export function retryAfterMs(res, now = Date.now()) {
  * belongs to this session. An account with no token waits and tries again
  * rather than send the DELETE bare. A 429 or 503 with a Retry-After makes
  * the next wait at least that long, up to ALERT_DELETE_RETRY_AFTER_MAX_MS.
+ * If an account's tries all end before sending, every session read timed out
+ * or failed, it returns 'no-session' so the screen can log it.
  * The screen passes in the real session,
  * fetch and timer, and the tests pass fakes.
  * @param {object} opts
@@ -267,10 +269,11 @@ export function retryAfterMs(res, now = Date.now()) {
  * @param {number[]} [opts.retryMs]
  * @param {(error: unknown) => void} [opts.onError]
  * @param {() => number} [opts.now] the clock for a Retry-After date
- * @returns {Promise<'gone'|'done'|'exhausted'>}
+ * @returns {Promise<'gone'|'done'|'exhausted'|'no-session'>}
  */
 export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken, retryMs = ALERT_DELETE_RETRY_MS, onError, now = Date.now }) {
   let serverWait = 0;
+  let sent = 0;
   for (let attempt = 0; attempt <= retryMs.length; attempt++) {
     if (attempt > 0) await wait(Math.max(retryMs[attempt - 1], serverWait));
     serverWait = 0;
@@ -283,6 +286,7 @@ export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken,
       // out under way. The DELETE would be refused, so it waits and tries
       // again, and a sign out that lands moves the count and ends it.
       if (needsToken && !headers.Authorization) continue;
+      sent++;
       res = await send(headers);
     } catch (error) {
       if (onError) onError(error);
@@ -291,5 +295,5 @@ export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken,
     if (!alertDeleteRetryable(res)) return 'done';
     serverWait = retryAfterMs(res, now());
   }
-  return 'exhausted';
+  return needsToken && sent === 0 ? 'no-session' : 'exhausted';
 }
