@@ -8,8 +8,8 @@
  * Settings would only send them in a circle. Android builds don't carry
  * Firebase yet, so there it always means push can't reach the phone and
  * "try again later" would never come true. Once Firebase is in, the Android
- * branches here, in alertCreatedMessage and in pushHint all go back to the
- * shared words (a test fails until they do).
+ * branches here, in alertCreatedMessage, pushHint, alertScreenSubtitle and
+ * freeAlertsLabel all go back to the shared words (a test fails until they do).
  * Nothing here imports React Native, so it runs under `node --test`.
  */
 
@@ -55,8 +55,9 @@ export function alertCreatedMessage({ platform, metal, direction, targetPrice })
  */
 export function pushHint({ platform }) {
   if (platform === 'android') {
+    // The hint shows before any alert exists, so it doesn't say alerts are saved.
     return {
-      text: "Price alert notifications can't reach Android phones yet. Your alerts are still saved.",
+      text: "Price alert notifications can't reach Android phones yet.",
       showEnableButton: false,
     };
   }
@@ -64,4 +65,26 @@ export function pushHint({ platform }) {
     text: 'Push notifications not enabled. Tap below to allow notifications.',
     showEnableButton: true,
   };
+}
+
+/**
+ * The line under New Alert on the price alert screen. Android can't get the
+ * push yet, so it doesn't open by promising one.
+ */
+export function alertScreenSubtitle({ platform }) {
+  if (platform === 'android') {
+    // The red hint below already says push can't reach Android, so this line doesn't repeat it.
+    return 'Save a target price for any metal.';
+  }
+  return 'Get notified when spot prices reach your target';
+}
+
+/**
+ * The price alerts row in the plan's free features list.
+ */
+export function freeAlertsLabel({ platform }) {
+  if (platform === 'android') {
+    return 'Price alerts';
+  }
+  return 'Price alerts & push notifications';
 }

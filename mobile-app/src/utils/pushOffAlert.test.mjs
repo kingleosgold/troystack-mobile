@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pushOffAlert, alertCreatedMessage, pushHint } from './pushOffAlert.js';
+import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel } from './pushOffAlert.js';
 
 const here = new URL('.', import.meta.url);
 const appJs = readFileSync(new URL('../../App.js', here), 'utf8');
@@ -85,22 +85,49 @@ test('the hint on iPhone keeps the Enable Notifications button', () => {
   assert.equal(showEnableButton, true);
 });
 
-test("the hint on Android uses the #219 words and hides the button that can't help", () => {
+test("the hint on Android says push can't reach it and hides the button that can't help", () => {
   const { text, showEnableButton } = pushHint({ platform: 'android' });
-  assert.equal(text, pushOffAlert({ platform: 'android', granted: true }).message);
+  assert.equal(text, "Price alert notifications can't reach Android phones yet.");
+  // It shows before any alert exists, so it can't say alerts are saved.
+  assert.doesNotMatch(text, /saved/);
   assert.equal(showEnableButton, false);
 });
 
 test('App.js passes the platform to the Alert Created and hint words', () => {
   assert.match(appJs, /alertCreatedMessage\(\{ platform: Platform\.OS,/);
-  assert.match(appJs, /pushHint\(\{ platform: Platform\.OS \}\)\.text/);
-  assert.match(appJs, /pushHint\(\{ platform: Platform\.OS \}\)\.showEnableButton && \(/);
+  assert.match(appJs, /const hint = pushHint\(\{ platform: Platform\.OS \}\);/);
+  assert.match(appJs, /\{hint\.text\}/);
+  assert.match(appJs, /\{hint\.showEnableButton && \(/);
+  assert.match(appJs, /marginBottom: hint\.showEnableButton \? 10 : 0/);
   assert.doesNotMatch(appJs, /`You'll be notified when/);
 });
 
 test('no Alert Created or hint copy uses the old name or an em dash', () => {
   for (const platform of ['ios', 'android', 'web']) {
     const msg = alertCreatedMessage({ platform, metal: 'platinum', direction: 'above', targetPrice: 1 });
-    assert.doesNotMatch(`${msg} ${pushHint({ platform }).text}`, /Stack Tracker|—/);
+    const words = `${msg} ${pushHint({ platform }).text} ${alertScreenSubtitle({ platform })} ${freeAlertsLabel({ platform })}`;
+    assert.doesNotMatch(words, /Stack Tracker|—/);
   }
+});
+
+test('the alert screen line on iPhone keeps the get notified words', () => {
+  assert.equal(alertScreenSubtitle({ platform: 'ios' }), 'Get notified when spot prices reach your target');
+});
+
+test("the alert screen line on Android doesn't promise a notification", () => {
+  const line = alertScreenSubtitle({ platform: 'android' });
+  assert.equal(line, 'Save a target price for any metal.');
+  assert.doesNotMatch(line, /Get notified/);
+});
+
+test('the free features row drops push notifications only on Android', () => {
+  assert.equal(freeAlertsLabel({ platform: 'ios' }), 'Price alerts & push notifications');
+  assert.equal(freeAlertsLabel({ platform: 'android' }), 'Price alerts');
+});
+
+test('App.js passes the platform to the alert screen line and the free features row', () => {
+  assert.match(appJs, /\{alertScreenSubtitle\(\{ platform: Platform\.OS \}\)\}/);
+  assert.match(appJs, /label: freeAlertsLabel\(\{ platform: Platform\.OS \}\)/);
+  assert.doesNotMatch(appJs, /label: 'Price alerts & push notifications'/);
+  assert.doesNotMatch(appJs, />\s*Get notified when spot prices reach your target\s*</);
 });

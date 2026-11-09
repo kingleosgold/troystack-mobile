@@ -38,7 +38,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
-import { pushOffAlert, alertCreatedMessage, pushHint } from './src/utils/pushOffAlert';
+import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel } from './src/utils/pushOffAlert';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -15528,7 +15528,7 @@ function AppContent() {
                 { icon: '📸', label: 'Receipt scanning (5/month)' },
                 { icon: '📤', label: 'Export CSV & manual backup' },
                 { icon: '🌙', label: 'Dark mode & accessibility' },
-                { icon: '🔔', label: 'Price alerts & push notifications' },
+                { icon: '🔔', label: freeAlertsLabel({ platform: Platform.OS }) },
                 { icon: '🔮', label: 'What If scenarios & speculation tool' },
                 { icon: '🧮', label: 'Junk silver calculator' },
                 { icon: '🏆', label: 'Stack milestones & Share My Stack' },
@@ -16395,7 +16395,7 @@ function AppContent() {
         <View style={{ marginBottom: 20 }}>
           <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 12 }}>New Alert</Text>
           <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 16 }}>
-            Get notified when spot prices reach your target
+            {alertScreenSubtitle({ platform: Platform.OS })}
           </Text>
 
           {/* Metal Selection */}
@@ -16505,12 +16505,14 @@ function AppContent() {
           <Text style={{ color: '#000', fontWeight: '700', fontSize: 16 }}>Create Alert</Text>
         </TouchableOpacity>
 
-        {!expoPushToken && (
+        {!expoPushToken && (() => {
+          const hint = pushHint({ platform: Platform.OS });
+          return (
           <View style={{ marginTop: 16, alignItems: 'center' }}>
-            <Text style={{ color: colors.error, fontSize: 12, textAlign: 'center', marginBottom: 10 }}>
-              {pushHint({ platform: Platform.OS }).text}
+            <Text style={{ color: colors.error, fontSize: 12, textAlign: 'center', marginBottom: hint.showEnableButton ? 10 : 0 }}>
+              {hint.text}
             </Text>
-            {pushHint({ platform: Platform.OS }).showEnableButton && (
+            {hint.showEnableButton && (
             <TouchableOpacity
               style={{
                 backgroundColor: '#FF9500',
@@ -16541,7 +16543,8 @@ function AppContent() {
             </TouchableOpacity>
             )}
           </View>
-        )}
+          );
+        })()}
 
         {/* Saved Alerts List */}
         {priceAlerts.length > 0 && (
