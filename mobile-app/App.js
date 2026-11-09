@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2845,6 +2845,14 @@ function AppContent() {
   // Moves each time the alert sync commits its list. The sync folds in the
   // stored alerts itself, so a stored list read before it landed is stale.
   const alertsSyncGenRef = useRef(0);
+  // True once a load or a sync has put the stored alerts on the screen this
+  // launch. Before that the screen list is missing them, so Create Alert
+  // reads storage itself rather than saving its one alert over the rest.
+  const alertsLoadedRef = useRef(false);
+  // The stored alerts Create put on the screen before a load or sync did. A
+  // load or sync already running counts them as on the screen at its start,
+  // so a delete or toggle of one made since isn't undone.
+  const alertsSurfacedRef = useRef([]);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -7443,12 +7451,13 @@ function AppContent() {
       // A sync that landed while this read ran already has the stored alerts
       // and dropped the ones the server no longer keeps, so its list stands.
       if (alertsSyncGenRef.current !== syncGen) return;
+      alertsLoadedRef.current = true;
       if (val) {
         // An alert made while the stored list was loading stays, along with
         // the stored ones, and the ref moves with the list so the next toggle,
         // delete or sync reads it.
         const stored = JSON.parse(val);
-        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current);
+        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current);
         priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
         // A change made while it loaded saved a list without the stored
@@ -7507,7 +7516,7 @@ function AppContent() {
         const syncedLocal = [];
 
         for (const alert of localOnly) {
-          if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) continue;
+          if (deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) continue;
           try {
             // A sign out, switch or wipe means this POST would go up under the
             // next session, so check after reading it, right before sending.
@@ -7539,7 +7548,7 @@ function AppContent() {
               // A sign out, switch or wipe also empties the screen, and that
               // alert still belongs to the old account, so leave it alone then.
               if (accountChangedGenRef.current !== accountGen) break;
-              if (deletedSinceStart(alert.id, atStart, priceAlertsRef.current)) {
+              if (deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
                 const delHeaders = await withSession();
                 if (accountChangedGenRef.current !== accountGen) break;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
@@ -7558,9 +7567,10 @@ function AppContent() {
         // Keep backend alerts, the local ones that synced and any alert created
         // while the re-POSTs were out.
         const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
-        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart });
+        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart: [...alertsSurfacedRef.current, ...atStart] });
         priceAlertsRef.current = final;
         alertsSyncGenRef.current += 1;
+        alertsLoadedRef.current = true;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);
@@ -7638,7 +7648,33 @@ function AppContent() {
         createdAt: new Date().toISOString(),
       };
 
-      const updated = [alert, ...priceAlertsRef.current.filter(a => a.id !== alertId)];
+      // Before any load or sync the screen list is missing the stored alerts,
+      // and saving it alone would write over them, a switched off one the
+      // server no longer lists included. Read them in first.
+      let stored = null;
+      let readStored = false;
+      if (!alertsLoadedRef.current) {
+        try {
+          const val = await AsyncStorage.getItem('stack_price_alerts');
+          stored = val ? JSON.parse(val) : null;
+          readStored = true;
+        } catch (e) { stored = null; }
+        if (accountChangedGenRef.current !== accountGen) return;
+        // A load or a sync that landed while it read has the stored list now.
+        if (alertsLoadedRef.current) stored = null;
+      }
+      const updated = withCreatedAlert(alert, priceAlertsRef.current, stored);
+      if (stored) {
+        const onScreen = new Set(priceAlertsRef.current.map(a => a && a.id));
+        alertsSurfacedRef.current = [
+          ...alertsSurfacedRef.current,
+          ...updated.filter(a => a.id !== alertId && !onScreen.has(a.id)),
+        ];
+      }
+      // The screen now carries everything stored, an empty store included,
+      // so later creates don't read storage again and bring back an alert
+      // deleted since.
+      if (readStored) alertsLoadedRef.current = true;
       priceAlertsRef.current = updated;
       setPriceAlerts(updated);
       await savePriceAlerts(updated);

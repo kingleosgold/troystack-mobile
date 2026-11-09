@@ -78,15 +78,36 @@ export function deletedSinceStart(id, atStart, current) {
  * @param {Array<{id: string}>} stored
  * @param {Array<{id: string}>} atStart the list when the load began
  * @param {Array<{id: string}>} current the list now
+ * @param {Array<{id: string}>} surfaced stored alerts Create put on the screen
  */
-export function loadedAlerts(stored, atStart, current) {
+export function loadedAlerts(stored, atStart, current, surfaced = []) {
   const list = Array.isArray(stored) ? stored : [];
   if (current === atStart) return list;
+  // Stored alerts Create put on the screen count as there at the start, so
+  // one deleted since stays gone.
+  const baseline = [...(atStart || []), ...(surfaced || [])];
   const have = new Set((current || []).map(a => a.id));
   // A stored alert that was on the screen when the load began and is gone
   // now was deleted, or dropped by a sync, while it loaded, so it stays gone.
   return [
     ...(current || []),
-    ...list.filter(a => a && !have.has(a.id) && !deletedSinceStart(a.id, atStart, current)),
+    ...list.filter(a => a && !have.has(a.id) && !deletedSinceStart(a.id, baseline, current)),
   ];
+}
+
+/**
+ * The list after Create Alert saves. The new alert goes first, then the list
+ * on the screen. stored is the stored list when no load or sync has read it
+ * yet this launch, else null. Its alerts the screen doesn't carry go after,
+ * so the save doesn't write over them.
+ * @param {{id: string}} alert
+ * @param {Array<{id: string}>} current
+ * @param {Array<{id: string}>|null} stored
+ */
+export function withCreatedAlert(alert, current, stored) {
+  const list = (current || []).filter(a => a && a.id !== alert.id);
+  const have = new Set(list.map(a => a.id));
+  have.add(alert.id);
+  const extra = Array.isArray(stored) ? stored.filter(a => a && a.id && !have.has(a.id)) : [];
+  return [alert, ...list, ...extra];
 }
