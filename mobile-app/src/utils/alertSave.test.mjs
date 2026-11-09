@@ -181,9 +181,9 @@ test('syncAlertsFromBackend notes the screen at start and skips re-POSTing a del
   const snap = fn.indexOf('const atStart = priceAlertsRef.current');
   assert.ok(snap > 0 && snap < fn.indexOf('await getDeviceId()'), 'snapshots before the first await');
   const loop = fn.indexOf('for (const alert of localOnly)');
-  const skip = fn.indexOf('deletedSinceStart(alert.id, atStart, priceAlertsRef.current)');
+  const skip = fn.indexOf('deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)');
   assert.ok(skip > loop && skip < fn.indexOf('method: \'POST\''));
-  assert.match(fn, /mergeSyncedAlerts\(\{[^}]*atStart/);
+  assert.match(fn, /mergeSyncedAlerts\(\{[^}]*atStart: \[\.\.\.alertsSurfacedRef\.current, \.\.\.atStart\]/);
 });
 
 test('a re-POST that lands after a delete deletes it again, but never after an account change', () => {
@@ -192,7 +192,7 @@ test('a re-POST that lands after a delete deletes it again, but never after an a
   const fn = appJs.slice(start, end);
   const ok = fn.indexOf('if (r.success)');
   const gen = fn.indexOf('if (accountChangedGenRef.current !== accountGen) break;', ok);
-  const again = fn.indexOf('deletedSinceStart(alert.id, atStart, priceAlertsRef.current)', ok);
+  const again = fn.indexOf('deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)', ok);
   const del = fn.indexOf("method: 'DELETE'", ok);
   assert.ok(ok > 0 && gen > ok && again > gen && del > again);
   assert.match(fn, /syncedLocal\.push\(\{ \.\.\.alert, enabled \}\)/);
@@ -272,7 +272,7 @@ test('fetchPriceAlerts moves the ref with the list and skips after an account ch
   const ref = fn.indexOf('priceAlertsRef.current = parsed;');
   const set = fn.indexOf('setPriceAlerts(parsed);');
   assert.ok(read > 0 && gate > read && ref > gate && set > ref);
-  assert.match(fn, /loadedAlerts\(stored, atStart, priceAlertsRef\.current\)/);
+  assert.match(fn, /loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current\)/);
   assert.ok(fn.indexOf('if (parsed !== stored) await savePriceAlerts(parsed);') > set, 'a merged list is saved');
 });
 
@@ -329,4 +329,27 @@ test('createPriceAlert reads storage only before a load or sync, and loads and s
   assert.match(load, /alertsSyncGenRef\.current !== syncGen\) return;\s*alertsLoadedRef\.current = true;/);
   const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), start);
   assert.match(sync, /alertsSyncGenRef\.current \+= 1;\s*alertsLoadedRef\.current = true;/);
+});
+
+test('a stored alert Create surfaced and the user then deleted stays gone after a load or sync', () => {
+  const s1 = { id: 's1' }, s2 = { id: 's2' }, n = { id: 'n' };
+  // The load began on an empty screen, Create surfaced s1 and s2, then s1 was deleted.
+  assert.deepEqual(loadedAlerts([s1, s2], [], [n, s2], [s1, s2]), [n, s2]);
+  // Without the surfaced list it would come back, which is the bug.
+  assert.deepEqual(loadedAlerts([s1, s2], [], [n, s2]), [n, s2, s1]);
+  // The sync passes the same baseline, so its server copy of s1 is dropped and a toggle of s2 keeps.
+  const out = mergeSyncedAlerts({
+    backendAlerts: [{ id: 's1', enabled: true }, { id: 's2', enabled: true }],
+    syncedLocal: [], seenIds: new Set(['s1', 's2']),
+    current: [n, { id: 's2', enabled: false }],
+    atStart: [...[], { id: 's1', enabled: true }, { id: 's2', enabled: true }],
+  });
+  assert.deepEqual(out, [n, { id: 's2', enabled: false }]);
+  assert.equal(deletedSinceStart('s1', [s1, s2], [n, s2]), true);
+});
+
+test('createPriceAlert notes the stored alerts it surfaced and marks the list read', () => {
+  const start = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
+  assert.match(fn, /if \(stored\) \{[\s\S]*?alertsSurfacedRef\.current = \[[\s\S]*?alertsLoadedRef\.current = true;[\s\S]*?\}\s*priceAlertsRef\.current = updated;/);
 });
