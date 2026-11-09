@@ -493,3 +493,28 @@ test('clear all marks the empty list whole so a pending merge or load stands dow
   const helper = appJs.slice(appJs.indexOf('const saveAlertsAfterChange = async'), appJs.indexOf('const syncAlertsFromBackend = async'));
   assert.match(helper, /if \(accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(priceAlertsRef\.current\);\s*return;\s*\}/);
 });
+
+test('a clear all stops a sync already out before its next POST and its commit', () => {
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  // The sync notes the count before its GET.
+  assert.ok(sync.indexOf('const clearedGen = alertsClearedRef.current;') < sync.indexOf('/v1/push/price-alerts?'));
+  // Each POST checks it after reading the session, right before sending.
+  assert.match(sync, /const clearedSinceStart = \(\) => alertsClearingRef\.current > 0 \|\| alertsClearedRef\.current !== clearedGen;/);
+  assert.match(sync, /const postHeaders = await withSession\([\s\S]*?if \(clearedSinceStart\(\)\) return;[\s\S]*?method: 'POST'/);
+  // A POST that lands after a clear all is deleted again, unless the alert is
+  // on the screen now, which means it was made after the clear.
+  assert.match(sync, /const cleared = clearedSinceStart\(\) && !priceAlertsRef\.current\.some\(a => a\.id === alert\.id\);\s*if \(cleared \|\| deletedSinceStart\(/);
+  // The commit checks it before writing the list.
+  const commit = sync.indexOf('const final = mergeSyncedAlerts(');
+  const check = sync.lastIndexOf('if (clearedSinceStart()) return;', commit);
+  assert.ok(check > sync.indexOf('for (const alert of localOnly)') && check < commit);
+  // Only clear all moves it, before its save and again once the server DELETE settles.
+  const clear = appJs.slice(appJs.indexOf('const clearAllAlerts = '), appJs.indexOf('// HOME SCREEN WIDGET'));
+  assert.equal(appJs.match(/alertsClearedRef\.current \+= 1;/g).length, 2);
+  assert.equal(clear.match(/alertsClearedRef\.current \+= 1;/g).length, 2);
+  assert.ok(clear.indexOf('alertsClearedRef.current += 1;') < clear.indexOf('await savePriceAlerts([]);'));
+  assert.match(clear, /method: 'DELETE',[\s\S]*?\} finally \{[\s\S]*?alertsClearedRef\.current \+= 1;\s*alertsClearingRef\.current -= 1;\s*\}/);
+  // A clear counts as out from its first move until the finally, around its save too.
+  const out = clear.indexOf('alertsClearingRef.current += 1;');
+  assert.ok(out > 0 && out < clear.indexOf('try {') && clear.indexOf('try {') < clear.indexOf('await savePriceAlerts([]);'));
+});

@@ -2847,6 +2847,14 @@ function AppContent() {
   // landed is stale, and a second load reading it would bring back a delete
   // made since.
   const alertsSyncGenRef = useRef(0);
+  // Moves only on clear all. A sync whose GET ran before the server DELETE
+  // still holds the cleared alerts, so once this moves it posts and writes
+  // nothing. Loads move alertsSyncGenRef too, so a sync can't watch that one.
+  const alertsClearedRef = useRef(0);
+  // How many clear alls are between their first move and their server DELETE
+  // settling. A sync's GET in that window may beat the DELETE, so a sync stops
+  // while one is out, whenever it started.
+  const alertsClearingRef = useRef(0);
   // True once a load, a sync, a Create or a toggle or delete has put the
   // stored alerts on the screen this launch, or clear all emptied them. Before
   // that the screen list is missing them, so Create Alert, toggle and delete
@@ -7546,6 +7554,10 @@ function AppContent() {
     // What was on the screen when the sync started, so a delete or a toggle
     // made while it runs isn't undone by the server copy it reads.
     const atStart = priceAlertsRef.current;
+    const clearedGen = alertsClearedRef.current;
+    // A clear all since the GET, or one still out, means the server copy it
+    // read may hold the cleared alerts.
+    const clearedSinceStart = () => alertsClearingRef.current > 0 || alertsClearedRef.current !== clearedGen;
     try {
       const deviceId = await getDeviceId();
       const userId = supabaseUser?.id || null;
@@ -7581,6 +7593,9 @@ function AppContent() {
             // next session, so check after reading it, right before sending.
             const postHeaders = await withSession({ 'Content-Type': 'application/json' });
             if (accountChangedGenRef.current !== accountGen) break;
+            // A clear all since the GET means the server copy it read is gone
+            // and nothing it holds should go back up.
+            if (clearedSinceStart()) return;
             // An account with no session token is a sign out still under way
             // (it moves the count only once it's done), so write nothing.
             if (userId && !postHeaders.Authorization) return;
@@ -7613,7 +7628,11 @@ function AppContent() {
               // A sign out, switch or wipe also empties the screen, and that
               // alert still belongs to the old account, so leave it alone then.
               if (accountChangedGenRef.current !== accountGen) break;
-              if (deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
+              // A clear all while this POST was out may have reached the
+              // server first, so a cleared alert goes again like a single
+              // delete. One on the screen now was made after the clear, so it stays.
+              const cleared = clearedSinceStart() && !priceAlertsRef.current.some(a => a.id === alert.id);
+              if (cleared || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
                 const delHeaders = await withSession();
                 if (accountChangedGenRef.current !== accountGen) break;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
@@ -7627,6 +7646,8 @@ function AppContent() {
           } catch (e) { /* discard orphan */ }
         }
 
+        // A clear all since the GET, or one still out, leaves the empty list standing.
+        if (clearedSinceStart()) return;
         if (accountChangedGenRef.current !== accountGen) return;
         // A sign in from a guest leaves the count alone, so a guest sync that
         // sent nothing would still lay the device's list over the account's.
@@ -7851,10 +7872,14 @@ function AppContent() {
           // stored alerts it read back in, and a load still out stands down.
           alertsLoadedRef.current = true;
           alertsSyncGenRef.current += 1;
+          // A sync already out, or one that starts before the server DELETE
+          // settles, stops before its next POST and its commit.
+          alertsClearedRef.current += 1;
+          alertsClearingRef.current += 1;
           priceAlertsRef.current = [];
           setPriceAlerts([]);
-          await savePriceAlerts([]);
           try {
+            await savePriceAlerts([]);
             const deviceId = await getDeviceId();
             const params = new URLSearchParams();
             if (supabaseUser?.id) params.append('user_id', supabaseUser.id);
@@ -7863,7 +7888,12 @@ function AppContent() {
               method: 'DELETE',
               headers: await withSession(),
             });
-          } catch (e) { /* silent */ }
+          } catch (e) { /* silent */ } finally {
+            // A sync that started while this was out may have read the cleared
+            // alerts, so move again before it's no longer counted as out.
+            alertsClearedRef.current += 1;
+            alertsClearingRef.current -= 1;
+          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         },
       },
