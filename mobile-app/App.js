@@ -2842,6 +2842,9 @@ function AppContent() {
   // has started, never for a sign out that failed. A Create Alert save that
   // lands after it moves belongs to the account that's gone.
   const accountChangedGenRef = useRef(0);
+  // Moves each time the alert sync commits its list. The sync folds in the
+  // stored alerts itself, so a stored list read before it landed is stale.
+  const alertsSyncGenRef = useRef(0);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -7432,10 +7435,14 @@ function AppContent() {
   // Load price alerts from local storage
   const fetchPriceAlerts = async () => {
     const accountGen = accountChangedGenRef.current;
+    const syncGen = alertsSyncGenRef.current;
     const atStart = priceAlertsRef.current;
     try {
       const val = await AsyncStorage.getItem('stack_price_alerts');
       if (accountChangedGenRef.current !== accountGen) return;
+      // A sync that landed while this read ran already has the stored alerts
+      // and dropped the ones the server no longer keeps, so its list stands.
+      if (alertsSyncGenRef.current !== syncGen) return;
       if (val) {
         // An alert made while the stored list was loading stays, along with
         // the stored ones, and the ref moves with the list so the next toggle,
@@ -7553,6 +7560,7 @@ function AppContent() {
         const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id)]);
         const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart });
         priceAlertsRef.current = final;
+        alertsSyncGenRef.current += 1;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);

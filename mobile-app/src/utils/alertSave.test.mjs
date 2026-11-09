@@ -293,3 +293,21 @@ test('a stored list that is not an array or holds nulls merges safely', () => {
   assert.deepEqual(loadedAlerts({}, [], [{ id: 'n' }]), [{ id: 'n' }]);
   assert.deepEqual(loadedAlerts([null, { id: 'a' }], [], [{ id: 'n' }]), [{ id: 'n' }, { id: 'a' }]);
 });
+
+test('a load returns without writing when a sync landed while it read', () => {
+  const start = appJs.indexOf('const fetchPriceAlerts = async');
+  const end = appJs.indexOf('const savePriceAlerts = async');
+  const fn = appJs.slice(start, end);
+  const read = fn.indexOf("AsyncStorage.getItem('stack_price_alerts')");
+  const gate = fn.indexOf('if (alertsSyncGenRef.current !== syncGen) return;');
+  assert.ok(fn.indexOf('const syncGen = alertsSyncGenRef.current;') < read);
+  assert.ok(gate > read && gate < fn.indexOf('setPriceAlerts(parsed);'));
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  assert.ok(sync.indexOf('alertsSyncGenRef.current += 1;') < sync.indexOf('setPriceAlerts(final);'));
+});
+
+test('a toggle made while the list loaded wins over the stored copy', () => {
+  const start = [];
+  const current = [{ id: 'a', enabled: false }];
+  assert.deepEqual(loadedAlerts([{ id: 'a', enabled: true }, { id: 'b' }], start, current), [{ id: 'a', enabled: false }, { id: 'b' }]);
+});
