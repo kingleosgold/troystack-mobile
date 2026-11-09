@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -446,4 +446,38 @@ test('the alert sync effect follows the signed-in account', () => {
   // The layout effect that names the account runs before it, so the sync's
   // account check passes for the account that just landed.
   assert.ok(appJs.indexOf('lastAccountIdRef.current = supabaseUser?.id || null;') < appJs.indexOf('nextAlertSync(alertSyncLastRef.current'));
+});
+
+test('a toggle or delete before any load keeps the stored alerts', () => {
+  const made = { id: 'new', enabled: false };
+  const stored = [{ id: 's1', enabled: true }, { id: 's2', enabled: false }];
+  // The toggled alert keeps the screen's switch and the stored ones follow.
+  assert.deepEqual(withStoredAlerts([made], stored), [made, ...stored]);
+  // A stored copy of an alert on the screen doesn't come back over it.
+  assert.deepEqual(withStoredAlerts([{ id: 's1', enabled: false }], stored), [{ id: 's1', enabled: false }, { id: 's2', enabled: false }]);
+  // An id just deleted stays out even if storage still has it.
+  assert.deepEqual(withStoredAlerts([], stored, ['s1']), [{ id: 's2', enabled: false }]);
+  // Nothing stored, or junk in it, leaves the screen list.
+  assert.deepEqual(withStoredAlerts([made], null), [made]);
+  assert.deepEqual(withStoredAlerts([made], [null, {}, 3]), [made]);
+});
+
+test('toggle and both deletes save through the stored-list read', () => {
+  const body = (start, end) => appJs.slice(appJs.indexOf(start), appJs.indexOf(end));
+  const toggle = body('const togglePriceAlert = async', 'const deletePriceAlert = async');
+  assert.match(toggle, /await saveAlertsAfterChange\(updated\);/);
+  assert.doesNotMatch(toggle, /savePriceAlerts\(/);
+  const del = body('const deletePriceAlert = async', 'const deletePriceAlertDirect = async');
+  assert.match(del, /await saveAlertsAfterChange\(updated, \[alertId\]\);/);
+  assert.doesNotMatch(del, /savePriceAlerts\(/);
+  const direct = body('const deletePriceAlertDirect = async', 'const clearAllAlerts = ');
+  assert.match(direct, /await saveAlertsAfterChange\(updated, \[alertId\]\);/);
+  assert.doesNotMatch(direct, /savePriceAlerts\(/);
+  const helper = body('const saveAlertsAfterChange = async', 'const syncAlertsFromBackend = async');
+  // Only once a load or sync has the stored list does it save the screen alone.
+  assert.match(helper, /if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(updated\);\s*return;\s*\}/);
+  // A read that threw writes nothing.
+  assert.match(helper, /\} catch \(e\) \{\s*return;\s*\}/);
+  assert.match(helper, /withStoredAlerts\(current, stored, removedIds\)/);
+  assert.match(helper, /alertsLoadedRef\.current = true;/);
 });
