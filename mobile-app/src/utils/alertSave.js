@@ -47,11 +47,11 @@ export function alertNotSavedCopy(response) {
 // current is the list on the screen now. atStart is the list on the screen
 // when the sync started. seenIds holds every id the sync read from the server
 // or from storage.
-export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current, atStart }) {
+export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current, atStart, deleted }) {
   const nowById = new Map((current || []).map(a => [a.id, a]));
   const startById = new Map((atStart || []).map(a => [a.id, a]));
   const kept = [...backendAlerts, ...syncedLocal]
-    .filter(a => !(startById.has(a.id) && !nowById.has(a.id)))
+    .filter(a => !(startById.has(a.id) && !nowById.has(a.id)) && !(deleted && deleted.has(a.id)))
     .map(a => {
       const was = startById.get(a.id);
       const is = nowById.get(a.id);
@@ -64,8 +64,11 @@ export function mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current
 }
 
 // An alert deleted while the sync ran shouldn't go back up to the server.
-// It was on the screen when the sync started and isn't on it now.
-export function deletedSinceStart(id, atStart, current) {
+// It was on the screen when the sync started and isn't on it now. One made
+// after the sync started and deleted since isn't in atStart, so deleted, the
+// ids the user deleted this session, catches it.
+export function deletedSinceStart(id, atStart, current, deleted) {
+  if (deleted && deleted.has(id)) return true;
   return (atStart || []).some(a => a.id === id) && !(current || []).some(a => a.id === id);
 }
 
@@ -83,9 +86,15 @@ export function deletedSinceStart(id, atStart, current) {
  * than hide them until the next sync.
  * @param {Array<{id: string}>} surfaced stored alerts Create put on the screen
  * @param {Array<string>} unsaved ids Create put on the screen but not in storage
+ * @param {Set<string>|null} deleted ids the user deleted this session
  */
-export function loadedAlerts(stored, atStart, current, surfaced = [], unsaved = []) {
-  const list = Array.isArray(stored) ? stored : [];
+export function loadedAlerts(stored, atStart, current, surfaced = [], unsaved = [], deleted = null) {
+  // A stored copy of an alert the user deleted this session, read before the
+  // delete's save landed, stays gone. The list keeps its identity when none
+  // is, so the caller can tell nothing changed.
+  const all = Array.isArray(stored) ? stored : [];
+  const gone = deleted && deleted.size ? all.filter(a => a && deleted.has(a.id)) : [];
+  const list = gone.length ? all.filter(a => !gone.includes(a)) : all;
   if (current === atStart) {
     const keep = new Set(unsaved || []);
     if (!keep.size) return list;

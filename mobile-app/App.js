@@ -2872,6 +2872,11 @@ function AppContent() {
   // guest's own. When another account lands the list goes, so its alerts
   // aren't saved, and then sent up, as the new account's.
   const alertsOwnerRef = useRef(null);
+  // Ids of alerts the user deleted this session. A sync or a load that read
+  // one before the delete landed, including one made after the sync started
+  // so it isn't in its starting list, leaves it gone rather than bring it
+  // back or send it up again.
+  const alertsDeletedRef = useRef(new Set());
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -3307,6 +3312,7 @@ function AppContent() {
     setPriceAlerts([]);
     alertsUnsavedRef.current = [];
     alertsOwnerRef.current = null;
+    alertsDeletedRef.current = new Set();
     setAnalyticsSnapshots([]);
     setAnalyticsRange('1M');
     setSpotHistoryMetal({
@@ -7513,7 +7519,7 @@ function AppContent() {
         // the stored ones, and the ref moves with the list so the next toggle,
         // delete or sync reads it.
         const stored = JSON.parse(val);
-        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current, unsaved);
+        const parsed = loadedAlerts(stored, atStart, priceAlertsRef.current, alertsSurfacedRef.current, unsaved, alertsDeletedRef.current);
         notedAlertsOwner(valOwner);
         priceAlertsRef.current = parsed;
         setPriceAlerts(parsed);
@@ -7656,7 +7662,7 @@ function AppContent() {
         const syncedLocal = [];
 
         for (const alert of localOnly) {
-          if (deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) continue;
+          if (deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current, alertsDeletedRef.current)) continue;
           try {
             // A sign out, switch or wipe means this POST would go up under the
             // next session, so check after reading it, right before sending.
@@ -7701,7 +7707,7 @@ function AppContent() {
               // server first, so a cleared alert goes again like a single
               // delete. One on the screen now was made after the clear, so it stays.
               const cleared = clearedSinceStart() && !priceAlertsRef.current.some(a => a.id === alert.id);
-              if (cleared || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
+              if (cleared || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current, alertsDeletedRef.current)) {
                 const delHeaders = await withSession();
                 if (accountChangedGenRef.current !== accountGen) break;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
@@ -7725,7 +7731,7 @@ function AppContent() {
         // Keep backend alerts, the local ones that synced and any alert created
         // while the re-POSTs were out.
         const seenIds = new Set([...backendIds, ...localParsed.map(a => a.id), ...foreignIds]);
-        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart: [...alertsSurfacedRef.current, ...atStart] });
+        const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart: [...alertsSurfacedRef.current, ...atStart], deleted: alertsDeletedRef.current });
         priceAlertsRef.current = final;
         alertsSyncGenRef.current += 1;
         alertsLoadedRef.current = true;
@@ -7892,6 +7898,7 @@ function AppContent() {
           onPress: async () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             if (__DEV__) console.log('🗑️ [Push] Deleting price alert:', alertId);
+            alertsDeletedRef.current.add(alertId);
             const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
             priceAlertsRef.current = updated;
             setPriceAlerts(updated);
@@ -7919,6 +7926,7 @@ function AppContent() {
   // Direct delete (no confirmation — used by swipe gesture)
   const deletePriceAlertDirect = async (alertId) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    alertsDeletedRef.current.add(alertId);
     const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
     priceAlertsRef.current = updated;
     setPriceAlerts(updated);
