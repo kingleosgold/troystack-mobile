@@ -1,12 +1,12 @@
 /**
  * TroyStack - The words when Enable Notifications doesn't get a push token
  *
- * Two different things can stop it. The person said no to notifications, so
- * the alert's Open Settings button takes them to the app's own page in
- * Settings on both phones, so the words name the Notifications row there
- * instead of asking them to find the app in a list. Or permission is on and the token still didn't come, which Android does
- * until the app carries Firebase, so sending them to Settings would only send
- * them in a circle. Nothing here imports React Native, so it runs under
+ * Two different things can stop it. The person said no to notifications,
+ * and the alert's Open Settings button takes them to the app's own page in
+ * Settings on both phones, where the words name the Notifications row. Or
+ * permission is on and the token still didn't come, which Android does until
+ * the app carries Firebase, so sending them to Settings would only send them
+ * in a circle. Nothing here imports React Native, so it runs under
  * `node --test`.
  */
 
