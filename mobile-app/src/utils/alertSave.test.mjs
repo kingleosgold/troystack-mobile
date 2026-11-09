@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -711,4 +711,28 @@ test('both sync re-DELETEs stop on an account with no token or a guest who signe
     assert.ok(token > read && token < del, 'token checked before the DELETE');
     assert.ok(signIn > read && signIn < del, 'sign in checked before the DELETE');
   }
+});
+
+test('an account that lands claims a stored list with no owner, and only that', () => {
+  assert.equal(claimsStoredAlerts('[{"id":"a"}]', null, 'A'), true);
+  assert.equal(claimsStoredAlerts('[]', null, 'A'), true);
+  assert.equal(claimsStoredAlerts('[{"id":"a"}]', 'A', 'A'), false, 'already its own');
+  assert.equal(claimsStoredAlerts('[{"id":"a"}]', 'B', 'A'), false, "another account's stays marked as that account's");
+  assert.equal(claimsStoredAlerts(null, null, 'A'), false, 'nothing stored');
+  assert.equal(claimsStoredAlerts('[{"id":"a"}]', null, null), false, 'a guest claims nothing');
+});
+
+test('the account change claims the stored alerts after the account lands, checking it again after the read', () => {
+  const effectStart = appJs.indexOf('useLayoutEffect(() => {\n    if (lastAccountIdRef.current) {');
+  assert.ok(effectStart > 0);
+  const effect = appJs.slice(effectStart, appJs.indexOf('}, [supabaseUser?.id]);', effectStart));
+  const landed = effect.indexOf('lastAccountIdRef.current = nextId;');
+  const claim = effect.indexOf('if (nextId) claimStoredAlerts(nextId);');
+  assert.ok(landed > 0 && claim > landed);
+  const fn = appJs.slice(appJs.indexOf('const claimStoredAlerts = async'), appJs.indexOf('const notedAlertsOwner = '));
+  const read = fn.indexOf("AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY])");
+  const gate = fn.indexOf('if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;', read);
+  const write = fn.indexOf('AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId)', gate);
+  assert.ok(read > 0 && gate > read && write > gate);
+  assert.ok(!/stack_price_alerts'?, /.test(fn.slice(write)), 'only the owner key is written, never the list');
 });

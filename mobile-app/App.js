@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, alertDeleteRetryable, ALERT_DELETE_RETRY_MS } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, alertDeleteRetryable, ALERT_DELETE_RETRY_MS } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -4818,6 +4818,7 @@ function AppContent() {
       alertsSyncGenRef.current += 1;
     }
     lastAccountIdRef.current = nextId;
+    if (nextId) claimStoredAlerts(nextId);
   }, [supabaseUser?.id]);
 
   // Supabase Holdings Sync - sync on app load when user is already signed in
@@ -7541,6 +7542,23 @@ function AppContent() {
     const [[, val], [, owner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
     const mine = storedAlertsFor(val, owner, lastAccountIdRef.current || null);
     return [mine, mine ? (owner || null) : null];
+  };
+
+  // Marks stored alerts with no owner, a guest's or an older build's, as the
+  // account that just landed. That account's sync sends them up as its own,
+  // and a sync that fails or never commits would leave them unmarked, so after
+  // a session that expires without a sign out the next account would send
+  // them up too. Nothing is written once the account has changed since.
+  const claimStoredAlerts = async (accountId) => {
+    const accountGen = accountChangedGenRef.current;
+    try {
+      const [[, val], [, owner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
+      if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;
+      if (!claimsStoredAlerts(val, owner, accountId)) return;
+      await AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId);
+    } catch (error) {
+      if (__DEV__) console.error('❌ Error claiming stored price alerts:', error);
+    }
   };
 
   // Once stored alerts are on the screen, the screen carries their owner.

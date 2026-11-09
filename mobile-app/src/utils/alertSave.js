@@ -195,6 +195,15 @@ export function storedAlertsFor(val, owner, accountId) {
   return val;
 }
 
+// Whether an account that just landed should write itself in as the owner of
+// the stored alerts. A list with no owner, saved by a guest or by an older
+// build, is the one this account's sync sends up as its own, so it is this
+// account's from here. Claimed now, a session that later expires without a
+// sign out leaves it marked, and the next account doesn't send it up.
+export function claimsStoredAlerts(val, owner, accountId) {
+  return !!accountId && !!val && !owner;
+}
+
 // Waits before each retry of a single alert DELETE that didn't reach the
 // server. Three tries after the first, then the next sync's re-DELETE takes it.
 export const ALERT_DELETE_RETRY_MS = [2000, 8000, 30000];
