@@ -810,7 +810,9 @@ test('the account change claims the stored alerts after the account lands, check
   const write = fn.indexOf('AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId)', gate);
   assert.ok(read > 0 && gate > read && write > gate);
   assert.ok(!/stack_price_alerts'?, /.test(fn.slice(write)), 'only the owner key is written, never the list');
+  const claims = fn.indexOf('if (!claimsStoredAlerts(val, owner, accountId)) return;', gate);
   const ref = fn.indexOf('if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;', gate);
+  assert.ok(claims > gate && claims < ref, 'the screen takes the owner only once the stored list is the one to claim');
   assert.ok(ref > gate && ref < write, 'the screen takes the owner before the write, while still that account');
   assert.ok(!fn.slice(gate, ref).includes('await'), 'nothing waits between the gate check and the screen taking the owner');
 });
@@ -846,6 +848,39 @@ test('a single delete with no token on an account that never gets one gives up w
   const h = deleteHarness({ headers: {} });
   assert.equal(await runAlertDelete(h.opts), 'exhausted');
   assert.equal(h.sent(), 0);
+});
+
+test('a single delete on an account whose session read throws reports it and tries again', async () => {
+  let reads = 0;
+  const h = deleteHarness({
+    answers: [{ ok: true, status: 200 }],
+    headers: () => {
+      if (++reads < 2) throw new Error('session read failed');
+      return { Authorization: 'Bearer t' };
+    },
+  });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.equal(h.sent(), 1, 'sent once, after the read that worked');
+  assert.equal(h.log.filter(l => l === 'error').length, 1, 'the throw is reported');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10']);
+});
+
+test('a single delete on an account whose session read keeps throwing gives up without sending', async () => {
+  const h = deleteHarness({ headers: () => { throw new Error('session read failed'); } });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 0);
+  assert.equal(h.log.filter(l => l === 'error').length, 4, 'each try is reported');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20', 'wait 30'], 'each retry still waits');
+});
+
+test('a single delete on an account whose session read returns null is caught as an error and never sends', async () => {
+  // withSession always resolves to an object or rejects, so this can't
+  // happen today. If it did, reading the token off null throws and the
+  // catch takes it like any other failed try.
+  const h = deleteHarness({ headers: () => null });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 0, 'no DELETE goes out without headers');
+  assert.equal(h.log.filter(l => l === 'error').length, 4, 'each try is caught and reported');
 });
 
 test('a guest\'s single delete goes without a token', async () => {
