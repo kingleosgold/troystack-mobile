@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -446,4 +446,50 @@ test('the alert sync effect follows the signed-in account', () => {
   // The layout effect that names the account runs before it, so the sync's
   // account check passes for the account that just landed.
   assert.ok(appJs.indexOf('lastAccountIdRef.current = supabaseUser?.id || null;') < appJs.indexOf('nextAlertSync(alertSyncLastRef.current'));
+});
+
+test('a toggle or delete before any load keeps the stored alerts', () => {
+  const made = { id: 'new', enabled: false };
+  const stored = [{ id: 's1', enabled: true }, { id: 's2', enabled: false }];
+  // The toggled alert keeps the screen's switch and the stored ones follow.
+  assert.deepEqual(withStoredAlerts([made], stored), [made, ...stored]);
+  // A stored copy of an alert on the screen doesn't come back over it.
+  assert.deepEqual(withStoredAlerts([{ id: 's1', enabled: false }], stored), [{ id: 's1', enabled: false }, { id: 's2', enabled: false }]);
+  // An id just deleted stays out even if storage still has it.
+  assert.deepEqual(withStoredAlerts([], stored, ['s1']), [{ id: 's2', enabled: false }]);
+  // Nothing stored, or junk in it, leaves the screen list.
+  assert.deepEqual(withStoredAlerts([made], null), [made]);
+  assert.deepEqual(withStoredAlerts([made], [null, {}, 3]), [made]);
+});
+
+test('toggle and both deletes save through the stored-list read', () => {
+  const body = (start, end) => appJs.slice(appJs.indexOf(start), appJs.indexOf(end));
+  const toggle = body('const togglePriceAlert = async', 'const deletePriceAlert = async');
+  assert.match(toggle, /await saveAlertsAfterChange\(updated\);/);
+  assert.doesNotMatch(toggle, /savePriceAlerts\(/);
+  const del = body('const deletePriceAlert = async', 'const deletePriceAlertDirect = async');
+  assert.match(del, /await saveAlertsAfterChange\(updated, \[alertId\]\);/);
+  assert.doesNotMatch(del, /savePriceAlerts\(/);
+  const direct = body('const deletePriceAlertDirect = async', 'const clearAllAlerts = ');
+  assert.match(direct, /await saveAlertsAfterChange\(updated, \[alertId\]\);/);
+  assert.doesNotMatch(direct, /savePriceAlerts\(/);
+  const helper = body('const saveAlertsAfterChange = async', 'const syncAlertsFromBackend = async');
+  // Only once a load or sync has the stored list does it save the screen alone.
+  assert.match(helper, /if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(updated\);\s*return;\s*\}/);
+  // A read that threw writes nothing.
+  assert.match(helper, /\} catch \(e\) \{\s*return;\s*\}/);
+  assert.match(helper, /withStoredAlerts\(current, stored, removedIds\)/);
+  assert.match(helper, /alertsLoadedRef\.current = true;/);
+});
+
+test('clear all marks the empty list whole so a pending merge or load stands down', () => {
+  const clear = appJs.slice(appJs.indexOf('const clearAllAlerts = '), appJs.indexOf('// HOME SCREEN WIDGET'));
+  const flag = clear.indexOf('alertsLoadedRef.current = true;');
+  const gen = clear.indexOf('alertsSyncGenRef.current += 1;');
+  const save = clear.indexOf('await savePriceAlerts([]);');
+  assert.ok(flag > 0 && gen > 0 && save > 0);
+  assert.ok(flag < save && gen < save);
+  // The helper rechecks the flag after its read and then saves the screen as is.
+  const helper = appJs.slice(appJs.indexOf('const saveAlertsAfterChange = async'), appJs.indexOf('const syncAlertsFromBackend = async'));
+  assert.match(helper, /if \(accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(priceAlertsRef\.current\);\s*return;\s*\}/);
 });

@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2842,13 +2842,15 @@ function AppContent() {
   // has started, never for a sign out that failed. A Create Alert save that
   // lands after it moves belongs to the account that's gone.
   const accountChangedGenRef = useRef(0);
-  // Moves each time the alert sync or a load commits its list. Either one
-  // folds in the stored alerts, so a stored list read before it landed is
-  // stale, and a second load reading it would bring back a delete made since.
+  // Moves each time the alert sync or a load commits its list, and on clear
+  // all. Each one settles the stored alerts, so a stored list read before it
+  // landed is stale, and a second load reading it would bring back a delete
+  // made since.
   const alertsSyncGenRef = useRef(0);
-  // True once a load or a sync has put the stored alerts on the screen this
-  // launch. Before that the screen list is missing them, so Create Alert
-  // reads storage itself rather than saving its one alert over the rest.
+  // True once a load, a sync, a Create or a toggle or delete has put the
+  // stored alerts on the screen this launch, or clear all emptied them. Before
+  // that the screen list is missing them, so Create Alert, toggle and delete
+  // read storage themselves rather than save the screen list over the rest.
   const alertsLoadedRef = useRef(false);
   // The stored alerts Create put on the screen before a load or sync did. A
   // load or sync already running counts them as on the screen at its start,
@@ -7495,6 +7497,47 @@ function AppContent() {
     }
   };
 
+  // Saves the list after a toggle or a delete. Before any load or sync the
+  // screen list is missing the stored alerts, and saving it alone would write
+  // over them, so it reads them in first, the way Create Alert does, and puts
+  // them on the screen too. A read that threw leaves the store unknown, so
+  // nothing is written then and the next load merges the screen list in.
+  const saveAlertsAfterChange = async (updated, removedIds = []) => {
+    if (alertsLoadedRef.current) {
+      await savePriceAlerts(updated);
+      return;
+    }
+    const accountGen = accountChangedGenRef.current;
+    let stored = [];
+    try {
+      const val = await AsyncStorage.getItem('stack_price_alerts');
+      // Corrupt JSON holds nothing to keep.
+      try { stored = val ? JSON.parse(val) : []; } catch (e) { stored = []; }
+    } catch (e) {
+      return;
+    }
+    if (accountChangedGenRef.current !== accountGen) return;
+    // A load or a sync that landed while it read put the stored list on the
+    // screen, so the screen list is whole now.
+    if (alertsLoadedRef.current) {
+      await savePriceAlerts(priceAlertsRef.current);
+      return;
+    }
+    const current = priceAlertsRef.current;
+    const merged = withStoredAlerts(current, stored, removedIds);
+    const onScreen = new Set(current.map(a => a && a.id));
+    // A load or sync already running counts these as on the screen at its
+    // start, so one deleted from here on stays gone.
+    alertsSurfacedRef.current = [
+      ...alertsSurfacedRef.current,
+      ...merged.filter(a => !onScreen.has(a.id)),
+    ];
+    alertsLoadedRef.current = true;
+    priceAlertsRef.current = merged;
+    setPriceAlerts(merged);
+    await savePriceAlerts(merged);
+  };
+
   // Fetch alerts from backend — backend is source of truth, discard orphaned local alerts
   const syncAlertsFromBackend = async () => {
     // A sign out, account switch or wipe while this runs means the lists it
@@ -7730,7 +7773,7 @@ function AppContent() {
     const updated = priceAlertsRef.current.map(a => a.id === alertId ? { ...a, enabled } : a);
     priceAlertsRef.current = updated;
     setPriceAlerts(updated);
-    await savePriceAlerts(updated);
+    await saveAlertsAfterChange(updated);
     try {
       await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
         method: 'PATCH',
@@ -7756,7 +7799,7 @@ function AppContent() {
             const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
             priceAlertsRef.current = updated;
             setPriceAlerts(updated);
-            await savePriceAlerts(updated);
+            await saveAlertsAfterChange(updated, [alertId]);
 
             // Delete from backend
             try {
@@ -7783,7 +7826,7 @@ function AppContent() {
     const updated = priceAlertsRef.current.filter(a => a.id !== alertId);
     priceAlertsRef.current = updated;
     setPriceAlerts(updated);
-    await savePriceAlerts(updated);
+    await saveAlertsAfterChange(updated, [alertId]);
     try {
       await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
         method: 'DELETE',
@@ -7800,6 +7843,14 @@ function AppContent() {
       {
         text: 'Delete All', style: 'destructive', onPress: async () => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          // The server deletes every alert for this account and device, so
+          // writing an empty list over the stored ones is right even before a
+          // load has read them, or the next sync would post them again.
+          // The empty list is the whole list now, so a toggle, delete or Create
+          // whose storage read is still out saves it rather than merge the
+          // stored alerts it read back in, and a load still out stands down.
+          alertsLoadedRef.current = true;
+          alertsSyncGenRef.current += 1;
           priceAlertsRef.current = [];
           setPriceAlerts([]);
           await savePriceAlerts([]);

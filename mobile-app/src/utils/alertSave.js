@@ -127,3 +127,22 @@ export function nextAlertSync(last, id) {
   if (userId === last.userId) return { run: false, last };
   return { run: true, last: { ran: true, userId } };
 }
+
+/**
+ * The list to save after a toggle or a delete made before any load or sync
+ * read the stored alerts. The screen list then lacks them, so saving it alone
+ * would write over them. The screen's alerts go first, as they are now, then
+ * the stored ones it doesn't carry, leaving out any id just deleted.
+ * @param {Array<{id: string}>} current the list on the screen now
+ * @param {Array<{id: string}>} stored the stored list
+ * @param {Array<string>} removedIds ids deleted by this change
+ */
+export function withStoredAlerts(current, stored, removedIds = []) {
+  const list = (current || []).filter(Boolean);
+  const have = new Set(list.map(a => a.id));
+  const gone = new Set(removedIds || []);
+  const extra = Array.isArray(stored)
+    ? stored.filter(a => a && a.id && !have.has(a.id) && !gone.has(a.id))
+    : [];
+  return [...list, ...extra];
+}
