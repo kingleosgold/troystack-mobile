@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -310,4 +310,23 @@ test('a toggle made while the list loaded wins over the stored copy', () => {
   const start = [];
   const current = [{ id: 'a', enabled: false }];
   assert.deepEqual(loadedAlerts([{ id: 'a', enabled: true }, { id: 'b' }], start, current), [{ id: 'a', enabled: false }, { id: 'b' }]);
+});
+
+test('withCreatedAlert keeps the stored alerts when nothing loaded them yet', () => {
+  const n = { id: 'n' };
+  assert.deepEqual(withCreatedAlert(n, [], [{ id: 'a', enabled: false }, { id: 'b' }]), [n, { id: 'a', enabled: false }, { id: 'b' }]);
+  assert.deepEqual(withCreatedAlert(n, [{ id: 'a' }], [{ id: 'a', enabled: false }, null, { id: 'n' }]), [n, { id: 'a' }]);
+  assert.deepEqual(withCreatedAlert(n, [{ id: 'a' }, { id: 'n' }], null), [n, { id: 'a' }]);
+  assert.deepEqual(withCreatedAlert(n, [{ id: 'a' }], {}), [n, { id: 'a' }]);
+});
+
+test('createPriceAlert reads storage only before a load or sync, and loads and syncs mark it read', () => {
+  const start = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
+  assert.match(fn, /if \(!alertsLoadedRef\.current\) \{[\s\S]*?getItem\('stack_price_alerts'\)[\s\S]*?accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) stored = null;/);
+  assert.match(fn, /withCreatedAlert\(alert, priceAlertsRef\.current, stored\)/);
+  const load = appJs.slice(appJs.indexOf('const fetchPriceAlerts = async'), appJs.indexOf('const savePriceAlerts = async'));
+  assert.match(load, /alertsSyncGenRef\.current !== syncGen\) return;\s*alertsLoadedRef\.current = true;/);
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), start);
+  assert.match(sync, /alertsSyncGenRef\.current \+= 1;\s*alertsLoadedRef\.current = true;/);
 });

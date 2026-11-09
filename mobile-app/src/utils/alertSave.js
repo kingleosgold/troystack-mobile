@@ -90,3 +90,20 @@ export function loadedAlerts(stored, atStart, current) {
     ...list.filter(a => a && !have.has(a.id) && !deletedSinceStart(a.id, atStart, current)),
   ];
 }
+
+/**
+ * The list after Create Alert saves. The new alert goes first, then the list
+ * on the screen. stored is the stored list when no load or sync has read it
+ * yet this launch, else null. Its alerts the screen doesn't carry go after,
+ * so the save doesn't write over them.
+ * @param {{id: string}} alert
+ * @param {Array<{id: string}>} current
+ * @param {Array<{id: string}>|null} stored
+ */
+export function withCreatedAlert(alert, current, stored) {
+  const list = (current || []).filter(a => a && a.id !== alert.id);
+  const have = new Set(list.map(a => a.id));
+  have.add(alert.id);
+  const extra = Array.isArray(stored) ? stored.filter(a => a && a.id && !have.has(a.id)) : [];
+  return [alert, ...list, ...extra];
+}

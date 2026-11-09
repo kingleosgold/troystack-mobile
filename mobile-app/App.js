@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2845,6 +2845,10 @@ function AppContent() {
   // Moves each time the alert sync commits its list. The sync folds in the
   // stored alerts itself, so a stored list read before it landed is stale.
   const alertsSyncGenRef = useRef(0);
+  // True once a load or a sync has put the stored alerts on the screen this
+  // launch. Before that the screen list is missing them, so Create Alert
+  // reads storage itself rather than saving its one alert over the rest.
+  const alertsLoadedRef = useRef(false);
   // Bumped each time the widget locks, and the latest widget sync
   const widgetGenRef = useRef(0);
   const syncWidgetRef = useRef(() => {});
@@ -7443,6 +7447,7 @@ function AppContent() {
       // A sync that landed while this read ran already has the stored alerts
       // and dropped the ones the server no longer keeps, so its list stands.
       if (alertsSyncGenRef.current !== syncGen) return;
+      alertsLoadedRef.current = true;
       if (val) {
         // An alert made while the stored list was loading stays, along with
         // the stored ones, and the ref moves with the list so the next toggle,
@@ -7561,6 +7566,7 @@ function AppContent() {
         const final = mergeSyncedAlerts({ backendAlerts, syncedLocal, seenIds, current: priceAlertsRef.current, atStart });
         priceAlertsRef.current = final;
         alertsSyncGenRef.current += 1;
+        alertsLoadedRef.current = true;
         setPriceAlerts(final);
         await savePriceAlerts(final);
         if (__DEV__) console.log(`🔔 [Push] Synced: ${backendAlerts.length} from backend, ${syncedLocal.length} local pushed, ${localOnly.length - syncedLocal.length} orphans discarded`);
@@ -7638,7 +7644,20 @@ function AppContent() {
         createdAt: new Date().toISOString(),
       };
 
-      const updated = [alert, ...priceAlertsRef.current.filter(a => a.id !== alertId)];
+      // Before any load or sync the screen list is missing the stored alerts,
+      // and saving it alone would write over them, a switched off one the
+      // server no longer lists included. Read them in first.
+      let stored = null;
+      if (!alertsLoadedRef.current) {
+        try {
+          const val = await AsyncStorage.getItem('stack_price_alerts');
+          stored = val ? JSON.parse(val) : null;
+        } catch (e) { stored = null; }
+        if (accountChangedGenRef.current !== accountGen) return;
+        // A load or a sync that landed while it read has the stored list now.
+        if (alertsLoadedRef.current) stored = null;
+      }
+      const updated = withCreatedAlert(alert, priceAlertsRef.current, stored);
       priceAlertsRef.current = updated;
       setPriceAlerts(updated);
       await savePriceAlerts(updated);
