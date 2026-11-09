@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, runAlertDelete } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, alertDeleteRetryable, ALERT_DELETE_RETRY_MS, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, claimsStoredAlerts, runAlertDelete, retryAfterMs, ALERT_DELETE_RETRY_AFTER_MAX_MS } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -887,4 +887,64 @@ test('a guest\'s single delete goes without a token', async () => {
   const h = deleteHarness({ headers: {}, needsToken: false, answers: [{ ok: true, status: 200 }] });
   assert.equal(await runAlertDelete(h.opts), 'done');
   assert.equal(h.sent(), 1);
+});
+
+// A Response-like answer with headers, for Retry-After.
+function answer(status, retryAfter) {
+  return { ok: false, status, headers: { get: (name) => (name.toLowerCase() === 'retry-after' ? retryAfter : null) } };
+}
+
+test('retryAfterMs reads seconds and an HTTP date on a 429 or 503', () => {
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  assert.equal(retryAfterMs(answer(429, '5'), now), 5000);
+  assert.equal(retryAfterMs(answer(503, ' 12 '), now), 12000);
+  assert.equal(retryAfterMs(answer(429, 'Mon, 09 Nov 2026 12:00:20 GMT'), now), 20000);
+});
+
+test('retryAfterMs is 0 with no usable header or on another status', () => {
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  assert.equal(retryAfterMs(null, now), 0);
+  assert.equal(retryAfterMs({ ok: false, status: 429 }, now), 0, 'no headers');
+  assert.equal(retryAfterMs(answer(429, null), now), 0);
+  assert.equal(retryAfterMs(answer(429, 'soon'), now), 0);
+  assert.equal(retryAfterMs(answer(429, '0'), now), 0);
+  assert.equal(retryAfterMs(answer(429, '-3'), now), 0);
+  assert.equal(retryAfterMs(answer(429, 'Mon, 09 Nov 2026 11:59:00 GMT'), now), 0, 'a date in the past');
+  assert.equal(retryAfterMs(answer(500, '5'), now), 0);
+  assert.equal(retryAfterMs(answer(408, '5'), now), 0);
+  assert.equal(retryAfterMs({ status: 429, headers: { get: () => { throw new Error('x'); } } }, now), 0);
+});
+
+test('retryAfterMs caps a long ask', () => {
+  assert.equal(retryAfterMs(answer(429, '3600'), 0), ALERT_DELETE_RETRY_AFTER_MAX_MS);
+});
+
+test('a 429 with Retry-After stretches only the next wait', async () => {
+  const h = deleteHarness({ answers: [answer(429, '5'), { ok: false, status: 500 }, { ok: true, status: 200 }] });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 5000', 'wait 20']);
+});
+
+test('a Retry-After shorter than the scheduled wait keeps the scheduled one', async () => {
+  const h = deleteHarness({ answers: [answer(429, '0'), answer(503, '1')] });
+  h.opts.retryMs = [10, 2000];
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 2000']);
+});
+
+test('a Retry-After date uses the clock passed in', async () => {
+  const h = deleteHarness({ answers: [answer(429, 'Mon, 09 Nov 2026 12:00:07 GMT'), { ok: true, status: 204 }] });
+  h.opts.now = () => Date.parse('2026-11-09T12:00:00Z');
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 7000']);
+});
+
+test('a retry with no token after a 429 drops its Retry-After', async () => {
+  let reads = 0;
+  const h = deleteHarness({
+    answers: [answer(429, '9'), { ok: true, status: 200 }],
+    headers: () => (++reads === 2 ? {} : { Authorization: 'Bearer t' }),
+  });
+  assert.equal(await runAlertDelete(h.opts), 'done');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 9000', 'wait 20']);
 });

@@ -218,12 +218,45 @@ export function alertDeleteRetryable(res) {
   return status >= 500 || status === 408 || status === 429;
 }
 
+// The longest a server's Retry-After can stretch one wait. A longer ask is
+// cut to this, and the next sync's re-DELETE covers it if the try still fails.
+export const ALERT_DELETE_RETRY_AFTER_MAX_MS = 60000;
+
+// How long a 429 or 503 asked the app to wait before sending again, from its
+// Retry-After header in seconds or as an HTTP date, capped at
+// ALERT_DELETE_RETRY_AFTER_MAX_MS. 0 when there's no usable header.
+export function retryAfterMs(res, now = Date.now()) {
+  if (!res) return 0;
+  const status = Number(res.status);
+  if (status !== 429 && status !== 503) return 0;
+  let raw = null;
+  try {
+    raw = res.headers && typeof res.headers.get === 'function' ? res.headers.get('Retry-After') : null;
+  } catch {
+    return 0;
+  }
+  if (raw == null) return 0;
+  const text = String(raw).trim();
+  let ms;
+  if (/^\d+$/.test(text)) {
+    ms = Number(text) * 1000;
+  } else {
+    const at = Date.parse(text);
+    if (Number.isNaN(at)) return 0;
+    ms = at - now;
+  }
+  if (!(ms > 0)) return 0;
+  return Math.min(ms, ALERT_DELETE_RETRY_AFTER_MAX_MS);
+}
+
 /**
  * Sends one deleted alert's DELETE, and again after each wait in retryMs if
  * it didn't reach the server. Before each try, after its wait, and again
  * after reading the session, it stops once gone() says the delete no longer
  * belongs to this session. An account with no token waits and tries again
- * rather than send the DELETE bare. The screen passes in the real session,
+ * rather than send the DELETE bare. A 429 or 503 with a Retry-After makes
+ * the next wait at least that long, up to ALERT_DELETE_RETRY_AFTER_MAX_MS.
+ * The screen passes in the real session,
  * fetch and timer, and the tests pass fakes.
  * @param {object} opts
  * @param {() => boolean} opts.gone true once the account or the deleted ids changed
@@ -233,11 +266,14 @@ export function alertDeleteRetryable(res) {
  * @param {boolean} opts.needsToken true when the delete was made on an account
  * @param {number[]} [opts.retryMs]
  * @param {(error: unknown) => void} [opts.onError]
+ * @param {() => number} [opts.now] the clock for a Retry-After date
  * @returns {Promise<'gone'|'done'|'exhausted'>}
  */
-export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken, retryMs = ALERT_DELETE_RETRY_MS, onError }) {
+export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken, retryMs = ALERT_DELETE_RETRY_MS, onError, now = Date.now }) {
+  let serverWait = 0;
   for (let attempt = 0; attempt <= retryMs.length; attempt++) {
-    if (attempt > 0) await wait(retryMs[attempt - 1]);
+    if (attempt > 0) await wait(Math.max(retryMs[attempt - 1], serverWait));
+    serverWait = 0;
     if (gone()) return 'gone';
     let res = null;
     try {
@@ -253,6 +289,7 @@ export async function runAlertDelete({ gone, getHeaders, send, wait, needsToken,
       res = null;
     }
     if (!alertDeleteRetryable(res)) return 'done';
+    serverWait = retryAfterMs(res, now());
   }
   return 'exhausted';
 }
