@@ -88,8 +88,20 @@ test('a sign out that failed leaves the alert owner count alone', () => {
   const failed = fn.indexOf('if (signOutError) return false;');
   const bumps = [...fn.matchAll(/accountChangedGenRef\.current \+= 1/g)].map((m) => m.index);
   assert.ok(failed > 0);
-  assert.equal(bumps.length, 1);
+  assert.equal(bumps.length, 2);
   assert.ok(bumps[0] > failed, 'moves only after the sign out took');
+});
+
+test('a sign out moves the alert owner count again once the stored alerts are gone', () => {
+  const start = appJs.indexOf('const performSignOut = async');
+  const fn = appJs.slice(start, appJs.indexOf('\n  };', start));
+  const bumps = [...fn.matchAll(/accountChangedGenRef\.current \+= 1/g)].map((m) => m.index);
+  const removed = fn.indexOf('await AsyncStorage.multiRemove(');
+  const cleared = fn.indexOf('await clearPendingDeletes();');
+  assert.ok(removed > 0 && cleared > removed);
+  assert.ok(bumps[0] < removed, 'the first bump comes before the removal');
+  assert.ok(bumps[1] > cleared, 'the second lands after the removal and queue clear');
+  assert.ok(bumps[1] < fn.indexOf('resetAllState(false);'), 'and before the screen resets');
 });
 
 test('a sync keeps an alert created while its re-POSTs were out', () => {

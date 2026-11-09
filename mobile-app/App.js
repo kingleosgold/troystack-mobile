@@ -3516,6 +3516,9 @@ function AppContent() {
       await clearPendingDeletes();
       // The home screen widget showed this account's stack, so it locks
       lockWidget();
+      // An alert load or sync that started after the bump above could still
+      // have read this account's alerts before the removal, so it stops too
+      accountChangedGenRef.current += 1;
       // 4. Reset user state only (preserve theme, tutorial flags, large text, etc.)
       resetAllState(false);
       // 5. Navigate to auth screen (not guest mode)
