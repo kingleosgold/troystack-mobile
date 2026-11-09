@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pushOffAlert } from './pushOffAlert.js';
+import { pushOffAlert, alertCreatedMessage, pushHint } from './pushOffAlert.js';
 
 const here = new URL('.', import.meta.url);
 const appJs = readFileSync(new URL('../../App.js', here), 'utf8');
@@ -66,4 +66,41 @@ test('no copy uses the old name or an em dash', () => {
 test('App.js no longer tells anyone to use the iOS Settings app for Stack Tracker', () => {
   assert.doesNotMatch(appJs, /Stack Tracker in your iOS Settings/);
   assert.match(appJs, /pushOffAlert\(/);
+});
+
+test('Alert Created on iPhone keeps the notified when words', () => {
+  const msg = alertCreatedMessage({ platform: 'ios', metal: 'silver', direction: 'above', targetPrice: 80 });
+  assert.equal(msg, "You'll be notified when silver goes above $80.00/oz.");
+});
+
+test("Alert Created on Android says the alert is saved and push can't reach it yet", () => {
+  const msg = alertCreatedMessage({ platform: 'android', metal: 'gold', direction: 'below', targetPrice: 4500.5 });
+  assert.equal(msg, "Your alert for when gold goes below $4500.50/oz is saved. Price alert notifications can't reach Android phones yet.");
+  assert.doesNotMatch(msg, /You'll be notified/);
+});
+
+test('the hint on iPhone keeps the Enable Notifications button', () => {
+  const { text, showEnableButton } = pushHint({ platform: 'ios' });
+  assert.equal(text, 'Push notifications not enabled. Tap below to allow notifications.');
+  assert.equal(showEnableButton, true);
+});
+
+test("the hint on Android uses the #219 words and hides the button that can't help", () => {
+  const { text, showEnableButton } = pushHint({ platform: 'android' });
+  assert.equal(text, pushOffAlert({ platform: 'android', granted: true }).message);
+  assert.equal(showEnableButton, false);
+});
+
+test('App.js passes the platform to the Alert Created and hint words', () => {
+  assert.match(appJs, /alertCreatedMessage\(\{ platform: Platform\.OS,/);
+  assert.match(appJs, /pushHint\(\{ platform: Platform\.OS \}\)\.text/);
+  assert.match(appJs, /pushHint\(\{ platform: Platform\.OS \}\)\.showEnableButton && \(/);
+  assert.doesNotMatch(appJs, /`You'll be notified when/);
+});
+
+test('no Alert Created or hint copy uses the old name or an em dash', () => {
+  for (const platform of ['ios', 'android', 'web']) {
+    const msg = alertCreatedMessage({ platform, metal: 'platinum', direction: 'above', targetPrice: 1 });
+    assert.doesNotMatch(`${msg} ${pushHint({ platform }).text}`, /Stack Tracker|—/);
+  }
 });

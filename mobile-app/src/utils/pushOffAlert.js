@@ -33,3 +33,34 @@ export function pushOffAlert({ platform, granted }) {
     openSettings: true,
   };
 }
+
+/**
+ * The words after a price alert saves. Android can't get the push yet, so
+ * there it says the alert is saved and can't reach the phone yet, instead
+ * of promising a notification that never comes.
+ */
+export function alertCreatedMessage({ platform, metal, direction, targetPrice }) {
+  const target = `${metal} goes ${direction} $${targetPrice.toFixed(2)}/oz`;
+  if (platform === 'android') {
+    return `Your alert for when ${target} is saved. Price alert notifications can't reach Android phones yet.`;
+  }
+  return `You'll be notified when ${target}.`;
+}
+
+/**
+ * The red hint under Create Alert when there's no push token. On Android
+ * turning notifications on can't help yet, so it says so and hides the
+ * Enable Notifications button rather than send the person in a circle.
+ */
+export function pushHint({ platform }) {
+  if (platform === 'android') {
+    return {
+      text: "Price alert notifications can't reach Android phones yet. Your alerts are still saved.",
+      showEnableButton: false,
+    };
+  }
+  return {
+    text: 'Push notifications not enabled. Tap below to allow notifications.',
+    showEnableButton: true,
+  };
+}
