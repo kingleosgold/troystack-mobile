@@ -881,6 +881,7 @@ test('a single delete on an account whose session read returns null is caught as
   assert.equal(await runAlertDelete(h.opts), 'no-session');
   assert.equal(h.sent(), 0, 'no DELETE goes out without headers');
   assert.equal(h.log.filter(l => l === 'error').length, 4, 'each try is caught and reported');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20', 'wait 30'], 'each retry still waits');
 });
 
 test('a guest\'s single delete goes without a token', async () => {
@@ -963,6 +964,16 @@ test('an account delete that sent once and then lost its token reads as exhauste
   });
   assert.equal(await runAlertDelete(h.opts), 'exhausted');
   assert.equal(h.sent(), 1);
+});
+
+test('an account delete whose every send throws reads as exhausted, not no-session', async () => {
+  // A send that throws was still tried with a token, so the session was fine
+  // and the next sync's re-DELETE takes it without a no-session log line.
+  const h = deleteHarness({ answers: [new Error('net'), new Error('net'), new Error('net'), new Error('net')] });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 4, 'the first try and three retries');
+  assert.equal(h.log.filter(l => l === 'error').length, 4, 'each throw is reported');
+  assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20', 'wait 30']);
 });
 
 test('an account delete that goes gone before sending reads as gone, not no-session', async () => {
