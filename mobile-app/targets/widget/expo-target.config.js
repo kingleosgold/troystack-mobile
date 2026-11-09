@@ -6,7 +6,7 @@ module.exports = {
   name: "StackTrackerWidget",
 
   // Display name shown to users
-  displayName: "Stack Tracker",
+  displayName: "TroyStack",
 
   // Widget accent color (gold)
   colors: {

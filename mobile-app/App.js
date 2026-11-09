@@ -38,6 +38,7 @@ import { initializePurchases, loginRevenueCat, hasGoldEntitlement, getUserEntitl
 import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCacheKey, shouldRecheckWebPlan, withTimeout, WEB_PLAN_TIMEOUT_MS, WEB_PLAN_WRONG_ACCOUNT, revenueCatReadCounts, revenueCatListenerCounts } from './src/utils/webPlan';
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
+import { pushOffAlert } from './src/utils/pushOffAlert';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -8522,7 +8523,7 @@ function AppContent() {
       const backup = JSON.parse(content);
 
       if (!backup.data || !backup.version) {
-        Alert.alert('Invalid Backup', 'This file is not a valid Stack Tracker backup.');
+        Alert.alert('Invalid Backup', 'This file is not a valid TroyStack backup.');
         return;
       }
 
@@ -16523,10 +16524,15 @@ function AppContent() {
                   setExpoPushToken(token);
                   Alert.alert('Notifications Enabled', 'You will now receive price alert notifications.');
                 } else {
-                  Alert.alert('Notifications Blocked', 'Please enable notifications for Stack Tracker in your iOS Settings app.', [
+                  let granted = false;
+                  try {
+                    granted = (await Notifications.getPermissionsAsync()).status === 'granted';
+                  } catch (e) {}
+                  const off = pushOffAlert({ platform: Platform.OS, granted });
+                  Alert.alert(off.title, off.message, off.openSettings ? [
                     { text: 'Open Settings', onPress: () => Linking.openSettings() },
                     { text: 'Cancel', style: 'cancel' },
-                  ]);
+                  ] : [{ text: 'OK' }]);
                 }
               }}
             >
