@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel } from './pushOffAlert.js';
+import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './pushOffAlert.js';
 
 const here = new URL('.', import.meta.url);
 const appJs = readFileSync(new URL('../../App.js', here), 'utf8');
@@ -105,7 +105,7 @@ test('App.js passes the platform to the Alert Created and hint words', () => {
 test('no Alert Created or hint copy uses the old name or an em dash', () => {
   for (const platform of ['ios', 'android', 'web']) {
     const msg = alertCreatedMessage({ platform, metal: 'platinum', direction: 'above', targetPrice: 1 });
-    const words = `${msg} ${pushHint({ platform }).text} ${alertScreenSubtitle({ platform })} ${freeAlertsLabel({ platform })}`;
+    const words = `${msg} ${pushHint({ platform }).text} ${alertScreenSubtitle({ platform })} ${freeAlertsLabel({ platform })} ${aboutAlertsLine({ platform })}`;
     assert.doesNotMatch(words, /Stack Tracker|—/);
   }
 });
@@ -130,4 +130,23 @@ test('App.js passes the platform to the alert screen line and the free features 
   assert.match(appJs, /label: freeAlertsLabel\(\{ platform: Platform\.OS \}\)/);
   assert.doesNotMatch(appJs, /label: 'Price alerts & push notifications'/);
   assert.doesNotMatch(appJs, />\s*Get notified when spot prices reach your target\s*</);
+});
+
+test("the app guide's Price Alerts line promises push only on iPhone", () => {
+  assert.equal(aboutAlertsLine({ platform: 'ios' }), 'Price Alerts: Push notifications when metals hit your target');
+  const android = aboutAlertsLine({ platform: 'android' });
+  assert.equal(android, 'Price Alerts: Save target prices for each metal');
+  assert.doesNotMatch(android, /[Pp]ush|notif/);
+  assert.match(appJs, /\{aboutAlertsLine\(\{ platform: Platform\.OS \}\)\}/);
+  assert.doesNotMatch(appJs, /Price Alerts . Push notifications when metals hit your target/);
+});
+
+test("the app guide's bullet rows carry no em dash", () => {
+  const rows = appJs.split('\n').filter((l) => l.includes("{'\\u2022'}"));
+  assert.ok(rows.length >= 20);
+  for (const row of rows) assert.doesNotMatch(row, /—/);
+});
+
+test("the app guide's Push Notifications card stays off Android while push can't reach it", () => {
+  assert.match(appJs, /\{Platform\.OS !== 'android' && \(\s*<View[^\n]*>\s*<Text[^\n]*>Push Notifications<\/Text>/);
 });
