@@ -236,3 +236,16 @@ test('the cleanup DELETE checks the account after reading the session', () => {
   assert.ok(read > 0 && gate > read && del > gate);
   assert.match(fn, /headers: delHeaders/);
 });
+
+test('a single alert toggle or delete carries the session token', () => {
+  const start = appJs.indexOf('const togglePriceAlert = async');
+  const end = appJs.indexOf('const clearAllAlerts = ');
+  assert.ok(start > 0 && end > start);
+  const fns = appJs.slice(start, end);
+  const calls = fns.split('/v1/push/price-alerts/${alertId}`').slice(1);
+  assert.equal(calls.length, 3, 'one PATCH and two DELETEs');
+  for (const call of calls) {
+    const opts = call.slice(0, call.indexOf('});'));
+    assert.match(opts, /headers: await withSession\(/);
+  }
+});
