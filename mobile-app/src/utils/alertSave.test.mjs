@@ -306,6 +306,17 @@ test('a load returns without writing when a sync landed while it read', () => {
   assert.ok(sync.indexOf('alertsSyncGenRef.current += 1;') < sync.indexOf('setPriceAlerts(final);'));
 });
 
+test('a load that lands moves the count so an overlapping load stands down', () => {
+  const fn = appJs.slice(appJs.indexOf('const fetchPriceAlerts = async'), appJs.indexOf('const savePriceAlerts = async'));
+  const gate = fn.indexOf('if (alertsSyncGenRef.current !== syncGen) return;');
+  const bump = fn.indexOf('alertsSyncGenRef.current += 1;');
+  assert.ok(gate > 0 && bump > gate && bump < fn.indexOf('setPriceAlerts(parsed);'));
+  assert.ok(bump < fn.indexOf('JSON.parse(val)'));
+  // Why: the later load would re-add a stored alert deleted between them.
+  const x = { id: 'x' };
+  assert.deepEqual(loadedAlerts([x], [], []), [x]);
+});
+
 test('a toggle made while the list loaded wins over the stored copy', () => {
   const start = [];
   const current = [{ id: 'a', enabled: false }];

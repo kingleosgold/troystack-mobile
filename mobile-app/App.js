@@ -2842,8 +2842,9 @@ function AppContent() {
   // has started, never for a sign out that failed. A Create Alert save that
   // lands after it moves belongs to the account that's gone.
   const accountChangedGenRef = useRef(0);
-  // Moves each time the alert sync commits its list. The sync folds in the
-  // stored alerts itself, so a stored list read before it landed is stale.
+  // Moves each time the alert sync or a load commits its list. Either one
+  // folds in the stored alerts, so a stored list read before it landed is
+  // stale, and a second load reading it would bring back a delete made since.
   const alertsSyncGenRef = useRef(0);
   // True once a load or a sync has put the stored alerts on the screen this
   // launch. Before that the screen list is missing them, so Create Alert
@@ -7452,6 +7453,10 @@ function AppContent() {
       // and dropped the ones the server no longer keeps, so its list stands.
       if (alertsSyncGenRef.current !== syncGen) return;
       alertsLoadedRef.current = true;
+      // A load already out read the same stored list, so once this one has
+      // put it on the screen that one stands down rather than bring back an
+      // alert deleted after this one landed.
+      alertsSyncGenRef.current += 1;
       if (val) {
         // An alert made while the stored list was loading stays, along with
         // the stored ones, and the ref moves with the list so the next toggle,
