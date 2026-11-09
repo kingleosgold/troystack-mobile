@@ -7710,6 +7710,10 @@ function AppContent() {
               if (cleared || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current, alertsDeletedRef.current)) {
                 const delHeaders = await withSession();
                 if (accountChangedGenRef.current !== accountGen) break;
+                // As for the POST, no token on an account is a sign out still
+                // under way, and a guest who signed in since isn't who sent it.
+                if (userId && !delHeaders.Authorization) return;
+                if (userId !== (lastAccountIdRef.current || null)) return;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
                   method: 'DELETE',
                   headers: delHeaders,
@@ -7747,6 +7751,10 @@ function AppContent() {
         if (stillOnServer.length) {
           const delHeaders = await withSession();
           if (accountChangedGenRef.current !== accountGen) return;
+          // A sign out still under way leaves an account with no token, and a
+          // guest who signed in since the commit would send it as the account.
+          if (userId && !delHeaders.Authorization) return;
+          if (userId !== (lastAccountIdRef.current || null)) return;
           for (const id of stillOnServer) {
             fetch(`${API_BASE_URL}/v1/push/price-alerts/${id}`, {
               method: 'DELETE',

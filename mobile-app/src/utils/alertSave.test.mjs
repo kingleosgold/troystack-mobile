@@ -421,7 +421,8 @@ test('an alert sync merges nothing onto a screen that belongs to another account
   // Right after the count check and before the merge, so a guest sync that
   // reached no POST can't lay the guest list over a signed-in screen.
   assert.match(sync, /if \(accountChangedGenRef\.current !== accountGen\) return;(\s*\/\/[^\n]*\n)+\s*if \(userId !== \(lastAccountIdRef\.current \|\| null\)\) return;\s*\n\s*\/\/ Keep backend alerts/);
-  const check = sync.lastIndexOf('if (userId !== (lastAccountIdRef.current || null)) return;');
+  const check = sync.indexOf('if (userId !== (lastAccountIdRef.current || null)) return;', sync.indexOf('// A sign in from a guest leaves the count alone'));
+  assert.ok(check > 0);
   assert.ok(check < sync.indexOf('mergeSyncedAlerts('));
   assert.ok(check < sync.indexOf('setPriceAlerts(final)'));
   assert.ok(check < sync.indexOf('await savePriceAlerts(final)'));
@@ -693,4 +694,21 @@ test('a single DELETE stops retrying once the account changes or a reset clears 
   const gate = send.indexOf('if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;', wait);
   const read = send.indexOf('const headers = await withSession();', gate);
   assert.ok(wait > 0 && gate > wait && read > gate, 'checked after each wait, before reading the session');
+});
+
+test('both sync re-DELETEs stop on an account with no token or a guest who signed in since, after reading the session', () => {
+  const start = appJs.indexOf('const syncAlertsFromBackend = async');
+  const end = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, end);
+  const reads = [];
+  let at = fn.indexOf('const delHeaders = await withSession();');
+  while (at >= 0) { reads.push(at); at = fn.indexOf('const delHeaders = await withSession();', at + 1); }
+  assert.equal(reads.length, 2, 'the in-loop re-DELETE and the one after the commit');
+  for (const read of reads) {
+    const token = fn.indexOf('if (userId && !delHeaders.Authorization) return;', read);
+    const signIn = fn.indexOf('if (userId !== (lastAccountIdRef.current || null)) return;', read);
+    const del = fn.indexOf("method: 'DELETE'", read);
+    assert.ok(token > read && token < del, 'token checked before the DELETE');
+    assert.ok(signIn > read && signIn < del, 'sign in checked before the DELETE');
+  }
 });
