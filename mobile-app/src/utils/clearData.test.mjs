@@ -97,7 +97,7 @@ test('a deleted account says so when the phone could not sign out', () => {
 test('the loading screen holds until the sign out has cleared the phone', () => {
   const out = slice('const performSignOut = async () => {', 'const formatCurrency = ');
   assert.ok(out.indexOf('setSigningOut(true);') < out.indexOf('await supabaseSignOut();'));
-  assert.match(out, /\} finally \{\s*setSigningOut\(false\);\s*\}\s*\};/);
+  assert.match(out, /\} finally \{\s*signingOutRef\.current = false;\s*setSigningOut\(false\);\s*\}\s*\};/);
   assert.match(app, /if \(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\) \{/);
   assert.match(app, /&& !\(isLoading \|\| authLoading \|\| signingOut \|\| guestMode === null \|\| needsPostSignInSync\)/);
 });
