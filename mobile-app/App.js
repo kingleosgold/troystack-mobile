@@ -7578,6 +7578,9 @@ function AppContent() {
         }
 
         if (accountChangedGenRef.current !== accountGen) return;
+        // A sign in from a guest leaves the count alone, so a guest sync that
+        // sent nothing would still lay the device's list over the account's.
+        if (userId !== (lastAccountIdRef.current || null)) return;
 
         // Keep backend alerts, the local ones that synced and any alert created
         // while the re-POSTs were out.
