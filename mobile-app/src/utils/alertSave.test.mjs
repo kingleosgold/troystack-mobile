@@ -500,8 +500,9 @@ test('a clear all stops a sync already out before its next POST and its commit',
   assert.ok(sync.indexOf('const clearedGen = alertsClearedRef.current;') < sync.indexOf('/v1/push/price-alerts?'));
   // Each POST checks it after reading the session, right before sending.
   assert.match(sync, /const postHeaders = await withSession\([\s\S]*?if \(alertsClearedRef\.current !== clearedGen\) return;[\s\S]*?method: 'POST'/);
-  // A POST that lands after a clear all is deleted again, not kept.
-  assert.match(sync, /if \(alertsClearedRef\.current !== clearedGen \|\| deletedSinceStart\(/);
+  // A POST that lands after a clear all is deleted again, unless the alert is
+  // on the screen now, which means it was made after the clear.
+  assert.match(sync, /const cleared = alertsClearedRef\.current !== clearedGen && !priceAlertsRef\.current\.some\(a => a\.id === alert\.id\);\s*if \(cleared \|\| deletedSinceStart\(/);
   // The commit checks it before writing the list.
   const commit = sync.indexOf('const final = mergeSyncedAlerts(');
   const check = sync.lastIndexOf('if (alertsClearedRef.current !== clearedGen) return;', commit);

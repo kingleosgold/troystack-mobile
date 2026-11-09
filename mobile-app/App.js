@@ -7622,8 +7622,10 @@ function AppContent() {
               // alert still belongs to the old account, so leave it alone then.
               if (accountChangedGenRef.current !== accountGen) break;
               // A clear all while this POST was out may have reached the
-              // server first, so this alert goes again like a single delete.
-              if (alertsClearedRef.current !== clearedGen || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
+              // server first, so a cleared alert goes again like a single
+              // delete. One on the screen now was made after the clear, so it stays.
+              const cleared = alertsClearedRef.current !== clearedGen && !priceAlertsRef.current.some(a => a.id === alert.id);
+              if (cleared || deletedSinceStart(alert.id, [...alertsSurfacedRef.current, ...atStart], priceAlertsRef.current)) {
                 const delHeaders = await withSession();
                 if (accountChangedGenRef.current !== accountGen) break;
                 fetch(`${API_BASE_URL}/v1/push/price-alerts/${alert.id}`, {
