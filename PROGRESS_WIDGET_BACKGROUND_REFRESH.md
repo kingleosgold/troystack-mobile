@@ -20,7 +20,7 @@ Spot prices on the widget were not refreshing in the background when the app is 
 
 ### Changes Made
 **File: `targets/widget/StackTrackerWidget.swift`**
-**File: `plugins/ios-widget/widget-files/StackTrackerWidget.swift`**
+**File: `targets/widget/StackTrackerWidget.swift`**
 
 1. **Increased timeline coverage:**
    - Before: 8 entries over 2 hours (every 15 minutes)
@@ -85,7 +85,7 @@ Spot prices on the widget were not refreshing in the background when the app is 
 
 ## Files Changed
 - ✅ `mobile-app/targets/widget/StackTrackerWidget.swift`
-- ✅ `mobile-app/plugins/ios-widget/widget-files/StackTrackerWidget.swift`
+- ✅ `mobile-app/targets/widget/StackTrackerWidget.swift`
 
 ## Status
 ✅ **COMPLETE** - Widget now refreshes every 1 hour when app is closed, with 6-hour timeline coverage.
