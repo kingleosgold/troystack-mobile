@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, ALERT_NOT_SAVED } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2911,6 +2911,11 @@ function AppContent() {
   // Price Alerts State (free feature)
   const [priceAlerts, setPriceAlerts] = useState([]);
   const creatingAlertRef = useRef(false);
+  const [creatingAlert, setCreatingAlert] = useState(false);
+  // The list as of the last render, so a save that awaits the network adds to
+  // what's there now (a sync may have landed meanwhile), not a stale copy.
+  const priceAlertsRef = useRef(priceAlerts);
+  priceAlertsRef.current = priceAlerts;
   const [showAddAlertModal, setShowAddAlertModal] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [newAlert, setNewAlert] = useState({
@@ -7510,6 +7515,7 @@ function AppContent() {
     // A second tap while the first save is still out would create a duplicate.
     if (creatingAlertRef.current) return;
     creatingAlertRef.current = true;
+    setCreatingAlert(true);
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -7518,8 +7524,9 @@ function AppContent() {
 
       // Alerts fire from the server, so it has to save there to count.
       let saved = false;
+      let response = null;
       try {
-        const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
+        response = await fetch(`${API_BASE_URL}/v1/push/price-alerts`, {
           method: 'POST',
           headers: await withSession({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
@@ -7542,7 +7549,8 @@ function AppContent() {
       if (!saved) {
         // The form keeps what they typed so they can try again.
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert(ALERT_NOT_SAVED.title, ALERT_NOT_SAVED.message);
+        const words = alertNotSavedCopy(response);
+        Alert.alert(words.title, words.message);
         return;
       }
 
@@ -7556,7 +7564,8 @@ function AppContent() {
         createdAt: new Date().toISOString(),
       };
 
-      const updated = [alert, ...priceAlerts];
+      const updated = [alert, ...priceAlertsRef.current.filter(a => a.id !== alertId)];
+      priceAlertsRef.current = updated;
       setPriceAlerts(updated);
       await savePriceAlerts(updated);
 
@@ -7569,6 +7578,7 @@ function AppContent() {
       );
     } finally {
       creatingAlertRef.current = false;
+      setCreatingAlert(false);
     }
   };
 
@@ -16520,10 +16530,17 @@ function AppContent() {
             padding: 16,
             borderRadius: 10,
             alignItems: 'center',
+            opacity: creatingAlert ? 0.7 : 1,
           }}
           onPress={createPriceAlert}
+          disabled={creatingAlert}
+          accessibilityState={{ disabled: creatingAlert, busy: creatingAlert }}
         >
-          <Text style={{ color: '#000', fontWeight: '700', fontSize: 16 }}>Create Alert</Text>
+          {creatingAlert ? (
+            <ActivityIndicator color="#000" />
+          ) : (
+            <Text style={{ color: '#000', fontWeight: '700', fontSize: 16 }}>Create Alert</Text>
+          )}
         </TouchableOpacity>
 
         {!expoPushToken && (() => {

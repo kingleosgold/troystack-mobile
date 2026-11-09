@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, ALERT_NOT_SAVED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -38,7 +38,32 @@ test('createPriceAlert only says Alert Created after the server saved it', () =>
   const gate = fn.indexOf('if (!saved)');
   assert.ok(gate > 0, 'createPriceAlert checks alertSaved');
   assert.ok(fn.indexOf('alertSaved(') < gate);
-  assert.ok(fn.indexOf('ALERT_NOT_SAVED') > gate);
+  assert.ok(fn.indexOf('alertNotSavedCopy(') > gate);
   assert.ok(fn.indexOf('savePriceAlerts(') > gate, 'nothing saves locally before the gate');
   assert.ok(fn.indexOf("'Alert Created'") > gate);
+});
+
+test('a 400 or 422 says the server turned it down, anything else blames the connection', () => {
+  assert.equal(alertNotSavedCopy({ ok: false, status: 400 }), ALERT_REJECTED);
+  assert.equal(alertNotSavedCopy({ ok: false, status: 422 }), ALERT_REJECTED);
+  assert.equal(alertNotSavedCopy({ ok: false, status: 500 }), ALERT_NOT_SAVED);
+  assert.equal(alertNotSavedCopy({ ok: false, status: 401 }), ALERT_NOT_SAVED);
+  assert.equal(alertNotSavedCopy({ ok: true, status: 200 }), ALERT_NOT_SAVED);
+  assert.equal(alertNotSavedCopy(null), ALERT_NOT_SAVED);
+});
+
+test('the rejected words carry no em dash and no promise', () => {
+  assert.doesNotMatch(ALERT_REJECTED.title + ALERT_REJECTED.message, /\u2014|notif/i);
+});
+
+test('createPriceAlert adds to the latest list, not the one from before the await', () => {
+  const start = appJs.indexOf('const createPriceAlert = async');
+  const end = appJs.indexOf('const togglePriceAlert = async');
+  const fn = appJs.slice(start, end);
+  assert.ok(fn.includes('priceAlertsRef.current'), 'reads the ref');
+  assert.doesNotMatch(fn, /\.\.\.priceAlerts\]/, 'no spread of the closed-over list');
+});
+
+test('Create Alert shows it is busy while the save is out', () => {
+  assert.match(appJs, /onPress=\{createPriceAlert\}\s*disabled=\{creatingAlert\}/);
 });
