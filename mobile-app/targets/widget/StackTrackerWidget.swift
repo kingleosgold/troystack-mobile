@@ -20,7 +20,7 @@ struct TroyActionWidget: Widget {
                 .widgetBackground(Color(hex: "#0A0A0E"))
         }
         .configurationDisplayName("Ask Troy")
-        .description("Quick launch Troy AI chat.")
+        .description("Open a chat with Troy in one tap.")
         .supportedFamilies([.systemSmall])
         .contentMarginsDisabledIfAvailable()
     }
@@ -57,7 +57,7 @@ struct StackTrackerWidget: Widget {
             StackTrackerWidgetEntryView(entry: entry)
                 .widgetBackground(Color(hex: "#0A0A0E"))
         }
-        .configurationDisplayName("Stack Tracker Gold")
+        .configurationDisplayName("TroyStack")
         .description("View your precious metals portfolio value and live spot prices.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabledIfAvailable()
