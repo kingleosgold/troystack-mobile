@@ -111,3 +111,19 @@ export function withCreatedAlert(alert, current, stored) {
   const extra = Array.isArray(stored) ? stored.filter(a => a && a.id && !have.has(a.id)) : [];
   return [alert, ...list, ...extra];
 }
+
+// Whether the alert sync runs now, given the account that last got one
+// ({ ran, userId }) and the account signed in now (id or null). The first
+// sync of a launch runs for whoever is here, guest included. After that a
+// sync runs only when an account lands that hasn't had one since it signed
+// in, so a session that lands after the launch sync, or a guest who signs
+// in, gets its account's alerts now rather than next launch. A sign out runs
+// none, since the guest list would be the device's, and it clears the
+// account so signing back in syncs again.
+export function nextAlertSync(last, id) {
+  const userId = id || null;
+  if (!last.ran) return { run: true, last: { ran: true, userId } };
+  if (!userId) return { run: false, last: { ran: true, userId: null } };
+  if (userId === last.userId) return { run: false, last };
+  return { run: true, last: { ran: true, userId } };
+}

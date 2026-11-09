@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -2859,6 +2859,8 @@ function AppContent() {
   const syncWidgetRef = useRef(() => {});
   // The account the last account change left signed in, or null.
   const lastAccountIdRef = useRef(null);
+  // The account the last alert sync ran for (src/utils/alertSave.js nextAlertSync).
+  const alertSyncLastRef = useRef({ ran: false, userId: null });
   // One daily snapshot save per account at a time (src/utils/snapshotGate.js)
   const [snapshotSaveLatch] = useState(() => createSnapshotSaveLatch());
   // The sync after Purchases.logIn runs at most once per account per launch.
@@ -5181,13 +5183,18 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
-  // Sync price alerts from backend on app load (works for anonymous + authenticated users)
+  // Sync price alerts from backend on app load (works for anonymous + authenticated users),
+  // and again when an account lands after that, so a session that lands
+  // after the launch sync or a guest who signs in gets the account's alerts
+  // now. See nextAlertSync in src/utils/alertSave.js.
   useEffect(() => {
-    if (dataLoaded) {
-      if (__DEV__) console.log('🔄 [Push] App loaded — syncing price alerts from backend');
-      syncAlertsFromBackend();
-    }
-  }, [dataLoaded]);
+    if (!dataLoaded) return;
+    const next = nextAlertSync(alertSyncLastRef.current, supabaseUser?.id);
+    alertSyncLastRef.current = next.last;
+    if (!next.run) return;
+    if (__DEV__) console.log('🔄 [Push] Syncing price alerts from backend');
+    syncAlertsFromBackend();
+  }, [dataLoaded, supabaseUser?.id]);
 
   // Handle notification received in foreground (for logging)
   useEffect(() => {
