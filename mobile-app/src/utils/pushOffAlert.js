@@ -8,8 +8,8 @@
  * Settings would only send them in a circle. Android builds don't carry
  * Firebase yet, so there it always means push can't reach the phone and
  * "try again later" would never come true. Once Firebase is in, the Android
- * branches here, in alertCreatedMessage, pushHint, alertScreenSubtitle and
- * freeAlertsLabel all go back to the shared words (a test fails until they do).
+ * branches here, in alertCreatedMessage, pushHint, alertScreenSubtitle,
+ * freeAlertsLabel and aboutAlertsLine all go back to the shared words (a test fails until they do).
  * Nothing here imports React Native, so it runs under `node --test`.
  */
 
@@ -55,7 +55,7 @@ export function alertCreatedMessage({ platform, metal, direction, targetPrice })
  */
 export function pushHint({ platform }) {
   if (platform === 'android') {
-    // The hint shows before any alert exists, so it doesn't say alerts are saved.
+    // The hint can show before any alert exists, so it doesn't say alerts are saved.
     return {
       text: "Price alert notifications can't reach Android phones yet.",
       showEnableButton: false,
@@ -87,4 +87,14 @@ export function freeAlertsLabel({ platform }) {
     return 'Price alerts';
   }
   return 'Price alerts & push notifications';
+}
+
+/**
+ * The Price Alerts line in the app guide's Tools Tab card.
+ */
+export function aboutAlertsLine({ platform }) {
+  if (platform === 'android') {
+    return 'Price Alerts: Save target prices for each metal';
+  }
+  return 'Price Alerts: Push notifications when metals hit your target';
 }
