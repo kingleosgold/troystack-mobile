@@ -73,7 +73,8 @@ export function pushHint({ platform }) {
  */
 export function alertScreenSubtitle({ platform }) {
   if (platform === 'android') {
-    return "Save a target price. Notifications for alerts can't reach Android phones yet.";
+    // The red hint below already says push can't reach Android, so this line doesn't repeat it.
+    return 'Save a target price for any metal.';
   }
   return 'Get notified when spot prices reach your target';
 }

@@ -116,7 +116,7 @@ test('the alert screen line on iPhone keeps the get notified words', () => {
 
 test("the alert screen line on Android doesn't promise a notification", () => {
   const line = alertScreenSubtitle({ platform: 'android' });
-  assert.equal(line, "Save a target price. Notifications for alerts can't reach Android phones yet.");
+  assert.equal(line, 'Save a target price for any metal.');
   assert.doesNotMatch(line, /Get notified/);
 });
 
