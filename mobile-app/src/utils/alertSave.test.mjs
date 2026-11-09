@@ -377,3 +377,17 @@ test('createPriceAlert notes the stored alerts it surfaced and marks the list re
   assert.match(fn, /if \(stored\) \{[\s\S]*?alertsSurfacedRef\.current = \[[\s\S]*?\}[\s\S]*?if \(readStored\) alertsLoadedRef\.current = true;\s*priceAlertsRef\.current = updated;/);
   assert.match(fn, /JSON\.parse\(val\) : null;\s*readStored = true;/);
 });
+
+test('a stored alerts read that throws in Create keeps the store as it was', () => {
+  const start = appJs.indexOf('const createPriceAlert = async');
+  const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
+  // The flag is up across getItem and down before JSON.parse, so only a
+  // thrown read, never corrupt JSON, skips the save.
+  assert.match(fn, /readThrew = true;\s*const val = await AsyncStorage\.getItem\('stack_price_alerts'\);\s*readThrew = false;\s*stored = val \? JSON\.parse\(val\) : null;/);
+  // A load or sync that landed while it read wrote the store, so saving is safe again.
+  assert.match(fn, /const skipLocalSave = readThrew && !alertsLoadedRef\.current;/);
+  assert.match(fn, /if \(!skipLocalSave\) await savePriceAlerts\(updated\);/);
+  assert.equal(fn.match(/savePriceAlerts\(/g).length, 1, 'no other local write in Create');
+  // The screen still shows it.
+  assert.ok(fn.indexOf('setPriceAlerts(updated)') < fn.indexOf('if (!skipLocalSave)'));
+});
