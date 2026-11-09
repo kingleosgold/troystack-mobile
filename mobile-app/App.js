@@ -2963,11 +2963,6 @@ function AppContent() {
   // Holds the loading screen while a sign out runs, so the sign in screen
   // can't start a guest or another account before the old one is cleared
   const [signingOut, setSigningOut] = useState(false);
-  // True for the whole of a sign out. An alert sync with no user id (a launch
-  // sync that ran before the session loaded) skips the session check, and
-  // while the sign out waits on the server the account count hasn't moved yet,
-  // so this is what stops it sending the stored alerts up under the phone.
-  const signingOutRef = useRef(false);
 
   // Share My Stack
   const shareViewRef = useRef(null);
@@ -3468,7 +3463,6 @@ function AppContent() {
   // Returns whether the sign out took. A failed one clears nothing.
   const performSignOut = async () => {
     setSigningOut(true);
-    signingOutRef.current = true;
     try {
       const userId = supabaseUser?.id;
       // A holdings sync still running for this account writes nothing more
@@ -3536,7 +3530,6 @@ function AppContent() {
       Alert.alert('Error', 'Failed to sign out. Please try again.');
       return false;
     } finally {
-      signingOutRef.current = false;
       setSigningOut(false);
     }
   };
@@ -7541,8 +7534,12 @@ function AppContent() {
             // An account with no session token is a sign out still under way
             // (it moves the count only once it's done), so write nothing.
             if (userId && !postHeaders.Authorization) return;
-            // A sign out under way wipes these alerts, so none goes up now.
-            if (signingOutRef.current) return;
+            // A sync that started as a guest or as another account holds
+            // alerts that aren't this account's to send. That's a launch sync
+            // the session landed under, or one still out while a sign out
+            // waits on the server. Nothing is written, so the next launch's
+            // sync sends them.
+            if (userId !== (lastAccountIdRef.current || null)) return;
             // A toggle made since the sync read storage sends the switch the user set.
             const onScreen = priceAlertsRef.current.find(a => a.id === alert.id);
             const enabled = (onScreen || alert).enabled !== false;
