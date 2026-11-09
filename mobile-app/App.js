@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -3513,6 +3513,7 @@ function AppContent() {
         WIDGET_PAYLOAD_KEY,
         'stack_advisor_count',
         'stack_price_alerts',
+        ALERTS_OWNER_KEY,
         'stack_icloud_sync_enabled', 'stack_last_sync_time', 'stack_last_modified',
         'stack_silver_milestone', 'stack_gold_milestone',
         'stack_last_silver_milestone_reached', 'stack_last_gold_milestone_reached',
@@ -7473,7 +7474,7 @@ function AppContent() {
     const syncGen = alertsSyncGenRef.current;
     const atStart = priceAlertsRef.current;
     try {
-      const val = await AsyncStorage.getItem('stack_price_alerts');
+      const val = await readStoredAlerts();
       if (accountChangedGenRef.current !== accountGen) return;
       // A sync that landed while this read ran already has the stored alerts
       // and dropped the ones the server no longer keeps, so its list stands.
@@ -7504,10 +7505,22 @@ function AppContent() {
     }
   };
 
-  // Save price alerts to AsyncStorage
+  // The stored alerts as raw JSON, or null when there are none this account
+  // may read in. Another account's, left by a session that expired without a
+  // sign out, are on the server under that account, so they read as none.
+  const readStoredAlerts = async () => {
+    const [[, val], [, owner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
+    return storedAlertsFor(val, owner, lastAccountIdRef.current || null);
+  };
+
+  // Save price alerts to AsyncStorage, under the account signed in now. A
+  // guest's save leaves the owner as it is.
   const savePriceAlerts = async (alerts) => {
     try {
-      await AsyncStorage.setItem('stack_price_alerts', JSON.stringify(alerts));
+      const owner = lastAccountIdRef.current || null;
+      const json = JSON.stringify(alerts);
+      if (owner) await AsyncStorage.multiSet([['stack_price_alerts', json], [ALERTS_OWNER_KEY, owner]]);
+      else await AsyncStorage.setItem('stack_price_alerts', json);
     } catch (error) {
       if (__DEV__) console.error('❌ Error saving price alerts:', error);
     }
@@ -7526,7 +7539,7 @@ function AppContent() {
     const accountGen = accountChangedGenRef.current;
     let stored = [];
     try {
-      const val = await AsyncStorage.getItem('stack_price_alerts');
+      const val = await readStoredAlerts();
       // Corrupt JSON holds nothing to keep.
       try { stored = val ? JSON.parse(val) : []; } catch (e) { stored = []; }
     } catch (e) {
@@ -7588,7 +7601,13 @@ function AppContent() {
           }));
 
         // Try to push any local-only alerts to backend, keep only those that succeed
-        const localAlerts = await AsyncStorage.getItem('stack_price_alerts');
+        const [[, storedVal], [, storedOwner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
+        // Another account's alerts, left by a session that expired without a
+        // sign out, are on the server under that account. A guest sync leaves
+        // them alone, since the stored session may still land. An account
+        // sends none of them up and drops them from its list.
+        if (!userId && alertsOwnedElsewhere(storedOwner, null)) return;
+        const localAlerts = storedAlertsFor(storedVal, storedOwner, userId);
         const localParsed = localAlerts ? JSON.parse(localAlerts) : [];
         const backendIds = new Set(backendAlerts.map(a => a.id));
         const localOnly = localParsed.filter(a => !backendIds.has(a.id));
@@ -7756,7 +7775,7 @@ function AppContent() {
       if (!alertsLoadedRef.current) {
         try {
           readThrew = true;
-          const val = await AsyncStorage.getItem('stack_price_alerts');
+          const val = await readStoredAlerts();
           readThrew = false;
           stored = val ? JSON.parse(val) : null;
           readStored = true;

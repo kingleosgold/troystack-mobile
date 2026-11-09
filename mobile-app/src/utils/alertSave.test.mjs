@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED } from './alertSave.js';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERT_NOT_SAVED, ALERT_REJECTED, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './alertSave.js';
 
 const appJs = readFileSync(new URL('../../App.js', import.meta.url), 'utf8');
 
@@ -279,7 +279,7 @@ test('fetchPriceAlerts moves the ref with the list and skips after an account ch
   const start = appJs.indexOf('const fetchPriceAlerts = async');
   const end = appJs.indexOf('const savePriceAlerts = async');
   const fn = appJs.slice(start, end);
-  const read = fn.indexOf("AsyncStorage.getItem('stack_price_alerts')");
+  const read = fn.indexOf("await readStoredAlerts()");
   const gate = fn.indexOf('if (accountChangedGenRef.current !== accountGen) return;');
   const ref = fn.indexOf('priceAlertsRef.current = parsed;');
   const set = fn.indexOf('setPriceAlerts(parsed);');
@@ -310,7 +310,7 @@ test('a load returns without writing when a sync landed while it read', () => {
   const start = appJs.indexOf('const fetchPriceAlerts = async');
   const end = appJs.indexOf('const savePriceAlerts = async');
   const fn = appJs.slice(start, end);
-  const read = fn.indexOf("AsyncStorage.getItem('stack_price_alerts')");
+  const read = fn.indexOf("await readStoredAlerts()");
   const gate = fn.indexOf('if (alertsSyncGenRef.current !== syncGen) return;');
   assert.ok(fn.indexOf('const syncGen = alertsSyncGenRef.current;') < read);
   assert.ok(gate > read && gate < fn.indexOf('setPriceAlerts(parsed);'));
@@ -346,7 +346,7 @@ test('withCreatedAlert keeps the stored alerts when nothing loaded them yet', ()
 test('createPriceAlert reads storage only before a load or sync, and loads and syncs mark it read', () => {
   const start = appJs.indexOf('const createPriceAlert = async');
   const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
-  assert.match(fn, /if \(!alertsLoadedRef\.current\) \{[\s\S]*?getItem\('stack_price_alerts'\)[\s\S]*?accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) stored = null;/);
+  assert.match(fn, /if \(!alertsLoadedRef\.current\) \{[\s\S]*?readStoredAlerts\(\)[\s\S]*?accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) stored = null;/);
   assert.match(fn, /withCreatedAlert\(alert, priceAlertsRef\.current, stored\)/);
   const load = appJs.slice(appJs.indexOf('const fetchPriceAlerts = async'), appJs.indexOf('const savePriceAlerts = async'));
   assert.match(load, /alertsSyncGenRef\.current !== syncGen\) return;\s*alertsLoadedRef\.current = true;/);
@@ -383,7 +383,7 @@ test('a stored alerts read that throws in Create keeps the store as it was', () 
   const fn = appJs.slice(start, appJs.indexOf('const togglePriceAlert = async', start));
   // The flag is up across getItem and down before JSON.parse, so only a
   // thrown read, never corrupt JSON, skips the save.
-  assert.match(fn, /readThrew = true;\s*const val = await AsyncStorage\.getItem\('stack_price_alerts'\);\s*readThrew = false;\s*stored = val \? JSON\.parse\(val\) : null;/);
+  assert.match(fn, /readThrew = true;\s*const val = await readStoredAlerts\(\);\s*readThrew = false;\s*stored = val \? JSON\.parse\(val\) : null;/);
   // A load or sync that landed while it read wrote the store, so saving is safe again.
   assert.match(fn, /const skipLocalSave = readThrew && !alertsLoadedRef\.current;/);
   assert.match(fn, /if \(skipLocalSave\) alertsUnsavedRef\.current = \[\.\.\.alertsUnsavedRef\.current, alertId\];\s*else await savePriceAlerts\(updated\);/);
@@ -542,4 +542,35 @@ test('the load clears the unsaved ids once it lands, and an account change clear
   // It takes the ids before clearing them, so the merge still sees them.
   assert.match(fn, /alertsLoadedRef\.current = true;[\s\S]*?const unsaved = alertsUnsavedRef\.current;\s*alertsUnsavedRef\.current = \[\];[\s\S]*?loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current, unsaved\)/);
   assert.match(appJs, /setPriceAlerts\(\[\]\);\s*alertsUnsavedRef\.current = \[\];/);
+});
+
+test('stored alerts another account left behind are not read in by the next account', () => {
+  const val = '[{"id":"a"}]';
+  // Another account's alerts read as none for a signed-in account.
+  assert.equal(storedAlertsFor(val, 'acct-a', 'acct-b'), null);
+  assert.equal(alertsOwnedElsewhere('acct-a', 'acct-b'), true);
+  // The same account, no owner (a guest or an older build) read as before.
+  assert.equal(storedAlertsFor(val, 'acct-a', 'acct-a'), val);
+  assert.equal(storedAlertsFor(val, null, 'acct-b'), val);
+  assert.equal(storedAlertsFor(val, undefined, 'acct-b'), val);
+  assert.equal(alertsOwnedElsewhere(null, 'acct-b'), false);
+  // A guest still reads them, since the stored session may not have landed yet.
+  assert.equal(storedAlertsFor(val, 'acct-a', null), val);
+  assert.equal(alertsOwnedElsewhere('acct-a', null), true);
+  assert.equal(alertsOwnedElsewhere('acct-a', undefined), true);
+});
+
+test('every alert read goes through the owner, saves record it and a sign out removes it', () => {
+  assert.equal(ALERTS_OWNER_KEY, 'stack_price_alerts_owner');
+  // No path reads the stored list without its owner.
+  assert.doesNotMatch(appJs, /getItem\('stack_price_alerts'\)/);
+  const save = appJs.slice(appJs.indexOf('const savePriceAlerts = async'), appJs.indexOf('const saveAlertsAfterChange = async'));
+  assert.match(save, /const owner = lastAccountIdRef\.current \|\| null;[\s\S]*?if \(owner\) await AsyncStorage\.multiSet\(\[\['stack_price_alerts', json\], \[ALERTS_OWNER_KEY, owner\]\]\);\s*else await AsyncStorage\.setItem\('stack_price_alerts', json\);/);
+  // The sync stops as a guest and reads none of them as an account, before any POST.
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  const stop = sync.indexOf('if (!userId && alertsOwnedElsewhere(storedOwner, null)) return;');
+  assert.ok(stop > 0 && stop < sync.indexOf("method: 'POST'"));
+  assert.match(sync, /const localAlerts = storedAlertsFor\(storedVal, storedOwner, userId\);/);
+  // Sign out removes the owner with the alerts.
+  assert.match(appJs, /'stack_price_alerts',\s*ALERTS_OWNER_KEY,/);
 });
