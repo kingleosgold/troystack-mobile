@@ -48,7 +48,7 @@ struct TroyActionEntry: TimelineEntry {
     let date: Date
 }
 
-/// Stack Tracker Portfolio Widget
+/// TroyStack Portfolio Widget
 struct StackTrackerWidget: Widget {
     let kind: String = "StackTrackerWidget"
 
