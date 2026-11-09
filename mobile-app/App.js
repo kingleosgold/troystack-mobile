@@ -3510,6 +3510,10 @@ function AppContent() {
       const allKeys = await AsyncStorage.getAllKeys().catch(() => []);
       // Every account's snapshot day, the old per phone key included
       userKeys.push(...snapshotDateKeys(allKeys));
+      // An alert load or sync that started after the bump above could still
+      // hold this account's alerts. Right before the removal, a write it already
+      // sent goes ahead of it and gets wiped, and one it hasn't sent stops.
+      accountChangedGenRef.current += 1;
       await AsyncStorage.multiRemove([...userKeys, ...syncedKeys(allKeys)]);
       // In turn with the queue's other changes, so a sync's update already
       // reading it can't write it back after the removal above
