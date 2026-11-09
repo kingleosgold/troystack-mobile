@@ -493,3 +493,21 @@ test('clear all marks the empty list whole so a pending merge or load stands dow
   const helper = appJs.slice(appJs.indexOf('const saveAlertsAfterChange = async'), appJs.indexOf('const syncAlertsFromBackend = async'));
   assert.match(helper, /if \(accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(priceAlertsRef\.current\);\s*return;\s*\}/);
 });
+
+test('a clear all stops a sync already out before its next POST and its commit', () => {
+  const sync = appJs.slice(appJs.indexOf('const syncAlertsFromBackend = async'), appJs.indexOf('const createPriceAlert = async'));
+  // The sync notes the count before its GET.
+  assert.ok(sync.indexOf('const clearedGen = alertsClearedRef.current;') < sync.indexOf('/v1/push/price-alerts?'));
+  // Each POST checks it after reading the session, right before sending.
+  assert.match(sync, /const postHeaders = await withSession\([\s\S]*?if \(alertsClearedRef\.current !== clearedGen\) return;[\s\S]*?method: 'POST'/);
+  // A POST that lands after a clear all is deleted again, not kept.
+  assert.match(sync, /if \(alertsClearedRef\.current !== clearedGen \|\| deletedSinceStart\(/);
+  // The commit checks it before writing the list.
+  const commit = sync.indexOf('const final = mergeSyncedAlerts(');
+  const check = sync.lastIndexOf('if (alertsClearedRef.current !== clearedGen) return;', commit);
+  assert.ok(check > sync.indexOf('for (const alert of localOnly)') && check < commit);
+  // Only clear all moves it.
+  assert.equal(appJs.match(/alertsClearedRef\.current \+= 1;/g).length, 1);
+  const clear = appJs.slice(appJs.indexOf('const clearAllAlerts = '), appJs.indexOf('// HOME SCREEN WIDGET'));
+  assert.ok(clear.indexOf('alertsClearedRef.current += 1;') < clear.indexOf('await savePriceAlerts([]);'));
+});
