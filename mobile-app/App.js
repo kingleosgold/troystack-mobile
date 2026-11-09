@@ -7877,7 +7877,11 @@ function AppContent() {
               method: 'DELETE',
               headers: await withSession(),
             });
-          } catch (e) { /* silent */ }
+          } catch (e) { /* silent */ } finally {
+            // A sync that started after the first move but before the server
+            // DELETE settled may have read the cleared alerts, so move again.
+            alertsClearedRef.current += 1;
+          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         },
       },

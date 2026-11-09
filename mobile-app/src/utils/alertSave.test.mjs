@@ -506,8 +506,10 @@ test('a clear all stops a sync already out before its next POST and its commit',
   const commit = sync.indexOf('const final = mergeSyncedAlerts(');
   const check = sync.lastIndexOf('if (alertsClearedRef.current !== clearedGen) return;', commit);
   assert.ok(check > sync.indexOf('for (const alert of localOnly)') && check < commit);
-  // Only clear all moves it.
-  assert.equal(appJs.match(/alertsClearedRef\.current \+= 1;/g).length, 1);
+  // Only clear all moves it, before its save and again once the server DELETE settles.
   const clear = appJs.slice(appJs.indexOf('const clearAllAlerts = '), appJs.indexOf('// HOME SCREEN WIDGET'));
+  assert.equal(appJs.match(/alertsClearedRef\.current \+= 1;/g).length, 2);
+  assert.equal(clear.match(/alertsClearedRef\.current \+= 1;/g).length, 2);
   assert.ok(clear.indexOf('alertsClearedRef.current += 1;') < clear.indexOf('await savePriceAlerts([]);'));
+  assert.match(clear, /method: 'DELETE',[\s\S]*?\} finally \{[\s\S]*?alertsClearedRef\.current \+= 1;\s*\}/);
 });
