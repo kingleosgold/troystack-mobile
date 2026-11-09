@@ -284,7 +284,7 @@ test('fetchPriceAlerts moves the ref with the list and skips after an account ch
   const ref = fn.indexOf('priceAlertsRef.current = parsed;');
   const set = fn.indexOf('setPriceAlerts(parsed);');
   assert.ok(read > 0 && gate > read && ref > gate && set > ref);
-  assert.match(fn, /loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current\)/);
+  assert.match(fn, /loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current, unsaved\)/);
   assert.ok(fn.indexOf('if (parsed !== stored) await savePriceAlerts(parsed);') > set, 'a merged list is saved');
 });
 
@@ -386,10 +386,10 @@ test('a stored alerts read that throws in Create keeps the store as it was', () 
   assert.match(fn, /readThrew = true;\s*const val = await AsyncStorage\.getItem\('stack_price_alerts'\);\s*readThrew = false;\s*stored = val \? JSON\.parse\(val\) : null;/);
   // A load or sync that landed while it read wrote the store, so saving is safe again.
   assert.match(fn, /const skipLocalSave = readThrew && !alertsLoadedRef\.current;/);
-  assert.match(fn, /if \(!skipLocalSave\) await savePriceAlerts\(updated\);/);
+  assert.match(fn, /if \(skipLocalSave\) alertsUnsavedRef\.current = \[\.\.\.alertsUnsavedRef\.current, alertId\];\s*else await savePriceAlerts\(updated\);/);
   assert.equal(fn.match(/savePriceAlerts\(/g).length, 1, 'no other local write in Create');
   // The screen still shows it.
-  assert.ok(fn.indexOf('setPriceAlerts(updated)') < fn.indexOf('if (!skipLocalSave)'));
+  assert.ok(fn.indexOf('setPriceAlerts(updated)') < fn.indexOf('if (skipLocalSave)'));
 });
 
 test('an alert sync sends nothing for an account that is not the one signed in now', () => {
@@ -517,4 +517,29 @@ test('a clear all stops a sync already out before its next POST and its commit',
   // A clear counts as out from its first move until the finally, around its save too.
   const out = clear.indexOf('alertsClearingRef.current += 1;');
   assert.ok(out > 0 && out < clear.indexOf('try {') && clear.indexOf('try {') < clear.indexOf('await savePriceAlerts([]);'));
+});
+
+test('a load after a Create that could not save keeps the new alert on the screen', () => {
+  const made = { id: 'new' };
+  const start = [made];
+  // The load starts after the create, so nothing moved while it ran.
+  assert.deepEqual(loadedAlerts([{ id: 'a' }], start, start, [], ['new']), [made, { id: 'a' }]);
+  // With nothing stored it still stays.
+  assert.deepEqual(loadedAlerts(null, start, start, [], ['new']), [made]);
+  // Once it is in the stored list the stored array stands as is.
+  const stored = [{ id: 'new' }, { id: 'a' }];
+  assert.equal(loadedAlerts(stored, start, start, [], ['new']), stored);
+  // One deleted before the load is not on the screen, so it isn't kept.
+  assert.deepEqual(loadedAlerts([{ id: 'a' }], [], [], [], ['new']), [{ id: 'a' }]);
+  // With no unsaved ids a quiet load still returns the stored array itself.
+  const s2 = [{ id: 'a' }];
+  assert.equal(loadedAlerts(s2, start, start), s2);
+});
+
+test('the load clears the unsaved ids once it lands, and an account change clears them too', () => {
+  const start = appJs.indexOf('const fetchPriceAlerts = async');
+  const fn = appJs.slice(start, appJs.indexOf('const savePriceAlerts = async'));
+  // It takes the ids before clearing them, so the merge still sees them.
+  assert.match(fn, /alertsLoadedRef\.current = true;[\s\S]*?const unsaved = alertsUnsavedRef\.current;\s*alertsUnsavedRef\.current = \[\];[\s\S]*?loadedAlerts\(stored, atStart, priceAlertsRef\.current, alertsSurfacedRef\.current, unsaved\)/);
+  assert.match(appJs, /setPriceAlerts\(\[\]\);\s*alertsUnsavedRef\.current = \[\];/);
 });

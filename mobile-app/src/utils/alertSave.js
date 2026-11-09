@@ -78,11 +78,21 @@ export function deletedSinceStart(id, atStart, current) {
  * @param {Array<{id: string}>} stored
  * @param {Array<{id: string}>} atStart the list when the load began
  * @param {Array<{id: string}>} current the list now
+ * Alerts Create couldn't write to storage are on the screen and missing from
+ * the stored list, so a load that starts after them keeps them first rather
+ * than hide them until the next sync.
  * @param {Array<{id: string}>} surfaced stored alerts Create put on the screen
+ * @param {Array<string>} unsaved ids Create put on the screen but not in storage
  */
-export function loadedAlerts(stored, atStart, current, surfaced = []) {
+export function loadedAlerts(stored, atStart, current, surfaced = [], unsaved = []) {
   const list = Array.isArray(stored) ? stored : [];
-  if (current === atStart) return list;
+  if (current === atStart) {
+    const keep = new Set(unsaved || []);
+    if (!keep.size) return list;
+    const ids = new Set(list.filter(Boolean).map(a => a.id));
+    const pending = (current || []).filter(a => a && keep.has(a.id) && !ids.has(a.id));
+    return pending.length ? [...pending, ...list] : list;
+  }
   // Stored alerts Create put on the screen count as there at the start, so
   // one deleted since stays gone.
   const baseline = [...(atStart || []), ...(surfaced || [])];
