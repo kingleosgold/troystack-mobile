@@ -481,3 +481,15 @@ test('toggle and both deletes save through the stored-list read', () => {
   assert.match(helper, /withStoredAlerts\(current, stored, removedIds\)/);
   assert.match(helper, /alertsLoadedRef\.current = true;/);
 });
+
+test('clear all marks the empty list whole so a pending merge or load stands down', () => {
+  const clear = appJs.slice(appJs.indexOf('const clearAllAlerts = '), appJs.indexOf('// HOME SCREEN WIDGET'));
+  const flag = clear.indexOf('alertsLoadedRef.current = true;');
+  const gen = clear.indexOf('alertsSyncGenRef.current += 1;');
+  const save = clear.indexOf('await savePriceAlerts([]);');
+  assert.ok(flag > 0 && gen > 0 && save > 0);
+  assert.ok(flag < save && gen < save);
+  // The helper rechecks the flag after its read and then saves the screen as is.
+  const helper = appJs.slice(appJs.indexOf('const saveAlertsAfterChange = async'), appJs.indexOf('const syncAlertsFromBackend = async'));
+  assert.match(helper, /if \(accountChangedGenRef\.current !== accountGen\) return;[\s\S]*?if \(alertsLoadedRef\.current\) \{\s*await savePriceAlerts\(priceAlertsRef\.current\);\s*return;\s*\}/);
+});
