@@ -39,7 +39,7 @@ import { fetchWebPlan, mergePlans, readCachedWebPlan, cacheWebPlan, webPlanCache
 import { syncStorePlanFor, strongerPlan, oncePerAccount } from './src/utils/storeSync';
 import { sessionAuthHeader } from './src/utils/sessionAuth';
 import { pushOffAlert, alertCreatedMessage, pushHint, alertScreenSubtitle, freeAlertsLabel, aboutAlertsLine } from './src/utils/pushOffAlert';
-import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor } from './src/utils/alertSave';
+import { alertSaved, alertNotSavedCopy, mergeSyncedAlerts, deletedSinceStart, deletedOnServer, loadedAlerts, withCreatedAlert, nextAlertSync, withStoredAlerts, ALERTS_OWNER_KEY, alertsOwnedElsewhere, storedAlertsFor, alertDeleteRetryable, ALERT_DELETE_RETRY_MS } from './src/utils/alertSave';
 import { latestWriteQueue } from './src/utils/profileWrites';
 import { plainDashes, isQuotaRefusal, troyLimitPrompt, GUEST_MESSAGE_MAX, answeredTurns, guestAskBody, readGuestAsk, guestQuota, guestQuestionsLeft, guestQuestionsLine, guestLimitPrompt, FREE_PLAN_LINE, replyTimeLabel, groupConversations, FREE_CHAT_HISTORY, chatHistoryNote } from './src/utils/troyChat';
 import { unlockLine, TROY_GOLD_LINE, TROY_FREE_DAILY_QUESTIONS, speakFailure, listenRefusedPrompt, listenLimitPrompt, priceHistoryPrompt, upsellPlan, upsellTrial } from './src/utils/goldOffer';
@@ -7900,6 +7900,35 @@ function AppContent() {
     } catch (e) { /* silent */ }
   };
 
+  // Sends one deleted alert's DELETE, and again after a wait if it didn't
+  // reach the server, so a delete made after the launch sync still leaves the
+  // server this session rather than fire unseen until the next launch. It
+  // stops once the account changes, since the alert is the old account's and
+  // the next session's token would carry the DELETE.
+  const sendAlertDelete = async (alertId) => {
+    const accountGen = accountChangedGenRef.current;
+    const deleted = alertsDeletedRef.current;
+    for (let attempt = 0; attempt <= ALERT_DELETE_RETRY_MS.length; attempt++) {
+      if (attempt > 0) {
+        await new Promise(resolve => setTimeout(resolve, ALERT_DELETE_RETRY_MS[attempt - 1]));
+      }
+      if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;
+      let res = null;
+      try {
+        const headers = await withSession();
+        if (accountChangedGenRef.current !== accountGen || alertsDeletedRef.current !== deleted) return;
+        res = await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
+          method: 'DELETE',
+          headers,
+        });
+      } catch (error) {
+        if (__DEV__) console.error('❌ [Push] Failed to delete alert from backend:', error);
+        res = null;
+      }
+      if (!alertDeleteRetryable(res)) return;
+    }
+  };
+
   // Delete a price alert (local + backend)
   const deletePriceAlert = async (alertId) => {
     Alert.alert(
@@ -7919,17 +7948,9 @@ function AppContent() {
             setPriceAlerts(updated);
             await saveAlertsAfterChange(updated, [alertId]);
 
-            // Delete from backend
-            try {
-              const response = await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
-                method: 'DELETE',
-                headers: await withSession(),
-              });
-              const result = await response.json();
-              if (__DEV__) console.log('🗑️ [Push] Backend delete response:', JSON.stringify(result));
-            } catch (error) {
-              if (__DEV__) console.error('❌ [Push] Failed to delete alert from backend:', error);
-            }
+            // Delete from backend. Its retries run on their own, so the
+            // haptic doesn't wait on them.
+            sendAlertDelete(alertId);
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           },
@@ -7946,12 +7967,7 @@ function AppContent() {
     priceAlertsRef.current = updated;
     setPriceAlerts(updated);
     await saveAlertsAfterChange(updated, [alertId]);
-    try {
-      await fetch(`${API_BASE_URL}/v1/push/price-alerts/${alertId}`, {
-        method: 'DELETE',
-        headers: await withSession(),
-      });
-    } catch (e) { /* silent */ }
+    sendAlertDelete(alertId);
   };
 
   // Clear all price alerts (local + backend batch delete)
