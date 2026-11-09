@@ -156,3 +156,25 @@ export function withStoredAlerts(current, stored, removedIds = []) {
     : [];
   return [...list, ...extra];
 }
+
+// The account whose alerts are in storage, written with them whenever an
+// account is signed in. A session that expired without a sign out leaves the
+// last account's alerts behind, and the next account's sync would send them
+// up as its own. A guest's save leaves it alone, and a sign out removes it.
+export const ALERTS_OWNER_KEY = 'stack_price_alerts_owner';
+
+// Whether the stored alerts belong to an account other than accountId (an
+// account id, or null for a guest). No owner is a guest's list or one an
+// older build saved, which stays as before.
+export function alertsOwnedElsewhere(owner, accountId) {
+  return !!owner && owner !== (accountId || null);
+}
+
+// The stored alerts (raw JSON or null) an account may read in. Another
+// account's are on the server under that account, so a signed-in account
+// reads none of them. A guest still reads them, since a launch reads storage
+// before the stored session lands.
+export function storedAlertsFor(val, owner, accountId) {
+  if (accountId && alertsOwnedElsewhere(owner, accountId)) return null;
+  return val;
+}
