@@ -7556,6 +7556,10 @@ function AppContent() {
       if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;
       if (!claimsStoredAlerts(val, owner, accountId)) return;
       await AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId);
+      // The screen carries the owner too, or a guest's save after this
+      // session expires would find none and drop the owner key again.
+      if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;
+      if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;
     } catch (error) {
       if (__DEV__) console.error('❌ Error claiming stored price alerts:', error);
     }

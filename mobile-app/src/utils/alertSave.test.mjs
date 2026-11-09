@@ -735,4 +735,7 @@ test('the account change claims the stored alerts after the account lands, check
   const write = fn.indexOf('AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId)', gate);
   assert.ok(read > 0 && gate > read && write > gate);
   assert.ok(!/stack_price_alerts'?, /.test(fn.slice(write)), 'only the owner key is written, never the list');
+  const regate = fn.indexOf('if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;', write);
+  const ref = fn.indexOf('if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;', regate);
+  assert.ok(regate > write && ref > regate, 'the screen takes the owner after the write, while still that account');
 });
