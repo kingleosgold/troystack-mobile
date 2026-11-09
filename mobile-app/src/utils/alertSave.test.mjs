@@ -846,7 +846,7 @@ test('a single delete with no token on an account waits and tries again rather t
 
 test('a single delete with no token on an account that never gets one gives up without sending', async () => {
   const h = deleteHarness({ headers: {} });
-  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(await runAlertDelete(h.opts), 'no-session');
   assert.equal(h.sent(), 0);
 });
 
@@ -867,7 +867,7 @@ test('a single delete on an account whose session read throws reports it and tri
 
 test('a single delete on an account whose session read keeps throwing gives up without sending', async () => {
   const h = deleteHarness({ headers: () => { throw new Error('session read failed'); } });
-  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(await runAlertDelete(h.opts), 'no-session');
   assert.equal(h.sent(), 0);
   assert.equal(h.log.filter(l => l === 'error').length, 4, 'each try is reported');
   assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 10', 'wait 20', 'wait 30'], 'each retry still waits');
@@ -878,7 +878,7 @@ test('a single delete on an account whose session read returns null is caught as
   // happen today. If it did, reading the token off null throws and the
   // catch takes it like any other failed try.
   const h = deleteHarness({ headers: () => null });
-  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(await runAlertDelete(h.opts), 'no-session');
   assert.equal(h.sent(), 0, 'no DELETE goes out without headers');
   assert.equal(h.log.filter(l => l === 'error').length, 4, 'each try is caught and reported');
 });
@@ -947,4 +947,32 @@ test('a retry with no token after a 429 drops its Retry-After', async () => {
   });
   assert.equal(await runAlertDelete(h.opts), 'done');
   assert.deepEqual(h.log.filter(l => l.startsWith('wait')), ['wait 9000', 'wait 20']);
+});
+
+test('a guest delete that never sends still reads as exhausted, not no-session', async () => {
+  const h = deleteHarness({ headers: () => { throw new Error('x'); }, needsToken: false });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 0);
+});
+
+test('an account delete that sent once and then lost its token reads as exhausted', async () => {
+  let reads = 0;
+  const h = deleteHarness({
+    answers: [{ ok: false, status: 503 }],
+    headers: () => (++reads === 1 ? { Authorization: 'Bearer t' } : {}),
+  });
+  assert.equal(await runAlertDelete(h.opts), 'exhausted');
+  assert.equal(h.sent(), 1);
+});
+
+test('an account delete that goes gone before sending reads as gone, not no-session', async () => {
+  const h = deleteHarness({ headers: {}, goneAt: 2 });
+  assert.equal(await runAlertDelete(h.opts), 'gone');
+  assert.equal(h.sent(), 0);
+});
+
+test('sendAlertDelete logs a delete that never found a session token', () => {
+  const send = sendAlertDeleteSource();
+  assert.match(send, /const result = await runAlertDelete\(/);
+  assert.match(send, /if \(result === 'no-session'\) logLifecycleEvent\('alerts:delete_no_session'\);/);
 });
