@@ -7662,9 +7662,14 @@ function AppContent() {
       // server no longer lists included. Read them in first.
       let stored = null;
       let readStored = false;
+      // A read that threw leaves the stored list unknown, so writing the
+      // screen list would wipe it. Corrupt JSON holds nothing to keep.
+      let readThrew = false;
       if (!alertsLoadedRef.current) {
         try {
+          readThrew = true;
           const val = await AsyncStorage.getItem('stack_price_alerts');
+          readThrew = false;
           stored = val ? JSON.parse(val) : null;
           readStored = true;
         } catch (e) { stored = null; }
@@ -7672,6 +7677,8 @@ function AppContent() {
         // A load or a sync that landed while it read has the stored list now.
         if (alertsLoadedRef.current) stored = null;
       }
+      // It's saved on the server, so the next load and sync bring it back.
+      const skipLocalSave = readThrew && !alertsLoadedRef.current;
       const updated = withCreatedAlert(alert, priceAlertsRef.current, stored);
       if (stored) {
         const onScreen = new Set(priceAlertsRef.current.map(a => a && a.id));
@@ -7686,7 +7693,7 @@ function AppContent() {
       if (readStored) alertsLoadedRef.current = true;
       priceAlertsRef.current = updated;
       setPriceAlerts(updated);
-      await savePriceAlerts(updated);
+      if (!skipLocalSave) await savePriceAlerts(updated);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setNewAlert({ metal: 'silver', targetPrice: '', direction: 'above' });
