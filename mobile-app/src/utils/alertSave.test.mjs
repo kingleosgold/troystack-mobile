@@ -722,7 +722,7 @@ test('an account that lands claims a stored list with no owner, and only that', 
   assert.equal(claimsStoredAlerts('[{"id":"a"}]', null, null), false, 'a guest claims nothing');
 });
 
-test('the account change claims the stored alerts after the account lands, checking it again after the read', () => {
+test('the account change claims the stored alerts after the account lands, checking it again after the read, the screen taking the owner before the write', () => {
   const effectStart = appJs.indexOf('useLayoutEffect(() => {\n    if (lastAccountIdRef.current) {');
   assert.ok(effectStart > 0);
   const effect = appJs.slice(effectStart, appJs.indexOf('}, [supabaseUser?.id]);', effectStart));
@@ -735,9 +735,9 @@ test('the account change claims the stored alerts after the account lands, check
   const write = fn.indexOf('AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId)', gate);
   assert.ok(read > 0 && gate > read && write > gate);
   assert.ok(!/stack_price_alerts'?, /.test(fn.slice(write)), 'only the owner key is written, never the list');
-  const regate = fn.indexOf('if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;', write);
-  const ref = fn.indexOf('if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;', regate);
-  assert.ok(regate > write && ref > regate, 'the screen takes the owner after the write, while still that account');
+  const ref = fn.indexOf('if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;', gate);
+  assert.ok(ref > gate && ref < write, 'the screen takes the owner before the write, while still that account');
+  assert.ok(!fn.slice(gate, ref).includes('await'), 'nothing waits between the gate check and the screen taking the owner');
 });
 
 test('a single delete takes its account, count and deleted ids before its save, and stops if a guest signed in since', () => {

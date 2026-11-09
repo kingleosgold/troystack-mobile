@@ -7555,11 +7555,12 @@ function AppContent() {
       const [[, val], [, owner]] = await AsyncStorage.multiGet(['stack_price_alerts', ALERTS_OWNER_KEY]);
       if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;
       if (!claimsStoredAlerts(val, owner, accountId)) return;
-      await AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId);
       // The screen carries the owner too, or a guest's save after this
-      // session expires would find none and drop the owner key again.
-      if (accountChangedGenRef.current !== accountGen || lastAccountIdRef.current !== accountId) return;
+      // session expires would find none and drop the owner key again. It
+      // takes it before the write, while the account is still checked, so a
+      // session that expires while the write is out can't skip it.
       if (!alertsOwnerRef.current) alertsOwnerRef.current = accountId;
+      await AsyncStorage.setItem(ALERTS_OWNER_KEY, accountId);
     } catch (error) {
       if (__DEV__) console.error('❌ Error claiming stored price alerts:', error);
     }
