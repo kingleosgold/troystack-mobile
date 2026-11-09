@@ -8,7 +8,8 @@
  * Settings would only send them in a circle. Android builds don't carry
  * Firebase yet, so there it always means push can't reach the phone and
  * "try again later" would never come true. Once Firebase is in, the Android
- * branch goes back to the shared words (a test fails until it does).
+ * branches here, in alertCreatedMessage and in pushHint all go back to the
+ * shared words (a test fails until they do).
  * Nothing here imports React Native, so it runs under `node --test`.
  */
 
@@ -42,7 +43,7 @@ export function pushOffAlert({ platform, granted }) {
 export function alertCreatedMessage({ platform, metal, direction, targetPrice }) {
   const target = `${metal} goes ${direction} $${targetPrice.toFixed(2)}/oz`;
   if (platform === 'android') {
-    return `Your alert for when ${target} is saved. Price alert notifications can't reach Android phones yet.`;
+    return `Alert saved for when ${target}. Price alert notifications can't reach Android phones yet.`;
   }
   return `You'll be notified when ${target}.`;
 }

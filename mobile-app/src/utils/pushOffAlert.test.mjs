@@ -75,7 +75,7 @@ test('Alert Created on iPhone keeps the notified when words', () => {
 
 test("Alert Created on Android says the alert is saved and push can't reach it yet", () => {
   const msg = alertCreatedMessage({ platform: 'android', metal: 'gold', direction: 'below', targetPrice: 4500.5 });
-  assert.equal(msg, "Your alert for when gold goes below $4500.50/oz is saved. Price alert notifications can't reach Android phones yet.");
+  assert.equal(msg, "Alert saved for when gold goes below $4500.50/oz. Price alert notifications can't reach Android phones yet.");
   assert.doesNotMatch(msg, /You'll be notified/);
 });
 
